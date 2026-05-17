@@ -42,6 +42,13 @@ type MailboxDraft = { id?: string | null; label: string; email: string; host: st
 
 const emptyMailboxDraft: MailboxDraft = { label: "", email: "", host: "", port: "993", tls_mode: "ssl", username: "", secret_ref: "", secret: "", sync_enabled: false, owner_type: "", owner_id: "", smtp_host: "", smtp_port: "465", smtp_tls_mode: "ssl", smtp_username: "", smtp_secret_ref: "", smtp_secret: "" };
 
+function safeEmailHTML(html: string) {
+  return html
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+\s*=\s*(["']).*?\1/gi, "")
+    .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, " $1="#"");
+}
+
 function mailboxToDraft(setting?: CRMIMAPSetting | null): MailboxDraft {
   if (!setting) return emptyMailboxDraft;
   return { id: setting.id, label: setting.label, email: setting.email, host: setting.host, port: String(setting.port), tls_mode: setting.tls_mode, username: setting.username, secret_ref: setting.secret_ref ?? "", secret: "", sync_enabled: setting.sync_enabled, owner_type: setting.owner_type ?? "", owner_id: setting.owner_id ?? "", smtp_host: setting.smtp_host ?? "", smtp_port: String(setting.smtp_port ?? 465), smtp_tls_mode: setting.smtp_tls_mode ?? "ssl", smtp_username: setting.smtp_username ?? "", smtp_secret_ref: setting.smtp_secret_ref ?? "", smtp_secret: "" };
@@ -245,6 +252,7 @@ export function CRMEmailsPage() {
   const [search, setSearch] = useState("");
   const [activeFolder, setActiveFolder] = useState<"inbox" | "sent" | "drafts" | "archived" | "starred" | "unlinked">("inbox");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
   const [mailboxDraft, setMailboxDraft] = useState<MailboxDraft>(emptyMailboxDraft);
   const [mailboxStatus, setMailboxStatus] = useState<string | null>(null);
   const [previewMessages, setPreviewMessages] = useState<CRMIMAPPreviewMessage[]>([]);
@@ -274,6 +282,7 @@ export function CRMEmailsPage() {
     enabled: Boolean(wsId),
   });
   const mailboxes = mailboxData?.settings ?? [];
+  const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
   const emailDrafts = draftsData?.drafts ?? [];
   const syncRuns = syncRunsData?.runs ?? [];
 
@@ -366,16 +375,27 @@ export function CRMEmailsPage() {
 
   const saveAndImportMailbox = async () => {
     setMailboxStatus(emailCopy.savingImporting);
-    const setting = await saveMailbox.mutateAsync();
-    const preview = await api.previewCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", limit: 500, range_days: importRangeDays });
-    const uids = preview.messages.map((message) => message.uid);
-    setPreviewMessages(preview.messages);
-    setSelectedPreviewUIDs(uids);
-    if (!uids.length) { setMailboxStatus(emailCopy.mailboxSavedNoMessages); return; }
-    const result = await api.importCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", uids });
-    setMailboxStatus(emailCopy.savedImported(result.imported, result.skipped));
-    queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
-    queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
+    try {
+      const setting = await saveMailbox.mutateAsync();
+      setSelectedMailboxId(setting.id);
+      const preview = await api.previewCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", limit: 500, range_days: importRangeDays });
+      const uids = preview.messages.map((message) => message.uid);
+      setPreviewMessages(preview.messages);
+      setSelectedPreviewUIDs(uids);
+      if (!uids.length) {
+        setMailboxStatus(emailCopy.mailboxSavedNoMessages);
+        setSettingsOpen(false);
+        return;
+      }
+      const result = await api.importCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", uids });
+      setMailboxStatus(emailCopy.savedImported(result.imported, result.skipped));
+      queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
+      setSettingsOpen(false);
+    } catch (error) {
+      setMailboxStatus(`Import failed: ${mutationErrorMessage(error, "unknown error")}`);
+    }
   };
 
   const sendDraft = useMutation({
@@ -393,7 +413,7 @@ export function CRMEmailsPage() {
   const saveEmailDraft = useMutation({
     mutationFn: async () => {
       if (!composeDraft) throw new Error(emailCopy.noDraft);
-      const mailboxId = composeDraft.mailboxId || mailboxes[0]?.id;
+      const mailboxId = composeDraft.mailboxId || selectedMailbox?.id || mailboxes[0]?.id;
       if (!mailboxId) throw new Error(emailCopy.createMailboxFirst);
       return api.createCRMEmailDraft({
         mailbox_id: mailboxId,
@@ -481,7 +501,7 @@ export function CRMEmailsPage() {
         : "";
     const replyAll = mode === "reply-all";
     setComposeDraft({
-      mailboxId: mailboxes[0]?.id ?? "",
+      mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
       accountId: selectedThread?.account_id ?? "",
       contactId: selectedThread?.contact_id ?? "",
       to: mode === "new" || mode === "forward" ? "" : inbound?.from_email ?? "",
@@ -606,13 +626,32 @@ export function CRMEmailsPage() {
         <aside className="flex min-h-0 flex-col border-r bg-card/80 p-3">
           <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
-            <div className="mt-2 truncate text-sm font-medium">{mailboxes[0]?.email ?? emailCopy.fallbackMailbox}</div>
+            <select
+              aria-label="Active mailbox"
+              className="mt-2 h-9 w-full rounded-md border bg-background px-2 text-sm"
+              value={selectedMailbox?.id ?? ""}
+              onChange={(event) => setSelectedMailboxId(event.target.value || null)}
+            >
+              {mailboxes.length === 0 ? <option value="">{emailCopy.fallbackMailbox}</option> : null}
+              {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label || mailbox.email}</option>)}
+            </select>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Badge variant={mailboxes[0]?.last_test_status === "ok" ? "default" : "outline"}>{emailCopy.nativeProvider}</Badge>
-              {mailboxes[0]?.last_test_status ? <Badge variant="secondary">{mailboxes[0].last_test_status}</Badge> : null}
-              {syncRuns.some((run: any) => run.status === "running") ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
+              <Badge variant={selectedMailbox?.last_test_status === "ok" ? "default" : "outline"}>{emailCopy.nativeProvider}</Badge>
+              {selectedMailbox?.last_test_status ? <Badge variant="secondary">{selectedMailbox.last_test_status}</Badge> : null}
+              {syncRuns.some((run: any) => run.status === "running" && (!selectedMailbox || run.mailbox_id === selectedMailbox.id)) ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
             </div>
-            <div className="mt-2 text-xs text-muted-foreground">{mailboxes[0]?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
+            <div className="mt-2 text-xs text-muted-foreground">{selectedMailbox?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
+            <details className="mt-3 rounded-md border bg-muted/20 p-2 text-xs">
+              <summary className="cursor-pointer font-medium text-muted-foreground">Sync progress / history</summary>
+              <div className="mt-2 space-y-1 text-muted-foreground">
+                {syncRuns.length === 0 ? <p>No import runs yet.</p> : syncRuns.slice(0, 5).map((run: any) => (
+                  <div key={run.id} className="rounded bg-background px-2 py-1">
+                    <div className="truncate">{run.mailbox_email || run.folder || "INBOX"} · {run.status}</div>
+                    <div className="tabular-nums">fetched {run.fetched_count ?? 0} / imported {run.imported_count ?? 0} / skipped {run.skipped_count ?? 0}</div>
+                  </div>
+                ))}
+              </div>
+            </details>
           </div>
           <nav className="space-y-1" aria-label={t(($) => $.emails.folder_nav)}>
             {([
@@ -775,7 +814,11 @@ export function CRMEmailsPage() {
                         </div>
                         <div className="mt-4 rounded-md border bg-muted/20 p-3">
                           <div className="mb-2 text-xs font-medium text-muted-foreground">{message.body_html ? emailCopy.htmlBody : emailCopy.textBody}</div>
-                          <div className="whitespace-pre-wrap leading-6 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
+                          {message.body_html ? (
+                            <div className="leading-6 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(message.body_html) }} />
+                          ) : (
+                            <div className="whitespace-pre-wrap leading-6 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
+                          )}
                         </div>
                         <div className="mt-3 rounded-md border bg-muted/20 p-3">
                           <div className="text-xs font-medium text-muted-foreground">{emailCopy.attachments}</div>
@@ -1064,24 +1107,6 @@ export function CRMEmailsPage() {
           </div>
           <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">{emailCopy.transportNote}</p>
           {mailboxStatus ? <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">{mailboxStatus}</p> : null}
-          <div className="rounded-md border bg-muted/20 p-3 text-xs">
-            <div className="mb-2 flex items-center justify-between font-medium">
-              <span>Sync progress / history</span>
-              <Badge variant="outline">{syncRuns.length}</Badge>
-            </div>
-            {syncRuns.length === 0 ? (
-              <p className="text-muted-foreground">No import runs yet.</p>
-            ) : (
-              <div className="max-h-32 space-y-1 overflow-y-auto text-muted-foreground">
-                {syncRuns.slice(0, 5).map((run: any) => (
-                  <div key={run.id} className="flex items-center justify-between gap-2 rounded bg-background px-2 py-1">
-                    <span className="truncate">{run.mailbox_email || run.folder || "INBOX"} · {run.status}</span>
-                    <span className="shrink-0 tabular-nums">fetched {run.fetched_count ?? 0} / imported {run.imported_count ?? 0} / skipped {run.skipped_count ?? 0}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
           {previewMessages.length > 0 ? (
             <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border bg-muted/20 p-3">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -1108,7 +1133,7 @@ export function CRMEmailsPage() {
           ) : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setSettingsOpen(false); setMailboxStatus(null); }}>{t(($) => $.actions.cancel)}</Button>
-            <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.id} onClick={() => testMailbox.mutate()}>{emailCopy.checkProvider}</Button>
+            <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.label || !mailboxDraft.email || !mailboxDraft.host} onClick={() => testMailbox.mutate()}>{emailCopy.checkProvider}</Button>
             <Button disabled={saveMailbox.isPending || previewMailbox.isPending || importPreviewMessages.isPending || !mailboxDraft.label || !mailboxDraft.email} onClick={() => void saveAndImportMailbox()}>{emailCopy.saveAndImport}</Button>
           </DialogFooter>
         </DialogContent>
