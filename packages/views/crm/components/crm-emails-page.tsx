@@ -42,6 +42,14 @@ type MailboxDraft = { id?: string | null; label: string; email: string; host: st
 
 const emptyMailboxDraft: MailboxDraft = { label: "", email: "", host: "", port: "993", tls_mode: "ssl", username: "", secret_ref: "", secret: "", sync_enabled: false, owner_type: "", owner_id: "", smtp_host: "", smtp_port: "465", smtp_tls_mode: "ssl", smtp_username: "", smtp_secret_ref: "", smtp_secret: "" };
 
+function inferMailboxPreset(email: string) {
+  const domain = email.trim().toLowerCase().split("@")[1] ?? "";
+  if (domain === "qq.com") return { host: "imap.qq.com", port: "993", smtp_host: "smtp.qq.com", smtp_port: "465", tls_mode: "ssl" as const, smtp_tls_mode: "ssl" };
+  if (domain === "gmail.com") return { host: "imap.gmail.com", port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", tls_mode: "ssl" as const, smtp_tls_mode: "ssl" };
+  if (domain === "outlook.com" || domain === "hotmail.com" || domain === "live.com") return { host: "outlook.office365.com", port: "993", smtp_host: "smtp.office365.com", smtp_port: "587", tls_mode: "ssl" as const, smtp_tls_mode: "starttls" };
+  return null;
+}
+
 function safeEmailHTML(html: string) {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
@@ -354,6 +362,19 @@ export function CRMEmailsPage() {
     },
   });
 
+  const deleteMailbox = useMutation({
+    mutationFn: (mailboxId: string) => api.deleteCRMIMAPSetting(mailboxId),
+    onSuccess: async (_result, mailboxId) => {
+      setMailboxStatus("Mailbox deleted.");
+      setSelectedMailboxId((current) => current === mailboxId ? null : current);
+      setMailboxDraft(emptyMailboxDraft);
+      setPreviewMessages([]);
+      setSelectedPreviewUIDs([]);
+      await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
+      await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
+    },
+  });
+
   const previewMailbox = useMutation({
     mutationFn: () => api.previewCRMIMAP({ mailbox_id: mailboxDraft.id, folder: "INBOX", limit: 500, range_days: importRangeDays }),
     onSuccess: (result) => {
@@ -615,7 +636,7 @@ export function CRMEmailsPage() {
             <Send className="mr-1 size-3" />
             {emailCopy.compose}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
+          <Button variant="outline" size="sm" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>
             <Settings className="mr-1 size-3" />
             {t(($) => $.emails.mailbox_settings)}
           </Button>
@@ -641,6 +662,12 @@ export function CRMEmailsPage() {
               {syncRuns.some((run: any) => run.status === "running" && (!selectedMailbox || run.mailbox_id === selectedMailbox.id)) ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">{selectedMailbox?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
+            {selectedMailbox ? (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Button size="sm" variant="outline" onClick={() => { setMailboxDraft(mailboxToDraft(selectedMailbox)); setMailboxStatus(null); setSettingsOpen(true); }}>Edit</Button>
+                <Button size="sm" variant="destructive" disabled={deleteMailbox.isPending} onClick={() => deleteMailbox.mutate(selectedMailbox.id)}>Delete</Button>
+              </div>
+            ) : null}
             <details className="mt-3 rounded-md border bg-muted/20 p-2 text-xs">
               <summary className="cursor-pointer font-medium text-muted-foreground">Sync progress / history</summary>
               <div className="mt-2 space-y-1 text-muted-foreground">
@@ -673,7 +700,7 @@ export function CRMEmailsPage() {
               </button>
             ))}
           </nav>
-          <Button className="mt-auto" variant="outline" onClick={() => setSettingsOpen(true)}>{t(($) => $.emails.add_mailbox)}</Button>
+          <Button className="mt-auto" variant="outline" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{t(($) => $.emails.add_mailbox)}</Button>
         </aside>
 
         <aside className="flex min-h-0 flex-col border-r bg-background">
@@ -1069,7 +1096,7 @@ export function CRMEmailsPage() {
               {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
             </select>
             <Input aria-label="Mailbox display name" placeholder="Mailbox display name" value={mailboxDraft.label} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, label: event.target.value }))} />
-            <Input aria-label={t(($) => $.emails.email_address)} placeholder="sales@example.com" value={mailboxDraft.email} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, email: event.target.value }))} />
+            <Input aria-label={t(($) => $.emails.email_address)} placeholder="sales@example.com" value={mailboxDraft.email} onChange={(event) => setMailboxDraft((draft) => { const email = event.target.value; const preset = inferMailboxPreset(email); return { ...draft, ...(preset && !draft.id ? preset : {}), email, username: draft.username || email, smtp_username: draft.smtp_username || email }; })} />
             <Input aria-label="IMAP host" placeholder="IMAP host" value={mailboxDraft.host} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, host: event.target.value }))} />
             <Input aria-label="IMAP port" placeholder="993" value={mailboxDraft.port} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, port: event.target.value }))} />
             <select aria-label={t(($) => $.emails.tls_mode)} className="h-9 rounded-md border bg-background px-3 text-sm" value={mailboxDraft.tls_mode} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, tls_mode: event.target.value as MailboxDraft["tls_mode"] }))}>

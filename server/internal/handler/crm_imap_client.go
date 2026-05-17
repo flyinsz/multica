@@ -288,14 +288,15 @@ func parseCRMIMAPMessage(uid, raw string) crmIMAPFetchedMessage {
 	if date, err := parsed.Header.Date(); err == nil {
 		msg.Date = date
 	}
-	partBody, contentType, attachments := parseCRMIMAPBody(parsed.Header, parsed.Body)
-	msg.BodyText, msg.BodyHTML = extractReadableEmailBodies(contentType, partBody)
+	bodyText, bodyHTML, rawBody, attachments := parseCRMIMAPBodyParts(parsed.Header, parsed.Body)
+	msg.BodyText = bodyText
+	msg.BodyHTML = bodyHTML
 	msg.Attachments = attachments
 	if strings.TrimSpace(msg.BodyText) == "" && strings.TrimSpace(msg.BodyHTML) != "" {
 		msg.BodyText = htmlToPlainText(msg.BodyHTML)
 	}
 	if strings.TrimSpace(msg.BodyText) == "" {
-		msg.BodyText = string(partBody)
+		msg.BodyText = string(rawBody)
 	}
 	msg.Snippet = makeSnippet(msg.BodyText)
 	return msg
@@ -340,20 +341,25 @@ func cloneHeaderValues(header mail.Header) map[string][]string {
 	return out
 }
 
-func parseCRMIMAPBody(header mail.Header, body io.Reader) ([]byte, string, []crmEmailAttachment) {
+func parseCRMIMAPBodyParts(header mail.Header, body io.Reader) (string, string, []byte, []crmEmailAttachment) {
 	contentType := header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		decoded, _ := io.ReadAll(body)
-		return decoded, contentType, nil
+		return decodeTransferBody(decoded, ""), "", decoded, nil
 	}
-	if !strings.HasPrefix(mediaType, "multipart/") {
-		decoded, _ := io.ReadAll(body)
-		return decoded, contentType, nil
+	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+		raw, _ := io.ReadAll(body)
+		decoded := decodeTransferBody(raw, header.Get("Content-Transfer-Encoding"))
+		if strings.EqualFold(mediaType, "text/html") {
+			return htmlToPlainText(decoded), decoded, raw, nil
+		}
+		return decoded, "", raw, nil
 	}
 	boundary := params["boundary"]
 	mr := multipart.NewReader(body, boundary)
-	var textBody, htmlBody []byte
+	var textBody, htmlBody string
+	var rawBody []byte
 	var attachments []crmEmailAttachment
 	for {
 		part, err := mr.NextPart()
@@ -365,46 +371,49 @@ func parseCRMIMAPBody(header mail.Header, body io.Reader) ([]byte, string, []crm
 		}
 		partBody, _ := io.ReadAll(part)
 		partType := part.Header.Get("Content-Type")
-		decoded := []byte(decodeTransferBody(partBody, part.Header.Get("Content-Transfer-Encoding")))
+		decoded := decodeTransferBody(partBody, part.Header.Get("Content-Transfer-Encoding"))
 		disposition := strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Disposition")))
 		contentID := normalizeCRMMessageID(part.Header.Get("Content-ID"))
 		partMediaType, _, _ := mime.ParseMediaType(partType)
-		if strings.HasPrefix(partMediaType, "multipart/") {
-			nestedBody, nestedType, nestedAttachments := parseCRMIMAPBody(mail.Header(part.Header), bytes.NewReader(partBody))
-			if len(textBody) == 0 {
-				textBody = nestedBody
+		if strings.HasPrefix(strings.ToLower(partMediaType), "multipart/") {
+			nestedText, nestedHTML, nestedRaw, nestedAttachments := parseCRMIMAPBodyParts(mail.Header(part.Header), bytes.NewReader(partBody))
+			if textBody == "" {
+				textBody = nestedText
 			}
-			if len(htmlBody) == 0 && strings.HasPrefix(strings.ToLower(nestedType), "text/html") {
-				htmlBody = nestedBody
+			if htmlBody == "" {
+				htmlBody = nestedHTML
+			}
+			if len(rawBody) == 0 {
+				rawBody = nestedRaw
 			}
 			attachments = append(attachments, nestedAttachments...)
 			continue
 		}
-		if strings.HasPrefix(strings.ToLower(disposition), "attachment") || contentID != "" {
+		if strings.HasPrefix(disposition, "attachment") || contentID != "" {
 			attachments = append(attachments, crmEmailAttachment{
 				FileName:    filenameFromPartHeader(part.Header, contentID),
 				ContentType: partType,
-				Content:     base64.StdEncoding.EncodeToString(decoded),
+				Content:     base64.StdEncoding.EncodeToString([]byte(decoded)),
 			})
 			continue
 		}
 		switch {
-		case strings.EqualFold(partMediaType, "text/plain") && len(textBody) == 0:
+		case strings.EqualFold(partMediaType, "text/plain") && textBody == "":
 			textBody = decoded
-		case strings.EqualFold(partMediaType, "text/html") && len(htmlBody) == 0:
+			if len(rawBody) == 0 {
+				rawBody = partBody
+			}
+		case strings.EqualFold(partMediaType, "text/html") && htmlBody == "":
 			htmlBody = decoded
+			if len(rawBody) == 0 {
+				rawBody = partBody
+			}
 		}
 	}
-	if len(textBody) == 0 && len(htmlBody) > 0 {
-		textBody = []byte(htmlToPlainText(string(htmlBody)))
+	if textBody == "" && htmlBody != "" {
+		textBody = htmlToPlainText(htmlBody)
 	}
-	if len(textBody) == 0 {
-		return nil, contentType, attachments
-	}
-	if len(htmlBody) > 0 {
-		return textBody, "text/html", attachments
-	}
-	return textBody, "text/plain", attachments
+	return textBody, htmlBody, rawBody, attachments
 }
 
 func filenameFromPartHeader(header textproto.MIMEHeader, fallback string) string {

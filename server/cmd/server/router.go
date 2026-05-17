@@ -403,6 +403,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.ListCRMIMAPSettings)
 					r.Put("/", h.UpsertCRMIMAPSetting)
 					r.Post("/{mailboxId}/test", h.TestCRMIMAPSetting)
+					r.Delete("/{mailboxId}", h.DeleteCRMIMAPSetting)
 				})
 				r.Get("/emailengine/status", h.GetCRMEmailEngineStatus)
 				r.Get("/imap/sync-runs", h.ListCRMIMAPSyncRuns)

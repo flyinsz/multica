@@ -1919,6 +1919,27 @@ func (h *Handler) UpsertCRMIMAPSetting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, item)
 }
 
+func (h *Handler) DeleteCRMIMAPSetting(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	mailboxID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "mailboxId"), "mailbox id")
+	if !ok {
+		return
+	}
+	cmd, err := h.DB.Exec(r.Context(), `DELETE FROM crm_imap_setting WHERE id=$1 AND workspace_id=$2`, mailboxID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete CRM IMAP setting")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "CRM IMAP setting not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) TestCRMIMAPSetting(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {

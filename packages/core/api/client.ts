@@ -1291,6 +1291,10 @@ export class ApiClient {
     return this.fetch(`/api/crm/imap-settings/${mailboxId}/test`, { method: "POST" });
   }
 
+  async deleteCRMIMAPSetting(mailboxId: string): Promise<void> {
+    return this.fetch(`/api/crm/imap-settings/${mailboxId}`, { method: "DELETE" });
+  }
+
   async previewCRMIMAP(data: { mailbox_id?: string | null; folder?: string | null; limit?: number; range_days?: number }): Promise<CRMIMAPPreviewResponse> {
     const raw = await this.fetch<unknown>("/api/crm/imap/preview", {
       method: "POST",
