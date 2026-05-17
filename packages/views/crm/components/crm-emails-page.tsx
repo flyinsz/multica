@@ -275,6 +275,7 @@ export function CRMEmailsPage() {
   });
   const mailboxes = mailboxData?.settings ?? [];
   const emailDrafts = draftsData?.drafts ?? [];
+  const syncRuns = syncRunsData?.runs ?? [];
 
   const folderThreads = useMemo(() => {
     return threads.filter((thread) => {
@@ -596,29 +597,14 @@ export function CRMEmailsPage() {
         <aside className="flex min-h-0 flex-col border-r bg-card/80 p-3">
           <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
-            <div className="mt-2 truncate text-sm font-medium">{mailboxes[0]?.email ?? emailEngineStatus?.account ?? emailCopy.fallbackMailbox}</div>
+            <div className="mt-2 truncate text-sm font-medium">{mailboxes[0]?.email ?? emailCopy.fallbackMailbox}</div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Badge variant={emailEngineStatus?.enabled && emailEngineStatus?.configured ? "default" : "outline"}>
-                {emailEngineStatus?.enabled ? emailCopy.nativeProvider : emailCopy.providerStatusFallback}
-              </Badge>
-              {emailEngineStatus?.state ? <Badge variant="secondary">{emailEngineStatus.state}</Badge> : null}
-              {emailEngineStatus?.syncing ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
+              <Badge variant={mailboxes[0]?.last_test_status === "ok" ? "default" : "outline"}>{emailCopy.nativeProvider}</Badge>
+              {mailboxes[0]?.last_test_status ? <Badge variant="secondary">{mailboxes[0].last_test_status}</Badge> : null}
+              {syncRuns.some((run: any) => run.status === "running") ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">{mailboxes[0]?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
           </div>
-          {emailEngineStatus?.folders?.length ? (
-            <div className="mb-3 rounded-lg border bg-background p-2">
-              <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{emailCopy.providerFolders}</div>
-              <div className="max-h-44 space-y-1 overflow-y-auto">
-                {emailEngineStatus.folders.map((folder) => (
-                  <div key={folder.path} className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs text-muted-foreground">
-                    <span className="truncate">{folder.name || folder.path}</span>
-                    <span className="shrink-0 tabular-nums">{folder.unread ? `${folder.unread}/` : ""}{folder.total}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
           <nav className="space-y-1" aria-label={t(($) => $.emails.folder_nav)}>
             {([
               ["inbox", Inbox, t(($) => $.emails.folder_inbox)],
@@ -998,9 +984,9 @@ export function CRMEmailsPage() {
             </div>
           </div>
           <div className="grid gap-3 rounded-lg border bg-background p-3 text-xs sm:grid-cols-4">
-            <DetailRow label="Account" value={mailboxes[0]?.email ?? emailEngineStatus?.account} />
-            <DetailRow label="State" value={mailboxes[0]?.last_test_status ?? emailEngineStatus?.state ?? (mailboxes.length ? "configured" : "not configured")} />
-            <DetailRow label="Folders" value={String(emailEngineStatus?.folders?.length ?? 0)} />
+            <DetailRow label="Account" value={mailboxes[0]?.email} />
+            <DetailRow label="State" value={mailboxes[0]?.last_test_status ?? (mailboxes.length ? "configured" : "not configured")} />
+            <DetailRow label="Sync runs" value={String(syncRuns.length)} />
             <DetailRow label="Transport" value="imap_smtp" />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
