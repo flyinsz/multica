@@ -46,7 +46,7 @@ function safeEmailHTML(html: string) {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
     .replace(/\son\w+\s*=\s*(["']).*?\1/gi, "")
-    .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, " $1="#"");
+    .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"');
 }
 
 function mailboxToDraft(setting?: CRMIMAPSetting | null): MailboxDraft {
