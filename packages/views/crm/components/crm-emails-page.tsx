@@ -36,7 +36,7 @@ type AssociationDraft = {
 
 type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
-type ComposeDraft = { mailboxId: string; to: string; cc: string; bcc: string; subject: string; body: string };
+type ComposeDraft = { mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -398,6 +398,8 @@ export function CRMEmailsPage() {
       return api.createCRMEmailDraft({
         mailbox_id: mailboxId,
         thread_id: selectedThread?.id ?? null,
+        account_id: composeDraft.accountId || null,
+        contact_id: composeDraft.contactId || null,
         to_emails: composeDraft.to.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean),
         cc_emails: composeDraft.cc.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean),
         bcc_emails: composeDraft.bcc.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean),
@@ -426,6 +428,11 @@ export function CRMEmailsPage() {
   const { data: draftAccountContacts = [] } = useQuery({
     ...crmContactListOptions(wsId, draftAccountId),
     enabled: Boolean(draftAccountId),
+  });
+  const composeAccountId = composeDraft?.accountId ?? "";
+  const { data: composeAccountContacts = [] } = useQuery({
+    ...crmContactListOptions(wsId, composeAccountId),
+    enabled: Boolean(composeAccountId),
   });
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     ...crmEmailMessageListOptions(wsId, selectedThread?.id ?? ""),
@@ -475,6 +482,8 @@ export function CRMEmailsPage() {
     const replyAll = mode === "reply-all";
     setComposeDraft({
       mailboxId: mailboxes[0]?.id ?? "",
+      accountId: selectedThread?.account_id ?? "",
+      contactId: selectedThread?.contact_id ?? "",
       to: mode === "new" || mode === "forward" ? "" : inbound?.from_email ?? "",
       cc: replyAll ? (inbound?.cc_emails ?? []).join(", ") : "",
       bcc: "",
@@ -939,6 +948,22 @@ export function CRMEmailsPage() {
                   {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
                 </select>
               </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="text-xs font-medium text-muted-foreground">Customer</span>
+                  <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.accountId} onChange={(event) => setComposeDraft({ ...composeDraft, accountId: event.target.value, contactId: "", to: "" })}>
+                    <option value="">No customer</option>
+                    {accounts.map((account: any) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="text-xs font-medium text-muted-foreground">Contact</span>
+                  <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.contactId} onChange={(event) => { const contact = composeAccountContacts.find((item: any) => item.id === event.target.value) as any; setComposeDraft({ ...composeDraft, contactId: event.target.value, to: contact?.email ?? composeDraft.to }); }} disabled={!composeDraft.accountId}>
+                    <option value="">Manual recipient</option>
+                    {composeAccountContacts.map((contact: any) => <option key={contact.id} value={contact.id}>{contact.name}{contact.email ? ` · ${contact.email}` : ""}</option>)}
+                  </select>
+                </label>
+              </div>
               <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
               <div className="grid gap-3 sm:grid-cols-2">
                 <Input aria-label={emailCopy.cc} placeholder={emailCopy.cc} value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
@@ -957,6 +982,7 @@ export function CRMEmailsPage() {
           {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
+            <Button variant="secondary" disabled={!composeDraft?.to.trim() || !composeDraft?.subject.trim() || !composeDraft?.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
             <Button disabled={!composeDraft?.to.trim() || !composeDraft?.subject.trim() || !composeDraft?.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
           </DialogFooter>
         </DialogContent>

@@ -602,6 +602,8 @@ type CRMEmailDraftResponse struct {
 type CreateCRMEmailDraftRequest struct {
 	MailboxID         *string              `json:"mailbox_id"`
 	ThreadID          *string              `json:"thread_id"`
+	AccountID         *string              `json:"account_id"`
+	ContactID         *string              `json:"contact_id"`
 	ToEmails          []string             `json:"to_emails"`
 	CcEmails          []string             `json:"cc_emails"`
 	BccEmails         []string             `json:"bcc_emails"`
@@ -2260,6 +2262,29 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	accountID, ok := optionalUUID(w, req.AccountID, "account_id")
+	if !ok {
+		return
+	}
+	contactID, ok := optionalUUID(w, req.ContactID, "contact_id")
+	if !ok {
+		return
+	}
+	if req.ToEmails == nil {
+		req.ToEmails = []string{}
+	}
+	if req.CcEmails == nil {
+		req.CcEmails = []string{}
+	}
+	if req.BccEmails == nil {
+		req.BccEmails = []string{}
+	}
+	if req.ReferenceIDs == nil {
+		req.ReferenceIDs = []string{}
+	}
+	if req.Attachments == nil {
+		req.Attachments = []crmEmailAttachment{}
+	}
 	attachmentsJSON, err := json.Marshal(req.Attachments)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid attachments")
@@ -2270,7 +2295,7 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		sentAppendEnabled = *req.SentAppendEnabled
 	}
 	var id pgtype.UUID
-	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_enabled, ai_generated) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`, workspaceID, mailboxID, threadID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, sentAppendEnabled, req.AIGenerated).Scan(&id); err != nil {
+	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_enabled, ai_generated) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, sentAppendEnabled, req.AIGenerated).Scan(&id); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create CRM email draft")
 		return
 	}

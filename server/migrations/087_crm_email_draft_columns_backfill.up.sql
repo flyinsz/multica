@@ -1,0 +1,9 @@
+ALTER TABLE crm_email_draft
+    ADD COLUMN IF NOT EXISTS account_id UUID REFERENCES crm_account(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS contact_id UUID REFERENCES crm_contact(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS body_html TEXT,
+    ADD COLUMN IF NOT EXISTS in_reply_to TEXT,
+    ADD COLUMN IF NOT EXISTS reference_ids TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS sent_append_enabled BOOLEAN NOT NULL DEFAULT true,
+    ADD COLUMN IF NOT EXISTS sent_append_warning TEXT;
