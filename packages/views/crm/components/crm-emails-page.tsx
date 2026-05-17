@@ -12,6 +12,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import type { CRMAccount, CRMContact, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPPreviewMessage, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { normalizeLocale } from "../geo";
 import {
   Dialog,
   DialogContent,
@@ -102,7 +103,145 @@ export function CRMEmailsPage() {
   const queryClient = useQueryClient();
   const navigation = useNavigation();
   const paths = useWorkspacePaths();
-  const { t } = useT("crm");
+  const { t, i18n } = useT("crm");
+  const locale = normalizeLocale(i18n.language);
+  const emailCopy = locale === "zh-Hans" ? {
+    compose: "写邮件",
+    drafts: "草稿",
+    reply: "回复",
+    replyAll: "全部回复",
+    forward: "转发",
+    send: "发送",
+    to: "收件人",
+    cc: "抄送",
+    bcc: "密送",
+    subject: "主题",
+    bodyPlaceholder: "写邮件正文…",
+    bodyLabel: "邮件正文",
+    saveDraftError: "保存草稿失败。请检查邮箱和收件人字段。",
+    from: "发件人",
+    date: "日期",
+    htmlBody: "HTML 正文",
+    textBody: "文本正文",
+    attachments: "附件",
+    noAttachments: "无附件",
+    mimeMetadata: "MIME 元数据",
+    messageId: "Message-ID",
+    inReplyTo: "In-Reply-To",
+    references: "References",
+    rawSize: "原始大小",
+    contentType: "Content-Type",
+    contentDisposition: "Disposition",
+    bytes: "字节",
+    noSubject: "（无主题）",
+    mailbox: "邮箱",
+    nativeProvider: "原生邮箱",
+    notConfigured: "未配置",
+    syncing: "同步中",
+    noDrafts: "暂无草稿。先写邮件或回复，再保存为草稿发送。",
+    draftSent: "草稿已发送。",
+    draftSaved: "草稿已保存。",
+    noDraft: "当前没有正在编辑的草稿",
+    createMailboxFirst: "请先创建邮箱再保存草稿",
+    composeTitle: "写 CRM 邮件草稿",
+    composeHelp: "先保存为草稿，确认内容后从草稿箱发送。",
+    cancel: "取消",
+    saveDraft: "保存草稿",
+    mailboxSettingsTitle: "CRM 原生邮箱设置",
+    mailboxSettingsHelp: "使用 ImapFlow 收信、Nodemailer 发信；Multica 自己显示邮箱工作台。",
+    providerLabel: "服务：原生 IMAP/SMTP",
+    providerHelp: "配置 IMAP 收件与 SMTP 发件后，收件箱刷新、草稿发送和 CRM 关联会在 Multica 内完成。",
+    step1: "1. 保存 IMAP/SMTP 账号",
+    step2: "2. 测试连接",
+    step3: "3. 导入邮件",
+    secretRef: "IMAP 密钥引用",
+    secretRefHelp: "IMAP 密钥引用；密码存入后端密钥存储",
+    importRange: "导入范围",
+    recent7: "最近 7 天",
+    recent30: "最近 30 天",
+    recent90: "最近 90 天",
+    smtpUsername: "SMTP 用户名",
+    smtpPassword: "SMTP 应用密码",
+    transportNote: "主要传输使用原生 IMAP/SMTP。密钥保存在后端；此处只显示 CRM 邮箱记录和导入范围。",
+    checkProvider: "检查连接",
+    saveAndImport: "保存并导入",
+    providerFolders: "服务端文件夹",
+    fallbackMailbox: "sales@example.com",
+    providerStatusFallback: "原生 IMAP/SMTP",
+    savingImporting: "正在保存邮箱并导入所选范围…",
+    mailboxSavedNoMessages: "邮箱已保存。所选范围内没有邮件。",
+    imported: (imported: number, skipped: number) => `已导入 ${imported} 封；跳过 ${skipped} 封。`,
+    fetched: (note: string, total: number) => `${note} 已获取 ${total} 封邮件。`,
+    savedImported: (imported: number, skipped: number) => `邮箱已保存。已导入 ${imported} 封；跳过 ${skipped} 封。`,
+  } : {
+    compose: "Compose",
+    drafts: "Drafts",
+    reply: "Reply",
+    replyAll: "Reply all",
+    forward: "Forward",
+    send: "Send",
+    to: "To",
+    cc: "Cc",
+    bcc: "Bcc",
+    subject: "Subject",
+    bodyPlaceholder: "Write email body…",
+    bodyLabel: "Email body",
+    saveDraftError: "Failed to save draft. Check mailbox and recipient fields.",
+    from: "From",
+    date: "Date",
+    htmlBody: "HTML body",
+    textBody: "Text body",
+    attachments: "Attachments",
+    noAttachments: "No attachments",
+    mimeMetadata: "MIME metadata",
+    messageId: "Message-ID",
+    inReplyTo: "In-Reply-To",
+    references: "References",
+    rawSize: "Raw size",
+    contentType: "Content-Type",
+    contentDisposition: "Disposition",
+    bytes: "bytes",
+    noSubject: "(no subject)",
+    mailbox: "Mailbox",
+    nativeProvider: "Native mailbox",
+    notConfigured: "Not configured",
+    syncing: "Syncing",
+    noDrafts: "No drafts yet. Compose or reply first, then save draft before sending.",
+    draftSent: "Draft sent.",
+    draftSaved: "Draft saved.",
+    noDraft: "No draft is being composed",
+    createMailboxFirst: "Create a mailbox before saving a draft",
+    composeTitle: "Compose CRM email draft",
+    composeHelp: "Save draft first, then send from Drafts after review.",
+    cancel: "Cancel",
+    saveDraft: "Save draft",
+    mailboxSettingsTitle: "CRM native mailbox settings",
+    mailboxSettingsHelp: "Use ImapFlow for inbox sync and Nodemailer for sending while Multica owns the mailbox workspace UI.",
+    providerLabel: "Provider: native IMAP/SMTP",
+    providerHelp: "Configure IMAP receive and SMTP send so inbox refresh, draft sending, and CRM linking stay inside Multica.",
+    step1: "1. Save IMAP/SMTP account",
+    step2: "2. Test connection",
+    step3: "3. Import messages",
+    secretRef: "IMAP secret reference",
+    secretRefHelp: "IMAP secret reference; password is stored in backend secret storage",
+    importRange: "Import range",
+    recent7: "Recent 7 days",
+    recent30: "Recent 30 days",
+    recent90: "Recent 90 days",
+    smtpUsername: "SMTP username",
+    smtpPassword: "SMTP app password",
+    transportNote: "Primary transport uses native IMAP/SMTP. Secrets stay in backend storage; this form shows CRM mailbox record and import range.",
+    checkProvider: "Check connection",
+    saveAndImport: "Save and import",
+    providerFolders: "Server folders",
+    fallbackMailbox: "sales@example.com",
+    providerStatusFallback: "Native IMAP/SMTP",
+    savingImporting: "Saving mailbox and importing selected range…",
+    mailboxSavedNoMessages: "Mailbox saved. No messages found in selected range.",
+    imported: (imported: number, skipped: number) => `Imported ${imported}; skipped ${skipped}.`,
+    fetched: (note: string, total: number) => `${note} ${total} messages fetched.`,
+    savedImported: (imported: number, skipped: number) => `Mailbox saved. Imported ${imported}; skipped ${skipped}.`,
+  };
   const [search, setSearch] = useState("");
   const [activeFolder, setActiveFolder] = useState<"inbox" | "sent" | "drafts" | "archived" | "starred" | "unlinked">("inbox");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -136,7 +275,6 @@ export function CRMEmailsPage() {
   });
   const mailboxes = mailboxData?.settings ?? [];
   const emailDrafts = draftsData?.drafts ?? [];
-  const syncRuns = syncRunsData?.runs ?? [];
 
   const folderThreads = useMemo(() => {
     return threads.filter((thread) => {
@@ -211,14 +349,14 @@ export function CRMEmailsPage() {
     onSuccess: (result) => {
       setPreviewMessages(result.messages);
       setSelectedPreviewUIDs(result.messages.map((message) => message.uid));
-      setMailboxStatus(`${result.note} ${result.total} messages fetched.`);
+      setMailboxStatus(emailCopy.fetched(result.note, result.total));
     },
   });
 
   const importPreviewMessages = useMutation({
     mutationFn: () => api.importCRMIMAP({ mailbox_id: mailboxDraft.id, folder: "INBOX", uids: selectedPreviewUIDs }),
     onSuccess: (result) => {
-      setMailboxStatus(`Imported ${result.imported}; skipped ${result.skipped}.`);
+      setMailboxStatus(emailCopy.imported(result.imported, result.skipped));
       setPreviewMessages([]);
       setSelectedPreviewUIDs([]);
       queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
@@ -226,15 +364,15 @@ export function CRMEmailsPage() {
   });
 
   const saveAndImportMailbox = async () => {
-    setMailboxStatus("Saving mailbox and importing selected range…");
+    setMailboxStatus(emailCopy.savingImporting);
     const setting = await saveMailbox.mutateAsync();
     const preview = await api.previewCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", limit: 500, range_days: importRangeDays });
     const uids = preview.messages.map((message) => message.uid);
     setPreviewMessages(preview.messages);
     setSelectedPreviewUIDs(uids);
-    if (!uids.length) { setMailboxStatus("Mailbox saved. No messages found in selected range."); return; }
+    if (!uids.length) { setMailboxStatus(emailCopy.mailboxSavedNoMessages); return; }
     const result = await api.importCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", uids });
-    setMailboxStatus(`Mailbox saved. Imported ${result.imported}; skipped ${result.skipped}.`);
+    setMailboxStatus(emailCopy.savedImported(result.imported, result.skipped));
     queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
   };
@@ -242,7 +380,7 @@ export function CRMEmailsPage() {
   const sendDraft = useMutation({
     mutationFn: (draftId: string) => api.sendCRMEmailDraft(draftId),
     onSuccess: () => {
-      setMailboxStatus("Draft sent.");
+      setMailboxStatus(emailCopy.draftSent);
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
       queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
@@ -253,9 +391,9 @@ export function CRMEmailsPage() {
 
   const saveEmailDraft = useMutation({
     mutationFn: async () => {
-      if (!composeDraft) throw new Error("No draft is being composed");
+      if (!composeDraft) throw new Error(emailCopy.noDraft);
       const mailboxId = composeDraft.mailboxId || mailboxes[0]?.id;
-      if (!mailboxId) throw new Error("Create a mailbox before saving a draft");
+      if (!mailboxId) throw new Error(emailCopy.createMailboxFirst);
       return api.createCRMEmailDraft({
         mailbox_id: mailboxId,
         thread_id: selectedThread?.id ?? null,
@@ -268,7 +406,7 @@ export function CRMEmailsPage() {
     },
     onSuccess: () => {
       setComposeDraft(null);
-      setMailboxStatus("Draft saved.");
+      setMailboxStatus(emailCopy.draftSaved);
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     },
   });
@@ -443,6 +581,10 @@ export function CRMEmailsPage() {
           {!isLoading && <Badge variant="secondary" className="tabular-nums">{threads.length}</Badge>}
         </div>
         <div className="flex items-center gap-2">
+          <Button size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("new")}>
+            <Send className="mr-1 size-3" />
+            {emailCopy.compose}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
             <Settings className="mr-1 size-3" />
             {t(($) => $.emails.mailbox_settings)}
@@ -454,18 +596,34 @@ export function CRMEmailsPage() {
         <aside className="flex min-h-0 flex-col border-r bg-card/80 p-3">
           <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
-            <div className="mt-2 truncate text-sm font-medium">{mailboxes[0]?.email ?? "sales@example.com"}</div>
+            <div className="mt-2 truncate text-sm font-medium">{mailboxes[0]?.email ?? emailEngineStatus?.account ?? emailCopy.fallbackMailbox}</div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Badge variant={mailboxes[0]?.last_test_status === "ok" ? "default" : "outline"}>IMAP/SMTP</Badge>
-              {mailboxes[0]?.sync_enabled ? <Badge variant="secondary">Sync enabled</Badge> : null}
+              <Badge variant={emailEngineStatus?.enabled && emailEngineStatus?.configured ? "default" : "outline"}>
+                {emailEngineStatus?.enabled ? emailCopy.nativeProvider : emailCopy.providerStatusFallback}
+              </Badge>
+              {emailEngineStatus?.state ? <Badge variant="secondary">{emailEngineStatus.state}</Badge> : null}
+              {emailEngineStatus?.syncing ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">{mailboxes[0]?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
           </div>
+          {emailEngineStatus?.folders?.length ? (
+            <div className="mb-3 rounded-lg border bg-background p-2">
+              <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{emailCopy.providerFolders}</div>
+              <div className="max-h-44 space-y-1 overflow-y-auto">
+                {emailEngineStatus.folders.map((folder) => (
+                  <div key={folder.path} className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs text-muted-foreground">
+                    <span className="truncate">{folder.name || folder.path}</span>
+                    <span className="shrink-0 tabular-nums">{folder.unread ? `${folder.unread}/` : ""}{folder.total}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <nav className="space-y-1" aria-label={t(($) => $.emails.folder_nav)}>
             {([
               ["inbox", Inbox, t(($) => $.emails.folder_inbox)],
               ["sent", MailOpen, t(($) => $.emails.folder_sent)],
-              ["drafts", Send, "Drafts"],
+              ["drafts", Send, emailCopy.drafts],
               ["archived", Archive, t(($) => $.emails.folder_archived)],
               ["starred", Star, t(($) => $.emails.folder_starred)],
               ["unlinked", Link2, t(($) => $.emails.folder_unlinked)],
@@ -498,17 +656,17 @@ export function CRMEmailsPage() {
             </section>
           ) : activeFolder === "drafts" ? (
             <section className="min-h-0 flex-1 overflow-y-auto p-3">
-              {emailDrafts.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No drafts yet. AI-generated replies will appear here before sending.</div> : emailDrafts.map((draft: any) => (
+              {emailDrafts.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : emailDrafts.map((draft: any) => (
                 <div key={draft.id} className="mb-2 rounded-lg border bg-card p-3 text-sm">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="truncate font-medium">{draft.subject || "(no subject)"}</div>
-                      <div className="truncate text-xs text-muted-foreground">To: {(draft.to_emails ?? []).join(", ") || "—"}</div>
+                      <div className="truncate font-medium">{draft.subject || emailCopy.noSubject}</div>
+                      <div className="truncate text-xs text-muted-foreground">{emailCopy.to}: {(draft.to_emails ?? []).join(", ") || "—"}</div>
                     </div>
                     <Badge variant="outline">{draft.status}</Badge>
                   </div>
                   <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
-                  <Button className="mt-3" size="sm" variant="outline" disabled={draft.status === "sent" || sendDraft.isPending} onClick={() => sendDraft.mutate(draft.id)}>Send</Button>
+                  <Button className="mt-3" size="sm" variant="outline" disabled={draft.status === "sent" || sendDraft.isPending} onClick={() => sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
                 </div>
               ))}
             </section>
@@ -564,9 +722,9 @@ export function CRMEmailsPage() {
                   <Button variant="outline" size="sm"><MailOpen className="mr-1 size-3" />{t(($) => $.emails.mark_read)}</Button>
                   <Button variant="outline" size="sm"><Archive className="mr-1 size-3" />{t(($) => $.emails.archive)}</Button>
                   <Button variant="outline" size="sm"><Star className="mr-1 size-3" />{t(($) => $.emails.star)}</Button>
-                  <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />Reply</Button>
-                  <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply-all")}>Reply all</Button>
-                  <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("forward")}>Forward</Button>
+                  <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />{emailCopy.reply}</Button>
+                  <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply-all")}>{emailCopy.replyAll}</Button>
+                  <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("forward")}>{emailCopy.forward}</Button>
                   <Button variant="outline" size="sm" disabled={!selectedAccount} onClick={openEmailLinkDialog}><Link2 className="mr-1 size-3" />{t(($) => $.emails.link_project_issue)}</Button>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -614,24 +772,40 @@ export function CRMEmailsPage() {
                           <div className="font-medium">{message.from_name || message.from_email || t(($) => $.common.not_available)}</div>
                           <div className="text-xs text-muted-foreground">{messageTime(message.sent_at || message.received_at)}</div>
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {message.to_emails.length > 0 ? `${t(($) => $.emails.to_label)}: ${message.to_emails.join(", ")}` : message.direction}
+                        <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                          <DetailRow label={emailCopy.from} value={[message.from_name, message.from_email].filter(Boolean).join(" <") + (message.from_name && message.from_email ? ">" : "")} />
+                          <DetailRow label={emailCopy.to} value={message.to_emails.join(", ")} />
+                          <DetailRow label={emailCopy.cc} value={message.cc_emails.join(", ")} />
+                          <DetailRow label={emailCopy.date} value={messageTime(message.sent_at || message.received_at)} />
                         </div>
-                        {message.body_html ? (
-                          <div className="mt-3 rounded-md border bg-muted/20 p-3 leading-6 text-foreground/80" dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(message.body_html) }} />
-                        ) : (
-                          <div className="mt-3 whitespace-pre-wrap leading-6 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
-                        )}
-                        {Array.isArray((message as any).attachments) && (message as any).attachments.length > 0 ? (
-                          <div className="mt-3 rounded-md border bg-muted/20 p-3 text-xs">
-                            <div className="mb-2 font-medium">{t(($) => $.emails.attachments)}</div>
-                            <ul className="space-y-1 text-muted-foreground">
-                              {(message as any).attachments.map((attachment: any, index: number) => (
-                                <li key={attachment.id ?? attachment.filename ?? index}>{attachment.filename ?? attachment.name ?? t(($) => $.emails.attachment)}{attachment.size ? ` · ${attachment.size}` : ""}</li>
+                        <div className="mt-4 rounded-md border bg-muted/20 p-3">
+                          <div className="mb-2 text-xs font-medium text-muted-foreground">{message.body_html ? emailCopy.htmlBody : emailCopy.textBody}</div>
+                          <div className="whitespace-pre-wrap leading-6 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
+                        </div>
+                        <div className="mt-3 rounded-md border bg-muted/20 p-3">
+                          <div className="text-xs font-medium text-muted-foreground">{emailCopy.attachments}</div>
+                          {message.attachments?.length ? (
+                            <div className="mt-2 space-y-2">
+                              {message.attachments.map((attachment, index) => (
+                                <div key={`${message.id}-attachment-${index}`} className="rounded border bg-background px-3 py-2 text-xs">
+                                  <div className="font-medium">{attachment.filename || attachment.content_id || emailCopy.attachments}</div>
+                                  <div className="mt-1 text-muted-foreground">{[attachment.content_type, attachment.disposition, `${attachment.size_bytes} ${emailCopy.bytes}`].filter(Boolean).join(" · ")}</div>
+                                </div>
                               ))}
-                            </ul>
+                            </div>
+                          ) : <div className="mt-2 text-xs text-muted-foreground">{emailCopy.noAttachments}</div>}
+                        </div>
+                        <details className="mt-3 rounded-md border bg-muted/20 p-3 text-xs">
+                          <summary className="cursor-pointer font-medium text-muted-foreground">{emailCopy.mimeMetadata}</summary>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <DetailRow label={emailCopy.messageId} value={message.external_message_id} />
+                            <DetailRow label={emailCopy.inReplyTo} value={message.in_reply_to} />
+                            <DetailRow label={emailCopy.references} value={message.reference_ids?.join(", ")} />
+                            <DetailRow label={emailCopy.rawSize} value={message.raw_size_bytes ? `${message.raw_size_bytes} ${emailCopy.bytes}` : ""} />
+                            <DetailRow label={emailCopy.contentType} value={message.raw_headers?.["Content-Type"]?.join(", ") ?? message.raw_headers?.["content-type"]?.join(", ")} />
+                            <DetailRow label={emailCopy.contentDisposition} value={message.raw_headers?.["Content-Disposition"]?.join(", ") ?? message.raw_headers?.["content-disposition"]?.join(", ")} />
                           </div>
-                        ) : null}
+                        </details>
                       </article>
                     ))}
                   </div>
@@ -768,36 +942,36 @@ export function CRMEmailsPage() {
       <Dialog open={composeDraft !== null} onOpenChange={(open) => !open && setComposeDraft(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Compose CRM email draft</DialogTitle>
-            <DialogDescription>Save the reply as a draft first, then send it from Drafts after review.</DialogDescription>
+            <DialogTitle>{emailCopy.composeTitle}</DialogTitle>
+            <DialogDescription>{emailCopy.composeHelp}</DialogDescription>
           </DialogHeader>
           {composeDraft && (
             <div className="space-y-3">
               <label className="space-y-1 text-sm">
-                <span className="text-xs font-medium text-muted-foreground">Mailbox</span>
+                <span className="text-xs font-medium text-muted-foreground">{emailCopy.mailbox}</span>
                 <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.mailboxId} onChange={(event) => setComposeDraft({ ...composeDraft, mailboxId: event.target.value })}>
                   {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
                 </select>
               </label>
-              <Input aria-label="To" placeholder="To" value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
+              <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
               <div className="grid gap-3 sm:grid-cols-2">
-                <Input aria-label="Cc" placeholder="Cc" value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
-                <Input aria-label="Bcc" placeholder="Bcc" value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
+                <Input aria-label={emailCopy.cc} placeholder={emailCopy.cc} value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
+                <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
               </div>
-              <Input aria-label="Subject" placeholder="Subject" value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
+              <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
               <textarea
-                aria-label="Email body"
+                aria-label={emailCopy.bodyLabel}
                 className="min-h-48 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                placeholder="Write the email body..."
+                placeholder={emailCopy.bodyPlaceholder}
                 value={composeDraft.body}
                 onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })}
               />
             </div>
           )}
-          {saveEmailDraft.isError && <p className="text-xs text-destructive">Failed to save draft. Check mailbox and recipient fields.</p>}
+          {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setComposeDraft(null)}>Cancel</Button>
-            <Button disabled={!composeDraft?.to.trim() || !composeDraft?.subject.trim() || !composeDraft?.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>Save draft</Button>
+            <Button variant="outline" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
+            <Button disabled={!composeDraft?.to.trim() || !composeDraft?.subject.trim() || !composeDraft?.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -806,24 +980,28 @@ export function CRMEmailsPage() {
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>CRM mailbox settings</DialogTitle>
-            <DialogDescription>
-              Multica stores mailbox ownership, encrypted IMAP credentials, SMTP settings, import range, and CRM linkage here.
-            </DialogDescription>
+            <DialogTitle>{emailCopy.mailboxSettingsTitle}</DialogTitle>
+            <DialogDescription>{emailCopy.mailboxSettingsHelp}</DialogDescription>
           </DialogHeader>
           <div className="rounded-lg border bg-muted/30 p-4 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="font-medium">Provider: IMAP + SMTP</div>
-                <p className="mt-1 text-xs text-muted-foreground">Use IMAP for import/sync and SMTP for human-approved sending. Credentials stay server-side and are not echoed back to the browser.</p>
+                <div className="font-medium">{emailCopy.providerLabel}</div>
+                <p className="mt-1 text-xs text-muted-foreground">{emailCopy.providerHelp}</p>
               </div>
-              <Badge variant="outline">Active backend</Badge>
+              <Badge variant="outline">{emailCopy.nativeProvider}</Badge>
             </div>
             <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-              <div className="rounded-md border bg-background px-3 py-2">1. Save encrypted mailbox credentials</div>
-              <div className="rounded-md border bg-background px-3 py-2">2. Import selected date range</div>
-              <div className="rounded-md border bg-background px-3 py-2">3. Draft and send from Multica CRM</div>
+              <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step1}</div>
+              <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step2}</div>
+              <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step3}</div>
             </div>
+          </div>
+          <div className="grid gap-3 rounded-lg border bg-background p-3 text-xs sm:grid-cols-4">
+            <DetailRow label="Account" value={mailboxes[0]?.email ?? emailEngineStatus?.account} />
+            <DetailRow label="State" value={mailboxes[0]?.last_test_status ?? emailEngineStatus?.state ?? (mailboxes.length ? "configured" : "not configured")} />
+            <DetailRow label="Folders" value={String(emailEngineStatus?.folders?.length ?? 0)} />
+            <DetailRow label="Transport" value="imap_smtp" />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <select
@@ -845,7 +1023,7 @@ export function CRMEmailsPage() {
               <option value="none">{t(($) => $.emails.tls_none)}</option>
             </select>
             <Input aria-label={t(($) => $.emails.username)} placeholder={t(($) => $.emails.username)} value={mailboxDraft.username} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, username: event.target.value }))} />
-            <Input className="sm:col-span-2" aria-label="Secret reference" placeholder="Existing secret reference (optional)" value={mailboxDraft.secret_ref} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, secret_ref: event.target.value }))} />
+            <Input className="sm:col-span-2" aria-label={emailCopy.secretRef} placeholder={emailCopy.secretRefHelp} value={mailboxDraft.secret_ref} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, secret_ref: event.target.value }))} />
             <label className="space-y-1 text-sm sm:col-span-2">
               <span className="text-xs font-medium text-muted-foreground">Bind mailbox to member or AI agent</span>
               <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={`${mailboxDraft.owner_type}:${mailboxDraft.owner_id}`} onChange={(event) => { const [owner_type, owner_id] = event.target.value.split(":"); setMailboxDraft((draft) => ({ ...draft, owner_type: owner_type || "", owner_id: owner_id || "" })); }}>
@@ -869,10 +1047,10 @@ export function CRMEmailsPage() {
               <option value="ssl">SMTP SSL</option>
               <option value="starttls">SMTP STARTTLS</option>
             </select>
-            <Input aria-label="SMTP username" placeholder="SMTP username" value={mailboxDraft.smtp_username} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, smtp_username: event.target.value }))} />
-            <Input className="sm:col-span-2" aria-label="SMTP password" placeholder="SMTP app password" value={mailboxDraft.smtp_secret} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, smtp_secret: event.target.value }))} />
+            <Input aria-label={emailCopy.smtpUsername} placeholder={emailCopy.smtpUsername} value={mailboxDraft.smtp_username} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, smtp_username: event.target.value }))} />
+            <Input className="sm:col-span-2" aria-label={emailCopy.smtpPassword} placeholder={emailCopy.smtpPassword} value={mailboxDraft.smtp_secret} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, smtp_secret: event.target.value }))} />
           </div>
-          <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">IMAP imports incoming mail. SMTP sends drafts only after human confirmation. Password fields update server-side secrets and are not displayed after save.</p>
+          <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">{emailCopy.transportNote}</p>
           {mailboxStatus ? <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">{mailboxStatus}</p> : null}
           <div className="rounded-md border bg-muted/20 p-3 text-xs">
             <div className="mb-2 flex items-center justify-between font-medium">
@@ -918,8 +1096,8 @@ export function CRMEmailsPage() {
           ) : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setSettingsOpen(false); setMailboxStatus(null); }}>{t(($) => $.actions.cancel)}</Button>
-            <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.id} onClick={() => testMailbox.mutate()}>Test IMAP/SMTP</Button>
-            <Button disabled={saveMailbox.isPending || previewMailbox.isPending || importPreviewMessages.isPending || !mailboxDraft.label || !mailboxDraft.email} onClick={() => void saveAndImportMailbox()}>保存并导入</Button>
+            <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.id} onClick={() => testMailbox.mutate()}>{emailCopy.checkProvider}</Button>
+            <Button disabled={saveMailbox.isPending || previewMailbox.isPending || importPreviewMessages.isPending || !mailboxDraft.label || !mailboxDraft.email} onClick={() => void saveAndImportMailbox()}>{emailCopy.saveAndImport}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

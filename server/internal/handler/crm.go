@@ -2203,7 +2203,9 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		if !message.Date.IsZero() {
 			receivedAt = pgtype.Timestamptz{Time: message.Date, Valid: true}
 		}
-		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, direction) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'inbound')`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), message.References, cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), message.ToEmails, message.CcEmails, cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&message.BodyHTML), cleanOptionalText(&message.Snippet))
+		rawHeadersJSON, _ := json.Marshal(message.RawHeaders)
+		attachmentsJSON, _ := json.Marshal(message.Attachments)
+		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'inbound')`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), message.References, cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), message.ToEmails, message.CcEmails, cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&message.BodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON)
 		if execErr != nil {
 			return imported, skipped, execErr
 		}
