@@ -277,6 +277,7 @@ type CRMEmailThreadResponse struct {
 	MessageCount     int64    `json:"message_count"`
 	IsRead           bool     `json:"is_read"`
 	IsStarred        bool     `json:"is_starred"`
+	IsTrashed        bool     `json:"is_trashed"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
 }
@@ -300,6 +301,7 @@ type crmEmailThreadRow struct {
 	MessageCount     int64
 	IsRead           bool
 	IsStarred        bool
+	IsTrashed        bool
 }
 
 type CRMEmailMessageResponse struct {
@@ -448,6 +450,7 @@ func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
 		MessageCount:     row.MessageCount,
 		IsRead:           row.IsRead,
 		IsStarred:        row.IsStarred,
+		IsTrashed:        row.IsTrashed,
 		CreatedAt:        timestampToString(row.CreatedAt),
 		UpdatedAt:        timestampToString(row.UpdatedAt),
 	}
@@ -1430,7 +1433,7 @@ func (h *Handler) scanCRMEmailThread(row pgx.Row) (crmEmailThreadRow, error) {
 		&thread.ID, &thread.WorkspaceID, &thread.AccountID, &thread.ContactID, &thread.ProjectID, &thread.IssueID,
 		&thread.Subject, &thread.ExternalThreadID, &thread.Mailbox, &thread.Direction,
 		&thread.Status, &thread.LastMessageAt, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.MessageCount, &thread.IsRead, &thread.IsStarred,
+		&thread.MessageCount, &thread.IsRead, &thread.IsStarred, &thread.IsTrashed,
 	)
 	return thread, err
 }
@@ -1451,7 +1454,7 @@ func (h *Handler) getCRMEmailThread(w http.ResponseWriter, r *http.Request, thre
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
 		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
-		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred
+		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
 		FROM crm_email_thread t
 		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
 		WHERE t.id = $1 AND t.workspace_id = $2
@@ -1480,7 +1483,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
-		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred
+		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
 		FROM crm_email_thread t
 		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
 		WHERE t.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2)
@@ -3521,7 +3524,15 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd, err := h.DB.Exec(r.Context(),
-		`UPDATE crm_email_thread SET mailbox=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		`UPDATE crm_email_thread
+		 SET mailbox=$3,
+		     status = CASE $3
+		       WHEN 'archived' THEN 'archived'
+		       ELSE 'open'
+		     END,
+		     is_trashed = CASE $3 WHEN 'trash' THEN true ELSE false END,
+		     updated_at=now()
+		 WHERE id=$1 AND workspace_id=$2`,
 		threadID, workspaceID, req.Folder)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to move CRM email thread")
@@ -3587,14 +3598,14 @@ func (h *Handler) GetCRMIMAPDiagnostics(w http.ResponseWriter, r *http.Request) 
 
 	diags := make([]CRMIMAPMailboxDiag, 0)
 	for rows.Next() {
-		var id, workspaceIDVal pgtype.UUID
+		var id pgtype.UUID
 		var label, email, host, tlsMode, username, secretRef, lastTestStatus, lastTestMessage, ownerType, ownerID, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef string
 		var port, smtpPort int32
 		var syncEnabled bool
 		var lastTestedAt pgtype.Timestamptz
 		var createdAt, updatedAt pgtype.Timestamptz
 
-		if err := rows.Scan(&id, &workspaceIDVal, &label, &email, &host, &port, &tlsMode, &username, &secretRef, &syncEnabled, &lastTestStatus, &lastTestMessage, &lastTestedAt, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &label, &email, &host, &port, &tlsMode, &username, &secretRef, &syncEnabled, &lastTestStatus, &lastTestMessage, &lastTestedAt, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef, &createdAt, &updatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scan IMAP mailbox")
 			return
 		}
