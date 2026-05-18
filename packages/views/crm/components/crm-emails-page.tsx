@@ -444,7 +444,7 @@ export function CRMEmailsPage() {
     starred: mailboxThreads.filter((thread) => thread.is_starred && !thread.is_trashed).length,
     unlinked: mailboxThreads.filter((thread) => !thread.account_id && !thread.is_trashed).length,
     trash: mailboxThreads.filter((thread) => thread.status === "trashed" || thread.is_trashed).length,
-  } as const, [mailboxThreads, mailboxDrafts]);
+  } as const), [mailboxThreads, mailboxDrafts]);
 
   const saveMailbox = useMutation({
     mutationFn: () => api.upsertCRMIMAPSetting({
