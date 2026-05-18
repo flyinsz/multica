@@ -296,6 +296,11 @@ export function CRMEmailsPage() {
   const emailDrafts = draftsData?.drafts ?? [];
   const syncRuns = syncRunsData?.runs ?? [];
 
+  const activeSyncRuns = useMemo(() => {
+    const cutoff = Date.now() - 2 * 60 * 1000;
+    return syncRuns.filter((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
+  }, [syncRuns]);
+
   const folderThreads = useMemo(() => {
     return threads.filter((thread) => {
       if (activeFolder === "sent") return thread.direction === "outbound";
@@ -688,7 +693,7 @@ export function CRMEmailsPage() {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge variant={selectedMailbox?.last_test_status === "ok" ? "default" : "outline"}>{emailCopy.nativeProvider}</Badge>
               {selectedMailbox?.last_test_status ? <Badge variant="secondary">{selectedMailbox.last_test_status}</Badge> : null}
-              {syncRuns.some((run: any) => run.status === "running" && (!selectedMailbox || run.mailbox_id === selectedMailbox.id)) ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
+              {activeSyncRuns.some((run: any) => !selectedMailbox || run.mailbox_id === selectedMailbox.id) ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">{selectedMailbox?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
             {selectedMailbox ? (
