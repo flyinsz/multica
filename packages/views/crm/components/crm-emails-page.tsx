@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, UserRound } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -286,7 +286,7 @@ export function CRMEmailsPage() {
     queryFn: () => api.listCRMIMAPSettings(),
     enabled: Boolean(wsId),
   });
-  const { data: syncRunsData } = useQuery({
+  const { data: syncRunsData, dataUpdatedAt: syncRunsUpdatedAt } = useQuery({
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),
     enabled: Boolean(wsId),
@@ -301,6 +301,15 @@ export function CRMEmailsPage() {
     const cutoff = Date.now() - 2 * 60 * 1000;
     return syncRuns.filter((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
   }, [syncRuns]);
+
+  useEffect(() => {
+    if (!wsId || !syncRunsUpdatedAt) return;
+    const latest = syncRuns[0];
+    if (!latest || latest.status === "running") return;
+    queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+    queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
+    queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
+  }, [queryClient, syncRuns, syncRunsUpdatedAt, wsId]);
 
   const folderThreads = useMemo(() => {
     return threads.filter((thread) => {
@@ -691,28 +700,14 @@ export function CRMEmailsPage() {
               {mailboxes.length === 0 ? <option value="">{emailCopy.fallbackMailbox}</option> : null}
               {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label || mailbox.email}</option>)}
             </select>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Badge variant={selectedMailbox?.last_test_status === "ok" ? "default" : "outline"}>{emailCopy.nativeProvider}</Badge>
-              {selectedMailbox?.last_test_status ? <Badge variant="secondary">{selectedMailbox.last_test_status}</Badge> : null}
-              {activeSyncRuns.some((run: any) => !selectedMailbox || run.mailbox_id === selectedMailbox.id) ? <Badge variant="secondary">{emailCopy.syncing}</Badge> : null}
-            </div>
-            <div className="mt-2 text-xs text-muted-foreground">{selectedMailbox?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
+            {activeSyncRuns.some((run: any) => !selectedMailbox || run.mailbox_id === selectedMailbox.id) ? (
+              <div className="mt-2 text-xs text-muted-foreground">{emailCopy.syncing}…</div>
+            ) : null}
             {selectedMailbox ? (
               <Button className="mt-3 w-full" size="sm" variant="outline" disabled={refreshMailbox.isPending} onClick={() => refreshMailbox.mutate()}>
                 {refreshMailbox.isPending ? emailCopy.syncing : "Refresh new mail"}
               </Button>
             ) : null}
-            <details className="mt-3 rounded-md border bg-muted/20 p-2 text-xs">
-              <summary className="cursor-pointer font-medium text-muted-foreground">Sync progress / history</summary>
-              <div className="mt-2 space-y-1 text-muted-foreground">
-                {syncRuns.length === 0 ? <p>No import runs yet.</p> : syncRuns.slice(0, 5).map((run: any) => (
-                  <div key={run.id} className="rounded bg-background px-2 py-1">
-                    <div className="truncate">{run.mailbox_email || run.folder || "INBOX"} · {run.status}</div>
-                    <div className="tabular-nums">fetched {run.fetched_count ?? 0} / imported {run.imported_count ?? 0} / skipped {run.skipped_count ?? 0}</div>
-                  </div>
-                ))}
-              </div>
-            </details>
           </div>
           <nav className="space-y-1" aria-label={t(($) => $.emails.folder_nav)}>
             {([
@@ -1133,7 +1128,6 @@ export function CRMEmailsPage() {
                 <div className="font-medium">{emailCopy.providerLabel}</div>
                 <p className="mt-1 text-xs text-muted-foreground">{emailCopy.providerHelp}</p>
               </div>
-              <Badge variant="outline">{emailCopy.nativeProvider}</Badge>
             </div>
             <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
               <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step1}</div>
@@ -1141,10 +1135,8 @@ export function CRMEmailsPage() {
               <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step3}</div>
             </div>
           </div>
-          <div className="grid gap-3 rounded-lg border bg-background p-3 text-xs sm:grid-cols-4">
+          <div className="grid gap-3 rounded-lg border bg-background p-3 text-xs sm:grid-cols-2">
             <DetailRow label="Account" value={mailboxes[0]?.email} />
-            <DetailRow label="State" value={mailboxes[0]?.last_test_status ?? (mailboxes.length ? "configured" : "not configured")} />
-            <DetailRow label="Sync runs" value={String(syncRuns.length)} />
             <DetailRow label="Transport" value="imap_smtp" />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
