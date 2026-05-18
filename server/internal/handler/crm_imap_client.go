@@ -298,6 +298,14 @@ func parseCRMIMAPMessage(uid, raw string) crmIMAPFetchedMessage {
 	if strings.TrimSpace(msg.BodyText) == "" {
 		msg.BodyText = string(rawBody)
 	}
+	if text, html := extractEmbeddedCRMIMAPBodies(msg.BodyText); text != "" || html != "" {
+		if text != "" {
+			msg.BodyText = text
+		}
+		if html != "" {
+			msg.BodyHTML = html
+		}
+	}
 	msg.Snippet = makeSnippet(msg.BodyText)
 	return msg
 }
@@ -478,6 +486,57 @@ func extractReadableEmailBodies(contentType string, body []byte) (string, string
 		return htmlToPlainText(decoded), decoded
 	}
 	return decoded, ""
+}
+
+func extractEmbeddedCRMIMAPBodies(value string) (string, string) {
+	if !strings.Contains(strings.ToLower(value), "content-type:") {
+		return "", ""
+	}
+	normalized := strings.ReplaceAll(value, "\r\n", "\n")
+	parts := strings.Split(normalized, "\nContent-Type:")
+	if len(parts) < 2 {
+		parts = strings.Split(normalized, "\ncontent-type:")
+	}
+	var textBody, htmlBody string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(part), "content-type:") {
+			part = "Content-Type: " + part
+		}
+		sections := strings.SplitN(part, "\n\n", 2)
+		if len(sections) != 2 {
+			continue
+		}
+		headerText := sections[0]
+		bodyText := strings.TrimSpace(sections[1])
+		lines := strings.Split(headerText, "\n")
+		contentType := ""
+		encoding := ""
+		for _, line := range lines {
+			lower := strings.ToLower(strings.TrimSpace(line))
+			switch {
+			case strings.HasPrefix(lower, "content-type:"):
+				contentType = strings.TrimSpace(line[len("Content-Type:"):])
+			case strings.HasPrefix(lower, "content-transfer-encoding:"):
+				encoding = strings.TrimSpace(line[len("Content-Transfer-Encoding:"):])
+			}
+		}
+		mediaType, _, _ := mime.ParseMediaType(contentType)
+		decoded := decodeTransferBody([]byte(bodyText), encoding)
+		switch {
+		case strings.EqualFold(mediaType, "text/plain") && textBody == "":
+			textBody = decoded
+		case strings.EqualFold(mediaType, "text/html") && htmlBody == "":
+			htmlBody = decoded
+		}
+	}
+	if textBody == "" && htmlBody != "" {
+		textBody = htmlToPlainText(htmlBody)
+	}
+	return strings.TrimSpace(textBody), strings.TrimSpace(htmlBody)
 }
 
 func decodeTransferBody(body []byte, encoding string) string {
