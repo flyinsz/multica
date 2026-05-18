@@ -505,7 +505,7 @@ export function CRMEmailsPage() {
   const filteredComposeAccounts = useMemo(() => {
     const q = composeAccountSearch.trim().toLowerCase();
     if (!q) return accounts;
-    return accounts.filter((account) => [account.name, account.code, account.website, account.industry, account.country]
+    return accounts.filter((account) => [account.name, account.website, account.industry, account.country]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(q)));
   }, [accounts, composeAccountSearch]);
