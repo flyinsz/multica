@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Search, Send, Settings, Star, UserRound } from "lucide-react";
+import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, UserRound } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -36,7 +36,8 @@ type AssociationDraft = {
 
 type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
-type ComposeDraft = { draftId?: string; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string };
+type ComposeAttachment = { file_name: string; content_type: string; content: string; size: number };
+type ComposeDraft = { draftId?: string; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; attachments: ComposeAttachment[] };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -88,16 +89,6 @@ function DetailRow({ label, value }: { label: string; value?: string | null }) {
       <div className="mt-1 truncate text-sm">{value || "—"}</div>
     </div>
   );
-}
-
-function sanitizeEmailHtml(html?: string | null) {
-  if (!html) return "";
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/\son\w+="[^"]*"/gi, "")
-    .replace(/\son\w+='[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
 }
 
 function mutationErrorMessage(error: unknown, fallback: string) {
@@ -281,6 +272,7 @@ export function CRMEmailsPage() {
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
+  const composeFullWidth = Boolean(composeDraft);
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
@@ -473,6 +465,7 @@ export function CRMEmailsPage() {
         bcc_emails: composeDraft.bcc.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean),
         subject: composeDraft.subject.trim(),
         body_text: composeDraft.body,
+        attachments: composeDraft.attachments.map(({ file_name, content_type, content }) => ({ file_name, content_type, content })),
       };
       return composeDraft.draftId ? api.updateCRMEmailDraft(composeDraft.draftId, payload) : api.createCRMEmailDraft(payload);
     },
@@ -565,6 +558,7 @@ export function CRMEmailsPage() {
       bcc: "",
       subject,
       body: mode === "forward" ? "\n\n---- Forwarded message ----\n" : "",
+      attachments: [],
     });
   };
 
@@ -737,7 +731,7 @@ export function CRMEmailsPage() {
           <Button className="mt-auto" variant="outline" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{t(($) => $.emails.add_mailbox)}</Button>
         </aside>
 
-        <aside className="flex min-h-0 flex-col border-r bg-background">
+        <aside className={`min-h-0 flex-col border-r bg-background ${composeFullWidth ? "hidden" : "flex"}`}>
           <div className="border-b p-3">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -762,7 +756,7 @@ export function CRMEmailsPage() {
                   </div>
                   <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
                   <div className="mt-3 flex gap-2">
-                    <Button size="sm" variant="outline" disabled={draft.status === "sent"} onClick={() => setComposeDraft({ draftId: draft.id, mailboxId: draft.mailbox_id ?? selectedMailbox?.id ?? "", accountId: draft.account_id ?? "", contactId: draft.contact_id ?? "", to: (draft.to_emails ?? []).join(", "), cc: (draft.cc_emails ?? []).join(", "), bcc: (draft.bcc_emails ?? []).join(", "), subject: draft.subject ?? "", body: draft.body_text ?? "" })}>Edit</Button>
+                    <Button size="sm" variant="outline" disabled={draft.status === "sent"} onClick={() => setComposeDraft({ draftId: draft.id, mailboxId: draft.mailbox_id ?? selectedMailbox?.id ?? "", accountId: draft.account_id ?? "", contactId: draft.contact_id ?? "", to: (draft.to_emails ?? []).join(", "), cc: (draft.cc_emails ?? []).join(", "), bcc: (draft.bcc_emails ?? []).join(", "), subject: draft.subject ?? "", body: draft.body_text ?? "", attachments: Array.isArray(draft.attachments) ? draft.attachments.map((attachment: any) => ({ file_name: attachment.file_name || attachment.filename || "attachment", content_type: attachment.content_type || "application/octet-stream", content: attachment.content || "", size: attachment.size || attachment.size_bytes || 0 })) : [] })}>Edit</Button>
                     <Button size="sm" variant="outline" disabled={draft.status === "sent" || sendDraft.isPending} onClick={() => sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
                   </div>
                 </div>
@@ -783,7 +777,7 @@ export function CRMEmailsPage() {
               {filteredThreads.map((thread) => {
                 const active = selectedThread?.id === thread.id;
                 return (
-                  <button key={thread.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => setSelectedThreadId(thread.id)}>
+                  <button key={thread.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => { setSelectedThreadId(thread.id); if (!thread.is_read) updateThreadState.mutate({ threadId: thread.id, data: { is_read: true } }); }}>
                     <div className="flex items-start justify-between gap-2">
                       <div className={`min-w-0 flex-1 truncate ${thread.is_read ? "font-medium text-foreground/80" : "font-bold text-foreground"}`}>{thread.subject}</div>
                       {!thread.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
@@ -798,10 +792,8 @@ export function CRMEmailsPage() {
           )}
         </aside>
 
-        <section className="min-h-0 overflow-hidden bg-background">
-          {!selectedThread ? (
-            <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.select_thread)}</div>
-          ) : composeDraft ? (
+        <section className={`min-h-0 overflow-hidden bg-background ${composeFullWidth ? "lg:col-span-2" : ""}`}>
+          {composeDraft ? (
             <div className="flex h-full min-h-0 flex-col bg-background">
               <div className="border-b p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -820,29 +812,16 @@ export function CRMEmailsPage() {
                       {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
                     </select>
                   </label>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="space-y-1 text-sm">
-                      <span className="text-xs font-medium text-muted-foreground">Customer</span>
-                      <Input className="mb-2" placeholder="Search customer" value={composeAccountSearch} onChange={(event) => setComposeAccountSearch(event.target.value)} />
-                      <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.accountId} onChange={(event) => setComposeDraft({ ...composeDraft, accountId: event.target.value, contactId: "", to: "" })}>
-                        <option value="">No customer</option>
-                        {filteredComposeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-                      </select>
-                    </label>
-                    <label className="space-y-1 text-sm">
-                      <span className="text-xs font-medium text-muted-foreground">Contact / recipient</span>
-                      <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.contactId} onChange={(event) => { const contact = composeAccountContacts.find((item: any) => item.id === event.target.value) as any; setComposeDraft({ ...composeDraft, contactId: event.target.value, to: contact?.email ?? composeDraft.to }); }} disabled={!composeDraft.accountId}>
-                        <option value="">Manual recipient</option>
-                        {composeAccountContacts.map((contact: any) => <option key={contact.id} value={contact.id}>{contact.name}{contact.email ? ` · ${contact.email}` : ""}</option>)}
-                      </select>
-                    </label>
-                  </div>
                   <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onClick={() => setComposeRecipientPickerOpen(true)} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Input aria-label={emailCopy.cc} placeholder={emailCopy.cc} value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
                     <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
                   </div>
                   <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
+                  <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                    <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground"><span>{emailCopy.attachments}</span><label className="inline-flex cursor-pointer items-center gap-1 rounded border bg-background px-2 py-1 hover:bg-muted"><Paperclip className="size-3" />添加附件<input type="file" multiple className="hidden" onChange={async (event) => { const files = Array.from(event.target.files ?? []); const added = await Promise.all(files.map((file) => new Promise<ComposeAttachment>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ file_name: file.name, content_type: file.type || "application/octet-stream", content: String(reader.result || "").split(",")[1] || "", size: file.size }); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }))); setComposeDraft({ ...composeDraft, attachments: [...composeDraft.attachments, ...added] }); event.currentTarget.value = ""; }} /></label></div>
+                    {composeDraft.attachments.length ? <div className="space-y-2">{composeDraft.attachments.map((attachment, index) => <div key={`${attachment.file_name}-${index}`} className="flex items-center justify-between rounded border bg-background px-3 py-2 text-xs"><span className="truncate">{attachment.file_name} · {Math.ceil(attachment.size / 1024)} KB</span><Button variant="ghost" size="sm" onClick={() => setComposeDraft({ ...composeDraft, attachments: composeDraft.attachments.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-3" /></Button></div>)}</div> : <div className="text-xs text-muted-foreground">{emailCopy.noAttachments}</div>}
+                  </div>
                   <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
                   {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
                   <div className="flex justify-end gap-2 border-t pt-3">
@@ -853,6 +832,8 @@ export function CRMEmailsPage() {
                 </div>
               </div>
             </div>
+          ) : !selectedThread ? (
+            <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.select_thread)}</div>
           ) : (
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b bg-background p-5">

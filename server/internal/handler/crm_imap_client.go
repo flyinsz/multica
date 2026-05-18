@@ -564,7 +564,8 @@ func decodeTransferBody(body []byte, encoding string) string {
 }
 
 func htmlToPlainText(value string) string {
-	value = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</\1>`).ReplaceAllString(value, " ")
+	value = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`).ReplaceAllString(value, " ")
+	value = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`).ReplaceAllString(value, " ")
 	value = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(value, "\n")
 	value = regexp.MustCompile(`(?i)</p>`).ReplaceAllString(value, "\n")
 	value = regexp.MustCompile(`(?s)<[^>]+>`).ReplaceAllString(value, " ")
