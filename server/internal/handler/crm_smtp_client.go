@@ -18,7 +18,9 @@ import (
 type crmEmailAttachment struct {
 	FileName    string `json:"file_name"`
 	ContentType string `json:"content_type"`
-	Content     string `json:"content"`
+	Content     string `json:"content,omitempty"`
+	ContentID   string `json:"content_id,omitempty"`
+	Size        int    `json:"size_bytes"`
 }
 
 type crmEmailSendPayload struct {

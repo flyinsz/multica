@@ -1399,10 +1399,55 @@ export class ApiClient {
     });
   }
 
-  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean }): Promise<CRMEmailThread> {
+  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived" | "trashed"; is_read?: boolean; is_starred?: boolean }): Promise<CRMEmailThread> {
     return this.fetch(`/api/crm/email-threads/${threadId}/state`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+  }
+
+  getCRMEmailAttachmentUrl(wsId: string, messageId: string, attachmentIndex: number): string {
+    return `/api/crm/${wsId}/email-messages/${messageId}/attachment/${attachmentIndex}`;
+  }
+
+  async trashCRMEmailThread(wsId: string, threadId: string): Promise<void> {
+    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/trash`, { method: "POST" });
+  }
+
+  async restoreCRMEmailThread(wsId: string, threadId: string): Promise<void> {
+    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/restore`, { method: "POST" });
+  }
+
+  async deleteCRMEmailThread(wsId: string, threadId: string): Promise<void> {
+    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/delete`, { method: "POST" });
+  }
+
+  async moveCRMEmailThread(wsId: string, threadId: string, folder: string): Promise<void> {
+    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/move-folder`, {
+      method: "POST",
+      body: JSON.stringify({ folder }),
+    });
+  }
+
+  async getCRMIMAPDiagnostics(wsId: string): Promise<unknown> {
+    return this.fetch(`/api/crm/${wsId}/imap/diagnostics`);
+  }
+
+  async testCRMIMAPConnection(wsId: string, config: Record<string, unknown>): Promise<unknown> {
+    return this.fetch(`/api/crm/${wsId}/imap/test-connection`, {
+      method: "POST",
+      body: JSON.stringify(config),
+    });
+  }
+
+  async listCRMIMAPSyncErrors(wsId: string): Promise<unknown> {
+    return this.fetch(`/api/crm/${wsId}/sync-runs/errors`);
+  }
+
+  async toggleCRMIMAPSyncCron(wsId: string, mailboxId: string, sync_enabled: boolean): Promise<unknown> {
+    return this.fetch(`/api/crm/${wsId}/imap/${mailboxId}/sync-cron`, {
+      method: "POST",
+      body: JSON.stringify({ sync_enabled }),
     });
   }
 

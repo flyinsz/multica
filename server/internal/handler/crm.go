@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -3400,4 +3401,361 @@ func (h *Handler) UpdateCRMAISetting(w http.ResponseWriter, r *http.Request) {
 	item.Config = json.RawMessage(configOut)
 	item.LastResult = json.RawMessage(lastResultOut)
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	messageID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "messageId"), "message id")
+	if !ok {
+		return
+	}
+	indexStr := chi.URLParam(r, "attachmentIndex")
+	index, err := strconv.Atoi(indexStr)
+	if err != nil || index < 0 {
+		writeError(w, http.StatusBadRequest, "invalid attachment index")
+		return
+	}
+	var attachmentsJSON []byte
+	if err := h.DB.QueryRow(r.Context(),
+		`SELECT attachments FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
+		messageID, workspaceID).Scan(&attachmentsJSON); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "CRM email message not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load CRM email message")
+		return
+	}
+	if len(attachmentsJSON) == 0 {
+		writeError(w, http.StatusNotFound, "no attachments on this message")
+		return
+	}
+	var attachments []crmEmailAttachment
+	if err := json.Unmarshal(attachmentsJSON, &attachments); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse attachments")
+		return
+	}
+	if index >= len(attachments) {
+		writeError(w, http.StatusNotFound, "attachment index out of range")
+		return
+	}
+	att := attachments[index]
+	raw, err := base64.StdEncoding.DecodeString(att.Content)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode attachment content")
+		return
+	}
+	w.Header().Set("Content-Type", att.ContentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+att.FileName+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	threadID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "threadId"), "thread id")
+	if !ok {
+		return
+	}
+	cmd, err := h.DB.Exec(r.Context(),
+		`UPDATE crm_email_thread SET status='trashed', is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		threadID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to trash CRM email thread")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "CRM email thread not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) RestoreCRMEmailThread(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	threadID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "threadId"), "thread id")
+	if !ok {
+		return
+	}
+	cmd, err := h.DB.Exec(r.Context(),
+		`UPDATE crm_email_thread SET status='open', is_trashed=false, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		threadID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to restore CRM email thread")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "CRM email thread not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	threadID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "threadId"), "thread id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Folder string `json:"folder"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Folder == "" {
+		writeError(w, http.StatusBadRequest, "folder is required")
+		return
+	}
+	cmd, err := h.DB.Exec(r.Context(),
+		`UPDATE crm_email_thread SET mailbox=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		threadID, workspaceID, req.Folder)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to move CRM email thread")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "CRM email thread not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) DeleteCRMEmailThread(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	threadID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "threadId"), "thread id")
+	if !ok {
+		return
+	}
+	cmd, err := h.DB.Exec(r.Context(),
+		`DELETE FROM crm_email_thread WHERE id=$1 AND workspace_id=$2`,
+		threadID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete CRM email thread")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "CRM email thread not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+type CRMIMAPMailboxDiag struct {
+	ID         string  `json:"id"`
+	Label      string  `json:"label"`
+	Email      string  `json:"email"`
+	Connected  bool    `json:"connected"`
+	LastError  *string `json:"last_error,omitempty"`
+	LatencyMs  *int    `json:"latency_ms,omitempty"`
+	LastSyncAt *string `json:"last_sync_at,omitempty"`
+}
+
+type CRMIMAPDiagnosticsResponse struct {
+	Mailboxes []CRMIMAPMailboxDiag `json:"mailboxes"`
+}
+
+func (h *Handler) GetCRMIMAPDiagnostics(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.DB.Query(r.Context(),
+		`SELECT id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, created_at, updated_at FROM crm_imap_setting WHERE workspace_id=$1 ORDER BY updated_at DESC`,
+		workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list IMAP mailboxes")
+		return
+	}
+	defer rows.Close()
+
+	diags := make([]CRMIMAPMailboxDiag, 0)
+	for rows.Next() {
+		var id, workspaceIDVal pgtype.UUID
+		var label, email, host, tlsMode, username, secretRef, lastTestStatus, lastTestMessage, ownerType, ownerID, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef string
+		var port, smtpPort int32
+		var syncEnabled bool
+		var lastTestedAt pgtype.Timestamptz
+		var createdAt, updatedAt pgtype.Timestamptz
+
+		if err := rows.Scan(&id, &workspaceIDVal, &label, &email, &host, &port, &tlsMode, &username, &secretRef, &syncEnabled, &lastTestStatus, &lastTestMessage, &lastTestedAt, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef, &createdAt, &updatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scan IMAP mailbox")
+			return
+		}
+
+		diag := CRMIMAPMailboxDiag{
+			ID:    uuidToString(id),
+			Label: label,
+			Email: email,
+		}
+
+		if lastTestStatus == "ok" {
+			diag.Connected = true
+		}
+		if lastTestMessage != "" && lastTestStatus != "ok" {
+			msg := lastTestMessage
+			diag.LastError = &msg
+		}
+		if lastTestedAt.Valid {
+			ts := timestampToString(lastTestedAt)
+			diag.LastSyncAt = &ts
+		}
+
+		diags = append(diags, diag)
+	}
+	writeJSON(w, http.StatusOK, CRMIMAPDiagnosticsResponse{Mailboxes: diags})
+}
+
+type testCRMIMAPConnRequest struct {
+	Host     string `json:"host"`
+	Port     int32  `json:"port"`
+	TLSMode  string `json:"tls_mode"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (h *Handler) TestCRMIMAPConnection(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	_ = workspaceID
+
+	var req testCRMIMAPConnRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Host == "" || req.Username == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "host, username, and password are required")
+		return
+	}
+	port := req.Port
+	if port <= 0 {
+		port = 993
+	}
+	tlsMode := req.TLSMode
+	if tlsMode == "" {
+		tlsMode = "tls"
+	}
+
+	start := time.Now()
+	cfg := crmIMAPMailboxConfig{
+		Host:      req.Host,
+		Port:      port,
+		TLSMode:   tlsMode,
+		Username:  req.Username,
+		SecretRef: "inline:" + base64.StdEncoding.EncodeToString([]byte(req.Password)),
+	}
+	_, err := fetchCRMEmailProviderMessages(cfg, "INBOX", 1, 0, nil)
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         false,
+			"status":     "failed",
+			"message":    "IMAP connection failed: " + err.Error(),
+			"latency_ms": latencyMs,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"status":     "ok",
+		"message":    "IMAP connection successful",
+		"latency_ms": latencyMs,
+	})
+}
+
+func (h *Handler) ListCRMIMAPSyncErrors(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	limit := 50
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	rows, err := h.DB.Query(r.Context(),
+		`SELECT r.id, r.mailbox_id, s.email, r.folder, r.status, r.requested_limit, r.fetched_count, r.imported_count, r.skipped_count, r.error_message, r.started_at, r.finished_at, r.created_at, r.updated_at
+		FROM crm_imap_sync_run r
+		LEFT JOIN crm_imap_setting s ON s.id = r.mailbox_id AND s.workspace_id = r.workspace_id
+		WHERE r.workspace_id=$1 AND r.status='error'
+		ORDER BY r.created_at DESC LIMIT $2`, workspaceID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list IMAP sync errors")
+		return
+	}
+	defer rows.Close()
+
+	runs := make([]CRMIMAPSyncRunResponse, 0)
+	for rows.Next() {
+		var id, mailboxID pgtype.UUID
+		var mailboxEmail, errorMessage pgtype.Text
+		var folder, runStatus string
+		var requestedLimit, fetchedCount, importedCount, skippedCount int32
+		var startedAt, finishedAt, createdAt, updatedAt pgtype.Timestamptz
+		if err := rows.Scan(&id, &mailboxID, &mailboxEmail, &folder, &runStatus, &requestedLimit, &fetchedCount, &importedCount, &skippedCount, &errorMessage, &startedAt, &finishedAt, &createdAt, &updatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scan CRM IMAP sync run")
+			return
+		}
+		runs = append(runs, CRMIMAPSyncRunResponse{
+			ID: uuidToString(id), MailboxID: uuidToPtr(mailboxID), MailboxEmail: textToPtr(mailboxEmail), Folder: folder, Status: runStatus,
+			RequestedLimit: requestedLimit, FetchedCount: fetchedCount, ImportedCount: importedCount, SkippedCount: skippedCount,
+			ErrorMessage: textToPtr(errorMessage), StartedAt: timestampToString(startedAt), FinishedAt: timestampToPtr(finishedAt), CreatedAt: timestampToString(createdAt), UpdatedAt: timestampToString(updatedAt),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs, "total": len(runs)})
+}
+
+func (h *Handler) SetCRMIMAPSyncCron(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	mailboxIDStr := chi.URLParam(r, "mailboxId")
+	mailboxID, ok := parseUUIDOrBadRequest(w, mailboxIDStr, "mailbox id")
+	if !ok {
+		return
+	}
+	var req struct {
+		SyncEnabled bool `json:"sync_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	cmd, err := h.DB.Exec(r.Context(),
+		`UPDATE crm_imap_setting SET sync_enabled=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		mailboxID, workspaceID, req.SyncEnabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update IMAP sync cron setting")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "IMAP mailbox not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sync_enabled": req.SyncEnabled})
 }

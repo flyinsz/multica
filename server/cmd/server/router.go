@@ -433,6 +433,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Post("/messages", h.CreateCRMEmailMessage)
 					})
 				})
+				r.Get("/email-messages/{messageId}/attachment/{attachmentIndex}", h.ServeCRMEmailAttachment)
+
+				r.Post("/email-threads/{threadId}/trash", h.TrashCRMEmailThread)
+				r.Post("/email-threads/{threadId}/restore", h.RestoreCRMEmailThread)
+				r.Post("/email-threads/{threadId}/move-folder", h.MoveCRMEmailThread)
+				r.Post("/email-threads/{threadId}/delete", h.DeleteCRMEmailThread)
+
+				r.Get("/imap/diagnostics", h.GetCRMIMAPDiagnostics)
+				r.Post("/imap/test-connection", h.TestCRMIMAPConnection)
+				r.Post("/imap/{mailboxId}/sync-cron", h.SetCRMIMAPSyncCron)
+				r.Get("/sync-runs/errors", h.ListCRMIMAPSyncErrors)
 			})
 
 			// Autopilots

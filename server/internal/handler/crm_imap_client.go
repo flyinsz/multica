@@ -410,6 +410,8 @@ func parseCRMIMAPBodyParts(header mail.Header, body io.Reader) (string, string, 
 				FileName:    filenameFromPartHeader(part.Header, contentID),
 				ContentType: partType,
 				Content:     base64.StdEncoding.EncodeToString([]byte(decoded)),
+				ContentID:   contentID,
+				Size:        len(partBody),
 			})
 			continue
 		}

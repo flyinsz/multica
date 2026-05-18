@@ -195,7 +195,7 @@ export interface CreateCRMCommunicationNoteRequest {
 }
 
 export type CRMEmailThreadDirection = "inbound" | "outbound" | "mixed";
-export type CRMEmailThreadStatus = "open" | "archived";
+export type CRMEmailThreadStatus = "open" | "archived" | "trashed";
 export type CRMEmailMessageDirection = "inbound" | "outbound";
 
 export interface CRMEmailAttachment {
@@ -205,6 +205,7 @@ export interface CRMEmailAttachment {
   inline: boolean;
   content_id?: string;
   disposition?: string;
+  content?: string;
 }
 
 export interface CRMEmailThread {
@@ -224,6 +225,7 @@ export interface CRMEmailThread {
   message_count: number;
   is_read?: boolean;
   is_starred?: boolean;
+  is_trashed?: boolean;
   created_at: string;
   updated_at: string;
 }
