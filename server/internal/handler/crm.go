@@ -2487,10 +2487,10 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var mailboxID, threadID pgtype.UUID
+	var mailboxID, threadID, accountID, contactID pgtype.UUID
 	var payload crmEmailSendPayload
 	var attachmentsJSON []byte
-	if err := h.DB.QueryRow(r.Context(), `SELECT mailbox_id, thread_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID).Scan(&mailboxID, &threadID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
+	if err := h.DB.QueryRow(r.Context(), `SELECT mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
 		writeError(w, http.StatusNotFound, "CRM email draft not found")
 		return
 	}
@@ -2513,10 +2513,15 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		appendWarning = "Sent folder append is not configured; outbound CRM state was saved after SMTP success"
 		slog.Warn("CRM sent append skipped", "draft_id", uuidToString(draftID), "workspace_id", uuidToString(workspaceID), "warning", appendWarning)
 	}
-	if threadID.Valid {
-		_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,'outbound',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now()); UPDATE crm_email_thread SET direction='outbound', status='open', last_message_at=now(), message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning))
+	if !threadID.Valid {
+		mailboxEmail := cleanStringForDB(cfg.Email)
+		if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, mailboxEmail).Scan(&threadID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create CRM sent email thread")
+			return
+		}
 	}
-	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', sent_at=now(), sent_append_warning=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, cleanOptionalText(&appendWarning))
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now()); UPDATE crm_email_thread SET direction='outbound', status='open', last_message_at=now(), message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning))
+	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=now(), sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": messageID, "sent_append_warning": appendWarning})
 }
 

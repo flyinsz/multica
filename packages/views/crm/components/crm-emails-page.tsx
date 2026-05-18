@@ -135,7 +135,7 @@ export function CRMEmailsPage() {
     saveDraftError: "保存草稿失败。请检查邮箱和收件人字段。",
     from: "发件人",
     date: "日期",
-    htmlBody: "HTML 正文",
+    htmlBody: "邮件正文",
     textBody: "文本正文",
     attachments: "附件",
     noAttachments: "无附件",
@@ -203,7 +203,7 @@ export function CRMEmailsPage() {
     saveDraftError: "Failed to save draft. Check mailbox and recipient fields.",
     from: "From",
     date: "Date",
-    htmlBody: "HTML body",
+    htmlBody: "Email body",
     textBody: "Text body",
     attachments: "Attachments",
     noAttachments: "No attachments",
@@ -311,15 +311,25 @@ export function CRMEmailsPage() {
     queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
   }, [queryClient, syncRuns, syncRunsUpdatedAt, wsId]);
 
+  const mailboxThreads = useMemo(() => {
+    if (!selectedMailbox?.email) return threads;
+    return threads.filter((thread) => (thread.mailbox ?? "") === selectedMailbox.email);
+  }, [selectedMailbox?.email, threads]);
+
+  const mailboxDrafts = useMemo(() => {
+    if (!selectedMailbox?.id) return emailDrafts;
+    return emailDrafts.filter((draft: any) => (draft.mailbox_id ?? "") === selectedMailbox.id);
+  }, [emailDrafts, selectedMailbox?.id]);
+
   const folderThreads = useMemo(() => {
-    return threads.filter((thread) => {
+    return mailboxThreads.filter((thread) => {
       if (activeFolder === "sent") return thread.direction === "outbound";
       if (activeFolder === "archived") return thread.status === "archived";
       if (activeFolder === "starred") return Boolean(thread.is_starred);
       if (activeFolder === "unlinked") return !thread.account_id;
       return thread.status !== "archived" && thread.direction !== "outbound";
     });
-  }, [activeFolder, threads]);
+  }, [activeFolder, mailboxThreads]);
 
   const filteredThreads = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -332,13 +342,13 @@ export function CRMEmailsPage() {
   }, [folderThreads, search]);
 
   const folderCounts = useMemo(() => ({
-    inbox: threads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound").length,
-    sent: threads.filter((thread) => thread.direction === "outbound").length,
-    drafts: emailDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").length,
-    archived: threads.filter((thread) => thread.status === "archived").length,
-    starred: threads.filter((thread) => thread.is_starred).length,
-    unlinked: threads.filter((thread) => !thread.account_id).length,
-  }), [threads, emailDrafts]);
+    inbox: mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound").length,
+    sent: mailboxThreads.filter((thread) => thread.direction === "outbound").length,
+    drafts: mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").length,
+    archived: mailboxThreads.filter((thread) => thread.status === "archived").length,
+    starred: mailboxThreads.filter((thread) => thread.is_starred).length,
+    unlinked: mailboxThreads.filter((thread) => !thread.account_id).length,
+  }), [mailboxThreads, mailboxDrafts]);
 
   const saveMailbox = useMutation({
     mutationFn: () => api.upsertCRMIMAPSetting({
@@ -440,6 +450,8 @@ export function CRMEmailsPage() {
     mutationFn: (draftId: string) => api.sendCRMEmailDraft(draftId),
     onSuccess: () => {
       setMailboxStatus(emailCopy.draftSent);
+      setComposeDraft(null);
+      setActiveFolder("sent");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
       queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
@@ -492,9 +504,9 @@ export function CRMEmailsPage() {
   });
 
   const selectedThread = useMemo<CRMEmailThread | null>(() => {
-    const found = threads.find((thread) => thread.id === selectedThreadId) ?? filteredThreads[0] ?? null;
+    const found = filteredThreads.find((thread) => thread.id === selectedThreadId) ?? filteredThreads[0] ?? null;
     return found;
-  }, [filteredThreads, selectedThreadId, threads]);
+  }, [filteredThreads, selectedThreadId]);
 
   const linkedAccountId = selectedThread?.account_id ?? "";
   const { data: contacts = [] } = useQuery({
@@ -687,8 +699,8 @@ export function CRMEmailsPage() {
         </div>
       </PageHeader>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 lg:grid-cols-[220px_360px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col border-r bg-card/80 p-3">
+      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-0 ${composeFullWidth ? "lg:grid-cols-1" : "lg:grid-cols-[220px_360px_minmax(0,1fr)]"}`}>
+        <aside className={`min-h-0 flex-col border-r bg-card/80 p-3 ${composeFullWidth ? "hidden" : "flex"}`}>
           <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
             <select
@@ -746,7 +758,7 @@ export function CRMEmailsPage() {
             </section>
           ) : activeFolder === "drafts" ? (
             <section className="min-h-0 flex-1 overflow-y-auto p-3">
-              {emailDrafts.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : emailDrafts.map((draft: any) => (
+              {mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").map((draft: any) => (
                 <div key={draft.id} className="mb-2 rounded-lg border bg-card p-3 text-sm">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -793,7 +805,7 @@ export function CRMEmailsPage() {
           )}
         </aside>
 
-        <section className={`min-h-0 overflow-hidden bg-background ${composeFullWidth ? "lg:col-span-2" : ""}`}>
+        <section className="min-h-0 overflow-hidden bg-background">
           {composeDraft ? (
             <div className="flex h-full min-h-0 flex-col bg-background">
               <div className="border-b p-5">
@@ -806,28 +818,31 @@ export function CRMEmailsPage() {
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <div className="mx-auto max-w-3xl space-y-3 rounded-lg border bg-card p-4">
+                <div className="h-full w-full space-y-3 rounded-lg border bg-card p-4">
                   <label className="space-y-1 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">{emailCopy.mailbox}</span>
                     <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.mailboxId} onChange={(event) => setComposeDraft({ ...composeDraft, mailboxId: event.target.value })}>
                       {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
                     </select>
                   </label>
-                  <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onClick={() => setComposeRecipientPickerOpen(true)} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
+                  <div className="flex gap-2">
+                    <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
+                    <Button type="button" variant="outline" onClick={() => setComposeRecipientPickerOpen(true)}>{t(($) => $.emails.link_customer_contact)}</Button>
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Input aria-label={emailCopy.cc} placeholder={emailCopy.cc} value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
                     <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
                   </div>
                   <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
+                  <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
                   <div className="rounded-md border bg-muted/20 p-3 text-sm">
                     <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground"><span>{emailCopy.attachments}</span><label className="inline-flex cursor-pointer items-center gap-1 rounded border bg-background px-2 py-1 hover:bg-muted"><Paperclip className="size-3" />添加附件<input type="file" multiple className="hidden" onChange={async (event) => { const files = Array.from(event.target.files ?? []); const added = await Promise.all(files.map((file) => new Promise<ComposeAttachment>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ file_name: file.name, content_type: file.type || "application/octet-stream", content: String(reader.result || "").split(",")[1] || "", size: file.size }); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }))); setComposeDraft({ ...composeDraft, attachments: [...composeDraft.attachments, ...added] }); event.currentTarget.value = ""; }} /></label></div>
                     {composeDraft.attachments.length ? <div className="space-y-2">{composeDraft.attachments.map((attachment, index) => <div key={`${attachment.file_name}-${index}`} className="flex items-center justify-between rounded border bg-background px-3 py-2 text-xs"><span className="truncate">{attachment.file_name} · {Math.ceil(attachment.size / 1024)} KB</span><Button variant="ghost" size="sm" onClick={() => setComposeDraft({ ...composeDraft, attachments: composeDraft.attachments.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-3" /></Button></div>)}</div> : <div className="text-xs text-muted-foreground">{emailCopy.noAttachments}</div>}
                   </div>
-                  <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
                   {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
                   <div className="flex justify-end gap-2 border-t pt-3">
                     <Button variant="outline" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
-                    <Button variant="secondary" disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
+                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
                     <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
                   </div>
                 </div>
@@ -837,7 +852,7 @@ export function CRMEmailsPage() {
             <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.select_thread)}</div>
           ) : (
             <div className="flex h-full min-h-0 flex-col">
-              <div className="border-b bg-background p-5">
+              <div className="border-b bg-background p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate text-base font-semibold">{selectedThread.subject}</h2>
@@ -850,7 +865,7 @@ export function CRMEmailsPage() {
                     {selectedAccount ? t(($) => $.emails.change_association) : t(($) => $.emails.link_customer_contact)}
                   </Button>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2">
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: !selectedThread.is_read } })}><MailOpen className="mr-1 size-3" />{selectedThread.is_read ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? "Unarchive" : t(($) => $.emails.archive)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? "Unstar" : t(($) => $.emails.star)}</Button>
@@ -859,7 +874,7 @@ export function CRMEmailsPage() {
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("forward")}>{emailCopy.forward}</Button>
                   <Button variant="outline" size="sm" disabled={!selectedAccount} onClick={openEmailLinkDialog}><Link2 className="mr-1 size-3" />{t(($) => $.emails.link_project_issue)}</Button>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.linked_customer)} value={selectedAccount?.name ?? t(($) => $.emails.no_customer)} onClick={selectedAccount ? () => setDetailDialog({ type: "account", account: selectedAccount }) : undefined} />
                   <AssociationChip icon={<UserRound className="size-4" />} label={t(($) => $.emails.linked_contact)} value={selectedContact?.name ?? t(($) => $.emails.no_contact)} onClick={selectedContact ? () => setDetailDialog({ type: "contact", contact: selectedContact }) : undefined} />
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.related_project)} value={selectedProject?.title ?? t(($) => $.emails.no_project_link)} />
@@ -888,37 +903,37 @@ export function CRMEmailsPage() {
                 )}
                 {updateAssociation.isError && <p className="mt-2 text-xs text-destructive">{t(($) => $.emails.association_error)}</p>}
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20 p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20 p-3">
                 {messagesLoading ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <Skeleton className="h-24 w-full" />
                     <Skeleton className="h-24 w-full" />
                   </div>
                 ) : messages.length === 0 ? (
                   <div className="rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">{t(($) => $.emails.no_messages)}</div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {messages.map((message) => (
-                      <article key={message.id} className="rounded-lg border bg-background p-4 text-sm shadow-xs">
+                      <article key={message.id} className="rounded-lg border bg-background p-3 text-sm shadow-xs">
                         <div className="flex flex-wrap justify-between gap-2">
                           <div className="font-medium">{message.from_name || message.from_email || t(($) => $.common.not_available)}</div>
                           <div className="text-xs text-muted-foreground">{messageTime(message.sent_at || message.received_at)}</div>
                         </div>
-                        <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                        <div className="mt-2 grid gap-1.5 text-xs text-muted-foreground sm:grid-cols-2">
                           <DetailRow label={emailCopy.from} value={[message.from_name, message.from_email].filter(Boolean).join(" <") + (message.from_name && message.from_email ? ">" : "")} />
                           <DetailRow label={emailCopy.to} value={message.to_emails.join(", ")} />
                           <DetailRow label={emailCopy.cc} value={message.cc_emails.join(", ")} />
                           <DetailRow label={emailCopy.date} value={messageTime(message.sent_at || message.received_at)} />
                         </div>
-                        <div className="mt-4 rounded-md border bg-muted/20 p-3">
-                          <div className="mb-2 text-xs font-medium text-muted-foreground">{emailHTMLBody(message) ? emailCopy.htmlBody : emailCopy.textBody}</div>
+                        <div className="mt-2 rounded-md border bg-muted/20 p-2.5">
+                          <div className="mb-1.5 text-xs font-medium text-muted-foreground">{emailCopy.htmlBody}</div>
                           {emailHTMLBody(message) ? (
-                            <div className="leading-6 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(emailHTMLBody(message)) }} />
+                            <div className="leading-5 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(emailHTMLBody(message)) }} />
                           ) : (
-                            <div className="whitespace-pre-wrap leading-6 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
+                            <div className="whitespace-pre-wrap leading-5 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
                           )}
                         </div>
-                        <div className="mt-3 rounded-md border bg-muted/20 p-3">
+                        <div className="mt-2 rounded-md border bg-muted/20 p-2.5">
                           <div className="text-xs font-medium text-muted-foreground">{emailCopy.attachments}</div>
                           {message.attachments?.length ? (
                             <div className="mt-2 space-y-2">
@@ -931,7 +946,7 @@ export function CRMEmailsPage() {
                             </div>
                           ) : <div className="mt-2 text-xs text-muted-foreground">{emailCopy.noAttachments}</div>}
                         </div>
-                        <details className="mt-3 rounded-md border bg-muted/20 p-3 text-xs">
+                        <details className="mt-2 rounded-md border bg-muted/20 p-2.5 text-xs">
                           <summary className="cursor-pointer font-medium text-muted-foreground">{emailCopy.mimeMetadata}</summary>
                           <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             <DetailRow label={emailCopy.messageId} value={message.external_message_id} />
