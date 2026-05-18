@@ -430,7 +430,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Patch("/state", h.UpdateCRMEmailThreadState)
 						r.Patch("/association", h.UpdateCRMEmailThreadAssociation)
 						r.Get("/messages", h.ListCRMEmailMessages)
-\t\t\t\t\t\tr.Post("/messages", h.CreateCRMEmailMessage)
+						r.Post("/messages", h.CreateCRMEmailMessage)
 						r.Post("/trash", h.TrashCRMEmailThread)
 						r.Post("/restore", h.RestoreCRMEmailThread)
 						r.Post("/move-folder", h.MoveCRMEmailThread)
