@@ -2112,32 +2112,37 @@ func (h *Handler) SyncCRMIMAP(w http.ResponseWriter, r *http.Request) {
 	_, _ = h.DB.Exec(staleCtx, `UPDATE crm_imap_sync_run SET status='failed', error_message='stale running sync reset before new run', finished_at=now(), updated_at=now() WHERE workspace_id=$1 AND mailbox_id=$2 AND status='running' AND started_at < now() - interval '2 minutes'`, workspaceID, cfg.UUID)
 	staleCancel()
 	var runID pgtype.UUID
-	_ = h.DB.QueryRow(r.Context(), `INSERT INTO crm_imap_sync_run (workspace_id, mailbox_id, folder, requested_limit) VALUES ($1,$2,$3,$4) RETURNING id`, workspaceID, cfg.UUID, folder, limit).Scan(&runID)
-	finishRun := func(query string, args ...any) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = h.DB.Exec(ctx, query, args...)
+	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_imap_sync_run (workspace_id, mailbox_id, folder, requested_limit) VALUES ($1,$2,$3,$4) RETURNING id`, workspaceID, cfg.UUID, folder, limit).Scan(&runID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create IMAP sync run")
+		return
 	}
-	defer func() {
-		if rec := recover(); rec != nil {
-			finishRun(`UPDATE crm_imap_sync_run SET status='failed', error_message=$2, finished_at=now(), updated_at=now() WHERE id=$1`, runID, "panic during IMAP sync")
-			panic(rec)
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "run_id": uuidToString(runID), "status": "running"})
+
+	go func(runID pgtype.UUID, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, folder string, limit int, rangeDays int) {
+		finishRun := func(query string, args ...any) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, _ = h.DB.Exec(ctx, query, args...)
 		}
-	}()
-	messages, err := fetchCRMEmailProviderMessages(cfg, folder, limit, req.RangeDays, nil)
-	if err != nil {
-		finishRun(`UPDATE crm_imap_sync_run SET status='failed', error_message=$2, finished_at=now(), updated_at=now() WHERE id=$1`, runID, err.Error())
-		writeError(w, http.StatusBadGateway, "failed to fetch IMAP messages: "+err.Error())
-		return
-	}
-	imported, skipped, err := h.importCRMIMAPMessages(r.Context(), workspaceID, cfg, folder, messages)
-	if err != nil {
-		finishRun(`UPDATE crm_imap_sync_run SET status='failed', fetched_count=$2, error_message=$3, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), err.Error())
-		writeError(w, http.StatusInternalServerError, "failed to import IMAP messages")
-		return
-	}
-	finishRun(`UPDATE crm_imap_sync_run SET status='ok', fetched_count=$2, imported_count=$3, skipped_count=$4, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), imported, skipped)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "run_id": uuidToString(runID), "fetched": len(messages), "imported": imported, "skipped": skipped})
+		defer func() {
+			if rec := recover(); rec != nil {
+				finishRun(`UPDATE crm_imap_sync_run SET status='failed', error_message=$2, finished_at=now(), updated_at=now() WHERE id=$1`, runID, "panic during IMAP sync")
+			}
+		}()
+		messages, err := fetchCRMEmailProviderMessages(cfg, folder, limit, rangeDays, nil)
+		if err != nil {
+			finishRun(`UPDATE crm_imap_sync_run SET status='failed', error_message=$2, finished_at=now(), updated_at=now() WHERE id=$1`, runID, err.Error())
+			return
+		}
+		importCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		imported, skipped, err := h.importCRMIMAPMessages(importCtx, workspaceID, cfg, folder, messages)
+		if err != nil {
+			finishRun(`UPDATE crm_imap_sync_run SET status='failed', fetched_count=$2, error_message=$3, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), err.Error())
+			return
+		}
+		finishRun(`UPDATE crm_imap_sync_run SET status='ok', fetched_count=$2, imported_count=$3, skipped_count=$4, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), imported, skipped)
+	}(runID, workspaceID, cfg, folder, limit, req.RangeDays)
 }
 
 func cleanCRMIMAPFolder(value *string) string {

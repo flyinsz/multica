@@ -178,6 +178,7 @@ export const EMPTY_CRM_IMAP_PREVIEW_RESPONSE: CRMIMAPPreviewResponse = {
 export const CRMIMAPImportResponseSchema = z.object({
   ok: z.boolean().default(false),
   run_id: z.string().optional(),
+  status: z.string().optional(),
   fetched: z.number().default(0),
   imported: z.number().default(0),
   skipped: z.number().default(0),

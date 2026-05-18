@@ -452,6 +452,7 @@ export interface CRMIMAPPreviewResponse {
 export interface CRMIMAPImportResponse {
   ok: boolean;
   run_id?: string;
+  status?: string;
   fetched: number;
   imported: number;
   skipped: number;

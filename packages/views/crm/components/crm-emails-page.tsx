@@ -290,6 +290,7 @@ export function CRMEmailsPage() {
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),
     enabled: Boolean(wsId),
+    refetchInterval: (query) => query.state.data?.runs?.some((run: any) => run.status === "running") ? 3000 : false,
   });
   const mailboxes = mailboxData?.settings ?? [];
   const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
@@ -448,7 +449,7 @@ export function CRMEmailsPage() {
   const refreshMailbox = useMutation({
     mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 500, range_days: importRangeDays }),
     onSuccess: async (result) => {
-      setMailboxStatus(emailCopy.imported(result.imported, result.skipped));
+      setMailboxStatus(result.status === "running" ? "同步已开始，正在后台导入…" : emailCopy.imported(result.imported ?? 0, result.skipped ?? 0));
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
       await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
     },
