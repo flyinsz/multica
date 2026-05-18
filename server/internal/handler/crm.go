@@ -694,11 +694,15 @@ func normalizedCRMKey(s string) string {
 	return strings.ToLowerSpecial(unicode.TurkishCase, normalizeCRMName(s))
 }
 
+func cleanStringForDB(value string) string {
+	return strings.ToValidUTF8(value, "�")
+}
+
 func cleanOptionalText(s *string) pgtype.Text {
 	if s == nil {
 		return pgtype.Text{}
 	}
-	v := strings.TrimSpace(*s)
+	v := strings.TrimSpace(cleanStringForDB(*s))
 	if v == "" {
 		return pgtype.Text{}
 	}
@@ -716,7 +720,7 @@ func cleanOptionalStringList(values []string) []string {
 	cleaned := make([]string, 0, len(values))
 	seen := map[string]struct{}{}
 	for _, value := range values {
-		v := strings.TrimSpace(value)
+		v := strings.TrimSpace(cleanStringForDB(value))
 		if v == "" {
 			continue
 		}
@@ -2237,7 +2241,9 @@ func normalizeCRMEmailThreadSubject(subject string) string {
 }
 
 func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, error) {
-	candidateIDs := normalizeCRMMessageIDSlice(append(append([]string{}, message.References...), message.InReplyTo))
+	subject = cleanStringForDB(subject)
+	message.FromEmail = cleanStringForDB(message.FromEmail)
+	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
 		var threadID pgtype.UUID
 		if err := h.DB.QueryRow(ctx, `SELECT thread_id FROM crm_email_message WHERE workspace_id=$1 AND external_message_id=$2 ORDER BY created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID); err == nil {
@@ -2286,7 +2292,7 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 	imported := 0
 	skipped := 0
 	for _, message := range messages {
-		externalID := message.MessageID
+		externalID := cleanStringForDB(message.MessageID)
 		if externalID == "" {
 			externalID = cfg.ID + ":" + message.UID
 		}
@@ -2320,7 +2326,7 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		if strings.TrimSpace(bodyHTML) == "" && looksLikeCRMHTML(message.BodyText) {
 			bodyHTML = message.BodyText
 		}
-		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), message.References, cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), message.ToEmails, message.CcEmails, cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction)
+		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction)
 		if execErr != nil {
 			return imported, skipped, execErr
 		}
