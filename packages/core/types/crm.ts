@@ -222,6 +222,8 @@ export interface CRMEmailThread {
   status: CRMEmailThreadStatus;
   last_message_at?: string | null;
   message_count: number;
+  is_read?: boolean;
+  is_starred?: boolean;
   created_at: string;
   updated_at: string;
 }

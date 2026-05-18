@@ -1359,6 +1359,10 @@ export class ApiClient {
     return this.fetch("/api/crm/email-drafts", { method: "POST", body: JSON.stringify(data) });
   }
 
+  async updateCRMEmailDraft(draftId: string, data: Record<string, unknown>): Promise<{ ok: boolean; id: string }> {
+    return this.fetch(`/api/crm/email-drafts/${draftId}`, { method: "PATCH", body: JSON.stringify(data) });
+  }
+
   async sendCRMEmailDraft(draftId: string): Promise<{ ok: boolean; status: string }> {
     return this.fetch(`/api/crm/email-drafts/${draftId}/send`, { method: "POST" });
   }
@@ -1390,6 +1394,13 @@ export class ApiClient {
     data: UpdateCRMEmailThreadAssociationRequest,
   ): Promise<CRMEmailThread> {
     return this.fetch(`/api/crm/email-threads/${threadId}/association`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean }): Promise<CRMEmailThread> {
+    return this.fetch(`/api/crm/email-threads/${threadId}/state`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });

@@ -36,7 +36,7 @@ type AssociationDraft = {
 
 type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
-type ComposeDraft = { mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string };
+type ComposeDraft = { draftId?: string; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -48,6 +48,14 @@ function inferMailboxPreset(email: string) {
   if (domain === "gmail.com") return { host: "imap.gmail.com", port: "993", smtp_host: "smtp.gmail.com", smtp_port: "465", tls_mode: "ssl" as const, smtp_tls_mode: "ssl" };
   if (domain === "outlook.com" || domain === "hotmail.com" || domain === "live.com") return { host: "outlook.office365.com", port: "993", smtp_host: "smtp.office365.com", smtp_port: "587", tls_mode: "ssl" as const, smtp_tls_mode: "starttls" };
   return null;
+}
+
+function looksLikeHTML(value?: string | null) {
+  return Boolean(value && /<\s*(html|body|div|p|br|table|span|a|img|strong|em|ul|ol|li)\b/i.test(value));
+}
+
+function emailHTMLBody(message: { body_html?: string | null; body_text?: string | null }) {
+  return message.body_html || (looksLikeHTML(message.body_text) ? message.body_text || "" : "");
 }
 
 function safeEmailHTML(html: string) {
@@ -271,6 +279,7 @@ export function CRMEmailsPage() {
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
+  const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
@@ -298,7 +307,7 @@ export function CRMEmailsPage() {
     return threads.filter((thread) => {
       if (activeFolder === "sent") return thread.direction === "outbound";
       if (activeFolder === "archived") return thread.status === "archived";
-      if (activeFolder === "starred") return false;
+      if (activeFolder === "starred") return Boolean(thread.is_starred);
       if (activeFolder === "unlinked") return !thread.account_id;
       return thread.status !== "archived" && thread.direction !== "outbound";
     });
@@ -319,7 +328,7 @@ export function CRMEmailsPage() {
     sent: threads.filter((thread) => thread.direction === "outbound").length,
     drafts: emailDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").length,
     archived: threads.filter((thread) => thread.status === "archived").length,
-    starred: 0,
+    starred: threads.filter((thread) => thread.is_starred).length,
     unlinked: threads.filter((thread) => !thread.account_id).length,
   }), [threads, emailDrafts]);
 
@@ -431,12 +440,29 @@ export function CRMEmailsPage() {
     },
   });
 
+  const updateThreadState = useMutation({
+    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean } }) => api.updateCRMEmailThreadState(threadId, data),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+    },
+  });
+
+  const refreshMailbox = useMutation({
+    mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 500, range_days: importRangeDays }),
+    onSuccess: async (result) => {
+      setMailboxStatus(emailCopy.imported(result.imported, result.skipped));
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
+    },
+    onError: (error) => setMailboxStatus(error instanceof Error ? error.message : "Sync failed"),
+  });
+
   const saveEmailDraft = useMutation({
     mutationFn: async () => {
       if (!composeDraft) throw new Error(emailCopy.noDraft);
       const mailboxId = composeDraft.mailboxId || selectedMailbox?.id || mailboxes[0]?.id;
       if (!mailboxId) throw new Error(emailCopy.createMailboxFirst);
-      return api.createCRMEmailDraft({
+      const payload = {
         mailbox_id: mailboxId,
         thread_id: selectedThread?.id ?? null,
         account_id: composeDraft.accountId || null,
@@ -446,7 +472,8 @@ export function CRMEmailsPage() {
         bcc_emails: composeDraft.bcc.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean),
         subject: composeDraft.subject.trim(),
         body_text: composeDraft.body,
-      });
+      };
+      return composeDraft.draftId ? api.updateCRMEmailDraft(composeDraft.draftId, payload) : api.createCRMEmailDraft(payload);
     },
     onSuccess: () => {
       setComposeDraft(null);
@@ -475,6 +502,13 @@ export function CRMEmailsPage() {
     ...crmContactListOptions(wsId, composeAccountId),
     enabled: Boolean(composeAccountId),
   });
+  const filteredComposeAccounts = useMemo(() => {
+    const q = composeAccountSearch.trim().toLowerCase();
+    if (!q) return accounts;
+    return accounts.filter((account) => [account.name, account.code, account.website, account.industry, account.country]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(q)));
+  }, [accounts, composeAccountSearch]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     ...crmEmailMessageListOptions(wsId, selectedThread?.id ?? ""),
     enabled: Boolean(selectedThread?.id),
@@ -496,7 +530,7 @@ export function CRMEmailsPage() {
   const selectedAccount = accounts.find((account) => account.id === linkedAccountId) ?? null;
   const selectedContact = contacts.find((contact) => contact.id === (selectedThread?.contact_id ?? "")) ?? null;
   const selectedProject = projects.find((project) => project.id === (selectedThread?.project_id ?? "")) ?? null;
-  const selectedIssueIds = selectedThread?.issue_ids?.length ? selectedThread.issue_ids : selectedThread?.issue_id ? [selectedThread.issue_id] : [];
+  const selectedIssueIds = Array.from(new Set(selectedThread?.issue_ids?.length ? selectedThread.issue_ids : selectedThread?.issue_id ? [selectedThread.issue_id] : []));
   const selectedIssues = issues.filter((issue) => selectedIssueIds.includes(issue.id));
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
@@ -573,7 +607,7 @@ export function CRMEmailsPage() {
       projectId = project.id;
       await queryClient.invalidateQueries({ queryKey: ["projects", wsId, "crm-email-link-picker"] });
     }
-    setEmailLinkDraft({ projectId, issueIds: selectedThread.issue_ids?.length ? selectedThread.issue_ids : selectedThread.issue_id ? [selectedThread.issue_id] : [] });
+    setEmailLinkDraft({ projectId, issueIds: Array.from(new Set(selectedThread.issue_ids?.length ? selectedThread.issue_ids : selectedThread.issue_id ? [selectedThread.issue_id] : [])) });
   };
 
   const updateEmailLinks = useMutation({
@@ -663,10 +697,9 @@ export function CRMEmailsPage() {
             </div>
             <div className="mt-2 text-xs text-muted-foreground">{selectedMailbox?.last_test_message || t(($) => $.emails.imap_not_connected)}</div>
             {selectedMailbox ? (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Button size="sm" variant="outline" onClick={() => { setMailboxDraft(mailboxToDraft(selectedMailbox)); setMailboxStatus(null); setSettingsOpen(true); }}>Edit</Button>
-                <Button size="sm" variant="destructive" disabled={deleteMailbox.isPending} onClick={() => deleteMailbox.mutate(selectedMailbox.id)}>Delete</Button>
-              </div>
+              <Button className="mt-3 w-full" size="sm" variant="outline" disabled={refreshMailbox.isPending} onClick={() => refreshMailbox.mutate()}>
+                {refreshMailbox.isPending ? emailCopy.syncing : "Refresh new mail"}
+              </Button>
             ) : null}
             <details className="mt-3 rounded-md border bg-muted/20 p-2 text-xs">
               <summary className="cursor-pointer font-medium text-muted-foreground">Sync progress / history</summary>
@@ -727,7 +760,10 @@ export function CRMEmailsPage() {
                     <Badge variant="outline">{draft.status}</Badge>
                   </div>
                   <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
-                  <Button className="mt-3" size="sm" variant="outline" disabled={draft.status === "sent" || sendDraft.isPending} onClick={() => sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
+                  <div className="mt-3 flex gap-2">
+                    <Button size="sm" variant="outline" disabled={draft.status === "sent"} onClick={() => setComposeDraft({ draftId: draft.id, mailboxId: draft.mailbox_id ?? selectedMailbox?.id ?? "", accountId: draft.account_id ?? "", contactId: draft.contact_id ?? "", to: (draft.to_emails ?? []).join(", "), cc: (draft.cc_emails ?? []).join(", "), bcc: (draft.bcc_emails ?? []).join(", "), subject: draft.subject ?? "", body: draft.body_text ?? "" })}>Edit</Button>
+                    <Button size="sm" variant="outline" disabled={draft.status === "sent" || sendDraft.isPending} onClick={() => sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
+                  </div>
                 </div>
               ))}
             </section>
@@ -780,9 +816,10 @@ export function CRMEmailsPage() {
                   </Button>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
-                  <Button variant="outline" size="sm"><MailOpen className="mr-1 size-3" />{t(($) => $.emails.mark_read)}</Button>
-                  <Button variant="outline" size="sm"><Archive className="mr-1 size-3" />{t(($) => $.emails.archive)}</Button>
-                  <Button variant="outline" size="sm"><Star className="mr-1 size-3" />{t(($) => $.emails.star)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: true } })}><MailOpen className="mr-1 size-3" />{t(($) => $.emails.mark_read)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: false } })}>{"Mark unread"}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? "Unarchive" : t(($) => $.emails.archive)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? "Unstar" : t(($) => $.emails.star)}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />{emailCopy.reply}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply-all")}>{emailCopy.replyAll}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("forward")}>{emailCopy.forward}</Button>
@@ -840,9 +877,9 @@ export function CRMEmailsPage() {
                           <DetailRow label={emailCopy.date} value={messageTime(message.sent_at || message.received_at)} />
                         </div>
                         <div className="mt-4 rounded-md border bg-muted/20 p-3">
-                          <div className="mb-2 text-xs font-medium text-muted-foreground">{message.body_html ? emailCopy.htmlBody : emailCopy.textBody}</div>
-                          {message.body_html ? (
-                            <div className="leading-6 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(message.body_html) }} />
+                          <div className="mb-2 text-xs font-medium text-muted-foreground">{emailHTMLBody(message) ? emailCopy.htmlBody : emailCopy.textBody}</div>
+                          {emailHTMLBody(message) ? (
+                            <div className="leading-6 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(emailHTMLBody(message)) }} />
                           ) : (
                             <div className="whitespace-pre-wrap leading-6 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
                           )}
@@ -1021,9 +1058,10 @@ export function CRMEmailsPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="space-y-1 text-sm">
                   <span className="text-xs font-medium text-muted-foreground">Customer</span>
+                  <Input className="mb-2" placeholder="Search customer" value={composeAccountSearch} onChange={(event) => setComposeAccountSearch(event.target.value)} />
                   <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.accountId} onChange={(event) => setComposeDraft({ ...composeDraft, accountId: event.target.value, contactId: "", to: "" })}>
                     <option value="">No customer</option>
-                    {accounts.map((account: any) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                    {filteredComposeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                   </select>
                 </label>
                 <label className="space-y-1 text-sm">
@@ -1159,6 +1197,7 @@ export function CRMEmailsPage() {
             </div>
           ) : null}
           <DialogFooter>
+            {mailboxDraft.id ? <Button variant="destructive" disabled={deleteMailbox.isPending} onClick={() => { if (mailboxDraft.id) deleteMailbox.mutate(mailboxDraft.id, { onSuccess: () => setSettingsOpen(false) }); }}>Delete mailbox</Button> : null}
             <Button variant="outline" onClick={() => { setSettingsOpen(false); setMailboxStatus(null); }}>{t(($) => $.actions.cancel)}</Button>
             <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.label || !mailboxDraft.email || !mailboxDraft.host} onClick={() => testMailbox.mutate()}>{emailCopy.checkProvider}</Button>
             <Button disabled={saveMailbox.isPending || previewMailbox.isPending || importPreviewMessages.isPending || !mailboxDraft.label || !mailboxDraft.email} onClick={() => void saveAndImportMailbox()}>{emailCopy.saveAndImport}</Button>
