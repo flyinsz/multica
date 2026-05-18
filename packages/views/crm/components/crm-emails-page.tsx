@@ -280,6 +280,7 @@ export function CRMEmailsPage() {
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
+  const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
@@ -784,7 +785,7 @@ export function CRMEmailsPage() {
                 return (
                   <button key={thread.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => setSelectedThreadId(thread.id)}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1 truncate font-medium">{thread.subject}</div>
+                      <div className={`min-w-0 flex-1 truncate ${thread.is_read ? "font-medium text-foreground/80" : "font-bold text-foreground"}`}>{thread.subject}</div>
                       {!thread.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -800,6 +801,58 @@ export function CRMEmailsPage() {
         <section className="min-h-0 overflow-hidden bg-background">
           {!selectedThread ? (
             <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.select_thread)}</div>
+          ) : composeDraft ? (
+            <div className="flex h-full min-h-0 flex-col bg-background">
+              <div className="border-b p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold">{emailCopy.composeTitle}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">{emailCopy.composeHelp}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                <div className="mx-auto max-w-3xl space-y-3 rounded-lg border bg-card p-4">
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-medium text-muted-foreground">{emailCopy.mailbox}</span>
+                    <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.mailboxId} onChange={(event) => setComposeDraft({ ...composeDraft, mailboxId: event.target.value })}>
+                      {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
+                    </select>
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1 text-sm">
+                      <span className="text-xs font-medium text-muted-foreground">Customer</span>
+                      <Input className="mb-2" placeholder="Search customer" value={composeAccountSearch} onChange={(event) => setComposeAccountSearch(event.target.value)} />
+                      <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.accountId} onChange={(event) => setComposeDraft({ ...composeDraft, accountId: event.target.value, contactId: "", to: "" })}>
+                        <option value="">No customer</option>
+                        {filteredComposeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-xs font-medium text-muted-foreground">Contact / recipient</span>
+                      <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.contactId} onChange={(event) => { const contact = composeAccountContacts.find((item: any) => item.id === event.target.value) as any; setComposeDraft({ ...composeDraft, contactId: event.target.value, to: contact?.email ?? composeDraft.to }); }} disabled={!composeDraft.accountId}>
+                        <option value="">Manual recipient</option>
+                        {composeAccountContacts.map((contact: any) => <option key={contact.id} value={contact.id}>{contact.name}{contact.email ? ` · ${contact.email}` : ""}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onClick={() => setComposeRecipientPickerOpen(true)} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input aria-label={emailCopy.cc} placeholder={emailCopy.cc} value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
+                    <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
+                  </div>
+                  <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
+                  <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
+                  {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
+                  <div className="flex justify-end gap-2 border-t pt-3">
+                    <Button variant="outline" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
+                    <Button variant="secondary" disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
+                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b bg-background p-5">
@@ -816,8 +869,7 @@ export function CRMEmailsPage() {
                   </Button>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
-                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: true } })}><MailOpen className="mr-1 size-3" />{t(($) => $.emails.mark_read)}</Button>
-                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: false } })}>{"Mark unread"}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: !selectedThread.is_read } })}><MailOpen className="mr-1 size-3" />{selectedThread.is_read ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? "Unarchive" : t(($) => $.emails.archive)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? "Unstar" : t(($) => $.emails.star)}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />{emailCopy.reply}</Button>
@@ -1040,62 +1092,47 @@ export function CRMEmailsPage() {
         </DialogContent>
       </Dialog>
 
-
-      <Dialog open={composeDraft !== null} onOpenChange={(open) => !open && setComposeDraft(null)}>
+      <Dialog open={composeRecipientPickerOpen} onOpenChange={setComposeRecipientPickerOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{emailCopy.composeTitle}</DialogTitle>
-            <DialogDescription>{emailCopy.composeHelp}</DialogDescription>
+            <DialogTitle>选择收件人</DialogTitle>
+            <DialogDescription>检索客户和联系人，选中后填入收件人。</DialogDescription>
           </DialogHeader>
           {composeDraft && (
             <div className="space-y-3">
-              <label className="space-y-1 text-sm">
-                <span className="text-xs font-medium text-muted-foreground">{emailCopy.mailbox}</span>
-                <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.mailboxId} onChange={(event) => setComposeDraft({ ...composeDraft, mailboxId: event.target.value })}>
-                  {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
-                </select>
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="space-y-1 text-sm">
-                  <span className="text-xs font-medium text-muted-foreground">Customer</span>
-                  <Input className="mb-2" placeholder="Search customer" value={composeAccountSearch} onChange={(event) => setComposeAccountSearch(event.target.value)} />
-                  <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.accountId} onChange={(event) => setComposeDraft({ ...composeDraft, accountId: event.target.value, contactId: "", to: "" })}>
-                    <option value="">No customer</option>
-                    {filteredComposeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-                  </select>
-                </label>
-                <label className="space-y-1 text-sm">
-                  <span className="text-xs font-medium text-muted-foreground">Contact</span>
-                  <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.contactId} onChange={(event) => { const contact = composeAccountContacts.find((item: any) => item.id === event.target.value) as any; setComposeDraft({ ...composeDraft, contactId: event.target.value, to: contact?.email ?? composeDraft.to }); }} disabled={!composeDraft.accountId}>
-                    <option value="">Manual recipient</option>
-                    {composeAccountContacts.map((contact: any) => <option key={contact.id} value={contact.id}>{contact.name}{contact.email ? ` · ${contact.email}` : ""}</option>)}
-                  </select>
-                </label>
+              <Input placeholder="Search customer" value={composeAccountSearch} onChange={(event) => setComposeAccountSearch(event.target.value)} />
+              <div className="max-h-80 overflow-y-auto rounded-md border bg-background">
+                {filteredComposeAccounts.map((account) => (
+                  <button key={account.id} type="button" className={`block w-full border-b px-3 py-2 text-left text-sm hover:bg-muted ${composeDraft.accountId === account.id ? "bg-muted" : ""}`} onClick={() => setComposeDraft({ ...composeDraft, accountId: account.id, contactId: "", to: "" })}>
+                    <div className="font-medium">{account.name}</div>
+                    <div className="text-xs text-muted-foreground">{[account.website, account.country_name || account.country, account.industry].filter(Boolean).join(" · ")}</div>
+                  </button>
+                ))}
+                {!filteredComposeAccounts.length && <div className="p-4 text-sm text-muted-foreground">No customer found.</div>}
               </div>
-              <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Input aria-label={emailCopy.cc} placeholder={emailCopy.cc} value={composeDraft.cc} onChange={(event) => setComposeDraft({ ...composeDraft, cc: event.target.value })} />
-                <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
-              </div>
-              <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
-              <textarea
-                aria-label={emailCopy.bodyLabel}
-                className="min-h-48 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                placeholder={emailCopy.bodyPlaceholder}
-                value={composeDraft.body}
-                onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })}
-              />
+              {composeDraft.accountId && (
+                <div className="rounded-md border bg-muted/20 p-3">
+                  <div className="mb-2 text-xs font-medium text-muted-foreground">Contact</div>
+                  <div className="max-h-48 space-y-2 overflow-y-auto">
+                    {composeAccountContacts.map((contact: any) => (
+                      <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { setComposeDraft({ ...composeDraft, contactId: contact.id, to: contact.email ?? composeDraft.to }); setComposeRecipientPickerOpen(false); }}>
+                        <div className="font-medium">{contact.name}</div>
+                        <div className="text-xs text-muted-foreground">{contact.email || "No email"}</div>
+                      </button>
+                    ))}
+                    {!composeAccountContacts.length && <div className="text-xs text-muted-foreground">No contacts. Type recipient manually.</div>}
+                  </div>
+                </div>
+              )}
+              <Input aria-label={emailCopy.to} placeholder="Manual recipient email" value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
             </div>
           )}
-          {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
-            <Button variant="secondary" disabled={!composeDraft?.to.trim() || !composeDraft?.subject.trim() || !composeDraft?.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
-            <Button disabled={!composeDraft?.to.trim() || !composeDraft?.subject.trim() || !composeDraft?.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
+            <Button variant="outline" onClick={() => setComposeRecipientPickerOpen(false)}>取消</Button>
+            <Button disabled={!composeDraft?.to.trim()} onClick={() => setComposeRecipientPickerOpen(false)}>确定</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">

@@ -63,6 +63,7 @@ type crmIMAPFetchedMessage struct {
 }
 
 type crmIMAPClient struct {
+	raw  net.Conn
 	conn *textproto.Conn
 	tag  int
 }
@@ -111,11 +112,13 @@ func dialCRMIMAP(cfg crmIMAPMailboxConfig) (*crmIMAPClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &crmIMAPClient{conn: textproto.NewConn(c)}
+	client := &crmIMAPClient{raw: c, conn: textproto.NewConn(c)}
+	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
 	if _, err := client.conn.ReadLine(); err != nil {
 		_ = client.Close()
 		return nil, err
 	}
+	_ = c.SetDeadline(time.Time{})
 	if cfg.TLSMode == "starttls" {
 		if err := client.simple("STARTTLS"); err != nil {
 			_ = client.Close()
@@ -126,6 +129,7 @@ func dialCRMIMAP(cfg crmIMAPMailboxConfig) (*crmIMAPClient, error) {
 			_ = c.Close()
 			return nil, err
 		}
+		client.raw = tlsConn
 		client.conn = textproto.NewConn(tlsConn)
 	}
 	return client, nil
@@ -150,6 +154,10 @@ func (c *crmIMAPClient) simple(command string, args ...string) error {
 }
 
 func (c *crmIMAPClient) command(command string, args ...string) ([]string, error) {
+	if c.raw != nil {
+		_ = c.raw.SetDeadline(time.Now().Add(30 * time.Second))
+		defer c.raw.SetDeadline(time.Time{})
+	}
 	tag := c.nextTag()
 	parts := append([]string{tag, command}, args...)
 	if err := c.conn.PrintfLine("%s", strings.Join(parts, " ")); err != nil {
