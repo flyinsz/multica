@@ -18,6 +18,7 @@ export interface RecentIssueEntry {
 interface RecentIssuesState {
   items: RecentIssueEntry[];
   recordVisit: (id: string) => void;
+  removeVisit: (id: string) => void;
 }
 
 export const useRecentIssuesStore = create<RecentIssuesState>()(
@@ -32,6 +33,10 @@ export const useRecentIssuesStore = create<RecentIssuesState>()(
             items: [updated, ...filtered].slice(0, MAX_RECENT_ISSUES),
           };
         }),
+      removeVisit: (id) =>
+        set((state) => ({
+          items: state.items.filter((i) => i.id !== id),
+        })),
     }),
     {
       name: "multica_recent_issues",

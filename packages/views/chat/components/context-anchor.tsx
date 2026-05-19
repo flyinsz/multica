@@ -74,6 +74,8 @@ export function useRouteAnchorCandidate(wsId: string): {
   const { data: issue, isLoading: issueLoading } = useQuery({
     ...issueDetailOptions(wsId, issueIdToFetch ?? ""),
     enabled: !!issueIdToFetch,
+    retry: false,
+    throwOnError: false,
   });
 
   const { data: project, isLoading: projectLoading } = useQuery({

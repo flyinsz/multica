@@ -27,7 +27,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { SearchIssueResult, SearchProjectResult } from "@multica/core/types";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useRecentIssuesStore } from "@multica/core/issues/stores";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
@@ -140,6 +140,7 @@ export function SearchCommand() {
   const open = useSearchStore((s) => s.open);
   const setOpen = useSearchStore((s) => s.setOpen);
   const recentItems = useRecentIssuesStore((s) => s.items);
+  const removeRecentIssue = useRecentIssuesStore((s) => s.removeVisit);
   const wsId = useWorkspaceId();
   const p: WorkspacePaths = useWorkspacePaths();
   const { theme, setTheme } = useTheme();
@@ -151,13 +152,25 @@ export function SearchCommand() {
   // if not, this triggers a lookup per id so Recent never depends on whether
   // the issue falls inside the paginated list cache.
   const recentDetailQueries = useQueries({
-    queries: recentItems.map((item) => issueDetailOptions(wsId, item.id)),
+    queries: recentItems.map((item) => ({
+      ...issueDetailOptions(wsId, item.id),
+      retry: false,
+      throwOnError: false,
+    })),
   });
   const recentIssues = useMemo(
     () =>
       recentDetailQueries.flatMap((q) => (q.data ? [q.data] : [])),
     [recentDetailQueries],
   );
+
+  useEffect(() => {
+    recentDetailQueries.forEach((query, index) => {
+      if (query.error instanceof ApiError && query.error.status === 404) {
+        removeRecentIssue(recentItems[index]?.id ?? "");
+      }
+    });
+  }, [recentDetailQueries, recentItems, removeRecentIssue]);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults>({ issues: [], projects: [] });
