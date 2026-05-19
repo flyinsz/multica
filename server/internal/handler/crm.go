@@ -401,21 +401,24 @@ type CRMEmailThreadAssociationSuggestion struct {
 }
 
 type CreateCRMEmailMessageRequest struct {
-	AccountID         *string  `json:"account_id"`
-	ContactID         *string  `json:"contact_id"`
-	ExternalMessageID *string  `json:"external_message_id"`
-	FromEmail         *string  `json:"from_email"`
-	FromName          *string  `json:"from_name"`
-	ToEmails          []string `json:"to_emails"`
-	CcEmails          []string `json:"cc_emails"`
-	BccEmails         []string `json:"bcc_emails"`
-	Subject           *string  `json:"subject"`
-	SentAt            *string  `json:"sent_at"`
-	ReceivedAt        *string  `json:"received_at"`
-	BodyText          *string  `json:"body_text"`
-	BodyHTML          *string  `json:"body_html"`
-	Snippet           *string  `json:"snippet"`
-	Direction         string   `json:"direction"`
+	AccountID         *string              `json:"account_id"`
+	ContactID         *string              `json:"contact_id"`
+	ExternalMessageID *string              `json:"external_message_id"`
+	InReplyTo         *string              `json:"in_reply_to"`
+	ReferenceIDs      []string             `json:"reference_ids"`
+	Attachments       []crmEmailAttachment `json:"attachments"`
+	FromEmail         *string              `json:"from_email"`
+	FromName          *string              `json:"from_name"`
+	ToEmails          []string             `json:"to_emails"`
+	CcEmails          []string             `json:"cc_emails"`
+	BccEmails         []string             `json:"bcc_emails"`
+	Subject           *string              `json:"subject"`
+	SentAt            *string              `json:"sent_at"`
+	ReceivedAt        *string              `json:"received_at"`
+	BodyText          *string              `json:"body_text"`
+	BodyHTML          *string              `json:"body_html"`
+	Snippet           *string              `json:"snippet"`
+	Direction         string               `json:"direction"`
 }
 
 func uuidSliceToStrings(values []pgtype.UUID) []string {
@@ -2855,6 +2858,7 @@ func (h *Handler) CreateCRMEmailMessage(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	attachmentsJSON, _ := json.Marshal(req.Attachments)
 	message, err := h.scanCRMEmailMessage(h.DB.QueryRow(r.Context(), `
 		INSERT INTO crm_email_message (
 			workspace_id, thread_id, account_id, contact_id, external_message_id,
