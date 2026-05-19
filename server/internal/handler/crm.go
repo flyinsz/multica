@@ -2359,8 +2359,8 @@ func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceI
 	subject = cleanStringForDB(subject)
 	message.FromEmail = cleanStringForDB(message.FromEmail)
 	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
+	var threadID, accountID pgtype.UUID
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
-		var threadID pgtype.UUID
 		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, t.account_id FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID); err == nil {
 			return threadID, accountID, nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -2368,7 +2368,6 @@ func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceI
 		}
 	}
 	threadKey := cfg.ID + ":subject-from:" + normalizeCRMEmailThreadSubject(subject) + ":" + strings.ToLower(strings.TrimSpace(message.FromEmail))
-	var threadID, accountID pgtype.UUID
 	if err := h.DB.QueryRow(ctx, `SELECT id, account_id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID); err == nil {
 		return threadID, accountID, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {

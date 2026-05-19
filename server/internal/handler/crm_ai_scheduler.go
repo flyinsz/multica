@@ -147,7 +147,7 @@ func crmAIDailyWindowDue(config json.RawMessage) bool {
 	return now.Hour() == want.Hour() && now.Minute() < 10
 }
 
-func shouldAutoRefreshCRMAccountProfile(ctx context.Context, db *pgxpool.Pool, workspaceID pgtype.UUID) bool {
+func shouldAutoRefreshCRMAccountProfile(ctx context.Context, db dbExecutor, workspaceID pgtype.UUID) bool {
 	var enabled bool
 	if err := db.QueryRow(ctx, `SELECT enabled FROM crm_ai_setting WHERE workspace_id=$1 AND automation_key='profile_new_activity_refresh'`, workspaceID).Scan(&enabled); err != nil {
 		return true
