@@ -317,6 +317,7 @@ func main() {
 	go runAutopilotScheduler(autopilotCtx, queries, autopilotSvc)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
+	go handler.NewCRMIMAPAutoSyncScheduler(pool, envDuration("CRM_IMAP_AUTO_SYNC_INTERVAL", 5*time.Minute), envPositiveInt("CRM_IMAP_AUTO_SYNC_LIMIT", 100)).Run(sweepCtx)
 
 	if metricsServer != nil {
 		go func() {
