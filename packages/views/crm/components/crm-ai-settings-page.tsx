@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Mail, Users } from "lucide-react";
+import { Activity, Bot, Clock, Mail, RefreshCw, Users } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { crmKeys } from "@multica/core/crm/queries";
@@ -13,7 +13,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 
-type SettingKey = "email_pending_reply" | "due_followup";
+type SettingKey = "email_pending_reply" | "due_followup" | "profile_new_activity_refresh" | "profile_daily_refresh";
 
 type CRMAIConfig = {
   follow_up_lead_days?: number;
@@ -21,6 +21,8 @@ type CRMAIConfig = {
   handled_window_hours?: number;
   same_subject_dedupe_days?: number;
   stale_done_issue_days?: number;
+  profile_refresh_min_interval_minutes?: number;
+  time?: string;
 };
 
 type CRMAILastResult = {
@@ -49,7 +51,7 @@ type CRMAISetting = {
   last_result?: CRMAILastResult | null;
 };
 
-type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<CRMAIConfig>;
+type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time">>;
 
 const meta: Record<SettingKey, { title: string; description: string; icon: typeof Mail }> = {
   email_pending_reply: {
@@ -62,6 +64,16 @@ const meta: Record<SettingKey, { title: string; description: string; icon: typeo
     description: "检查到期/即将到期客户；先审视是否已联系、已有 issue 或重复任务，再启动 AI。",
     icon: Users,
   },
+  profile_new_activity_refresh: {
+    title: "新互动客户画像刷新",
+    description: "收到新邮件或发出新邮件后刷新关联客户画像；带最小刷新间隔，避免频繁重复生成。",
+    icon: Activity,
+  },
+  profile_daily_refresh: {
+    title: "每日客户画像全量刷新",
+    description: "按每天指定时间批量刷新客户画像，用于补齐长期未更新资料。",
+    icon: RefreshCw,
+  },
 };
 
 const defaults: Record<SettingKey, Required<CRMAIConfig>> = {
@@ -71,6 +83,8 @@ const defaults: Record<SettingKey, Required<CRMAIConfig>> = {
     handled_window_hours: 48,
     same_subject_dedupe_days: 7,
     stale_done_issue_days: 7,
+    profile_refresh_min_interval_minutes: 60,
+    time: "03:00",
   },
   due_followup: {
     follow_up_lead_days: 0,
@@ -78,6 +92,26 @@ const defaults: Record<SettingKey, Required<CRMAIConfig>> = {
     handled_window_hours: 48,
     same_subject_dedupe_days: 7,
     stale_done_issue_days: 7,
+    profile_refresh_min_interval_minutes: 60,
+    time: "03:00",
+  },
+  profile_new_activity_refresh: {
+    follow_up_lead_days: 0,
+    duplicate_protection_days: 7,
+    handled_window_hours: 48,
+    same_subject_dedupe_days: 7,
+    stale_done_issue_days: 7,
+    profile_refresh_min_interval_minutes: 60,
+    time: "03:00",
+  },
+  profile_daily_refresh: {
+    follow_up_lead_days: 0,
+    duplicate_protection_days: 7,
+    handled_window_hours: 48,
+    same_subject_dedupe_days: 7,
+    stale_done_issue_days: 7,
+    profile_refresh_min_interval_minutes: 60,
+    time: "03:00",
   },
 };
 
@@ -103,6 +137,8 @@ function buildForm(setting: CRMAISetting): FormState {
     handled_window_hours: c.handled_window_hours ?? d.handled_window_hours,
     same_subject_dedupe_days: c.same_subject_dedupe_days ?? d.same_subject_dedupe_days,
     stale_done_issue_days: c.stale_done_issue_days ?? d.stale_done_issue_days,
+    profile_refresh_min_interval_minutes: c.profile_refresh_min_interval_minutes ?? d.profile_refresh_min_interval_minutes,
+    time: c.time ?? d.time,
   };
 }
 
@@ -145,15 +181,21 @@ function SettingCard({ setting, agents }: { setting: CRMAISetting; agents: Array
 
   const save = useMutation({
     mutationFn: () => {
-      const config: CRMAIConfig = {
-        duplicate_protection_days: numberValue(form.duplicate_protection_days, 0, 365),
-        handled_window_hours: numberValue(form.handled_window_hours, 0, 24 * 365),
-        stale_done_issue_days: numberValue(form.stale_done_issue_days, 0, 365),
-      };
+      const config: CRMAIConfig = {};
       if (setting.automation_key === "email_pending_reply") {
+        config.duplicate_protection_days = numberValue(form.duplicate_protection_days, 0, 365);
+        config.handled_window_hours = numberValue(form.handled_window_hours, 0, 24 * 365);
+        config.stale_done_issue_days = numberValue(form.stale_done_issue_days, 0, 365);
         config.same_subject_dedupe_days = numberValue(form.same_subject_dedupe_days, 0, 365);
-      } else {
+      } else if (setting.automation_key === "due_followup") {
+        config.duplicate_protection_days = numberValue(form.duplicate_protection_days, 0, 365);
+        config.handled_window_hours = numberValue(form.handled_window_hours, 0, 24 * 365);
+        config.stale_done_issue_days = numberValue(form.stale_done_issue_days, 0, 365);
         config.follow_up_lead_days = numberValue(form.follow_up_lead_days, 0, 365);
+      } else if (setting.automation_key === "profile_new_activity_refresh") {
+        config.profile_refresh_min_interval_minutes = numberValue(form.profile_refresh_min_interval_minutes, 0, 24 * 60);
+      } else if (setting.automation_key === "profile_daily_refresh") {
+        config.time = form.time || "03:00";
       }
       return api.updateCRMAISetting(setting.automation_key, {
         enabled: form.enabled,
@@ -195,6 +237,16 @@ function SettingCard({ setting, agents }: { setting: CRMAISetting; agents: Array
             <span className="text-muted-foreground">到期前几天开始</span>
             <Input type="number" min={0} max={365} value={form.follow_up_lead_days} onChange={(e) => setForm((s) => ({ ...s, follow_up_lead_days: Number(e.target.value) }))} />
           </label>
+        ) : setting.automation_key === "profile_new_activity_refresh" ? (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">最小刷新间隔（分钟）</span>
+            <Input type="number" min={0} max={1440} value={form.profile_refresh_min_interval_minutes} onChange={(e) => setForm((s) => ({ ...s, profile_refresh_min_interval_minutes: Number(e.target.value) }))} />
+          </label>
+        ) : setting.automation_key === "profile_daily_refresh" ? (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">每日刷新时间</span>
+            <Input type="time" value={form.time} onChange={(e) => setForm((s) => ({ ...s, time: e.target.value }))} />
+          </label>
         ) : (
           <label className="space-y-1 text-sm">
             <span className="text-muted-foreground">同主题去重窗口（天）</span>
@@ -208,18 +260,22 @@ function SettingCard({ setting, agents }: { setting: CRMAISetting; agents: Array
             {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
         </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">重复保护窗口（天）</span>
-          <Input type="number" min={0} max={365} value={form.duplicate_protection_days} onChange={(e) => setForm((s) => ({ ...s, duplicate_protection_days: Number(e.target.value) }))} />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">已处理判断窗口（小时）</span>
-          <Input type="number" min={0} max={8760} value={form.handled_window_hours} onChange={(e) => setForm((s) => ({ ...s, handled_window_hours: Number(e.target.value) }))} />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">done issue 保护（天）</span>
-          <Input type="number" min={0} max={365} value={form.stale_done_issue_days} onChange={(e) => setForm((s) => ({ ...s, stale_done_issue_days: Number(e.target.value) }))} />
-        </label>
+        {setting.automation_key === "email_pending_reply" || setting.automation_key === "due_followup" ? (
+          <>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">重复保护窗口（天）</span>
+              <Input type="number" min={0} max={365} value={form.duplicate_protection_days} onChange={(e) => setForm((s) => ({ ...s, duplicate_protection_days: Number(e.target.value) }))} />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">已处理判断窗口（小时）</span>
+              <Input type="number" min={0} max={8760} value={form.handled_window_hours} onChange={(e) => setForm((s) => ({ ...s, handled_window_hours: Number(e.target.value) }))} />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">done issue 保护（天）</span>
+              <Input type="number" min={0} max={365} value={form.stale_done_issue_days} onChange={(e) => setForm((s) => ({ ...s, stale_done_issue_days: Number(e.target.value) }))} />
+            </label>
+          </>
+        ) : null}
       </div>
       <ResultGrid result={setting.last_result} />
       <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
