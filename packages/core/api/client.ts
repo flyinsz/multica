@@ -1407,7 +1407,8 @@ export class ApiClient {
   }
 
   getCRMEmailAttachmentUrl(wsId: string, messageId: string, attachmentIndex: number): string {
-    return `/api/crm/${wsId}/email-messages/${messageId}/attachment/${attachmentIndex}`;
+    void wsId;
+    return `/api/crm/email-messages/${messageId}/attachment/${attachmentIndex}`;
   }
 
   async trashCRMEmailThread(threadId: string): Promise<void> {

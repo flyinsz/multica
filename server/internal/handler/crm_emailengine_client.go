@@ -111,12 +111,13 @@ func fetchCRMEmailProviderMessages(cfg crmIMAPMailboxConfig, folder string, limi
 	return fetchCRMEmailEngineMessages(cfg, folder, limit, rangeDays, requestedUIDs)
 }
 
-func sendCRMEmailProvider(cfg crmIMAPMailboxConfig, payload crmEmailSendPayload) (string, []byte, error) {
+func sendCRMEmailProvider(cfg crmIMAPMailboxConfig, payload crmEmailSendPayload) (string, []byte, time.Time, error) {
 	if !useCRMEmailEngine() {
 		return sendCRMSMTP(cfg, payload)
 	}
+	sentAt := time.Now()
 	messageID, err := sendCRMEmailEngine(cfg, payload)
-	return messageID, nil, err
+	return messageID, nil, sentAt, err
 }
 
 func fetchCRMEmailEngineMessages(cfg crmIMAPMailboxConfig, folder string, limit int, rangeDays int, requestedUIDs []string) ([]crmIMAPFetchedMessage, error) {

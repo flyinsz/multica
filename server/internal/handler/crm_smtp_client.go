@@ -36,9 +36,9 @@ type crmEmailSendPayload struct {
 	AppendToSent bool                 `json:"append_to_sent"`
 }
 
-func sendCRMSMTP(cfg crmIMAPMailboxConfig, payload crmEmailSendPayload) (string, []byte, error) {
+func sendCRMSMTP(cfg crmIMAPMailboxConfig, payload crmEmailSendPayload) (string, []byte, time.Time, error) {
 	if strings.TrimSpace(cfg.SMTPHost) == "" {
-		return "", nil, fmt.Errorf("SMTP host is required")
+		return "", nil, time.Time{}, fmt.Errorf("SMTP host is required")
 	}
 	port := cfg.SMTPPort
 	if port <= 0 {
@@ -54,17 +54,18 @@ func sendCRMSMTP(cfg crmIMAPMailboxConfig, payload crmEmailSendPayload) (string,
 	}
 	password, err := resolveCRMIMAPSecret(secretRef)
 	if err != nil {
-		return "", nil, sanitizeCRMSendError(err)
+		return "", nil, time.Time{}, sanitizeCRMSendError(err)
 	}
 	from := strings.TrimSpace(cfg.Email)
 	recipients := append(append(append([]string{}, payload.ToEmails...), payload.CcEmails...), payload.BccEmails...)
 	if len(recipients) == 0 {
-		return "", nil, fmt.Errorf("recipient is required")
+		return "", nil, time.Time{}, fmt.Errorf("recipient is required")
 	}
 	messageID := newCRMMessageID(cfg.SMTPHost)
-	message, err := buildCRMSMTPMessage(from, payload, messageID)
+	sentAt := time.Now()
+	message, err := buildCRMSMTPMessage(from, payload, messageID, sentAt)
 	if err != nil {
-		return "", nil, err
+		return "", nil, time.Time{}, err
 	}
 	addr := net.JoinHostPort(cfg.SMTPHost, fmt.Sprintf("%d", port))
 	auth := smtp.PlainAuth("", username, password, cfg.SMTPHost)
@@ -75,9 +76,9 @@ func sendCRMSMTP(cfg crmIMAPMailboxConfig, payload crmEmailSendPayload) (string,
 		err = smtp.SendMail(addr, auth, from, recipients, message)
 	}
 	if err != nil {
-		return "", nil, sanitizeCRMSendError(err)
+		return "", nil, time.Time{}, sanitizeCRMSendError(err)
 	}
-	return messageID, message, nil
+	return messageID, message, sentAt, nil
 }
 
 func sendCRMSMTPOverTLS(addr, host string, auth smtp.Auth, from string, recipients []string, message []byte) error {
@@ -112,7 +113,7 @@ func sendCRMSMTPOverTLS(addr, host string, auth smtp.Auth, from string, recipien
 	return wc.Close()
 }
 
-func buildCRMSMTPMessage(from string, payload crmEmailSendPayload, messageID string) ([]byte, error) {
+func buildCRMSMTPMessage(from string, payload crmEmailSendPayload, messageID string, sentAt time.Time) ([]byte, error) {
 	var buf bytes.Buffer
 	boundary := "multica_" + strings.ReplaceAll(messageID, "@", "_")
 	headers := []string{
@@ -120,7 +121,7 @@ func buildCRMSMTPMessage(from string, payload crmEmailSendPayload, messageID str
 		"To: " + strings.Join(payload.ToEmails, ", "),
 		"Subject: " + strings.ReplaceAll(payload.Subject, "\n", " "),
 		"Message-ID: " + messageID,
-		"Date: " + time.Now().Format(time.RFC1123Z),
+		"Date: " + sentAt.Format(time.RFC1123Z),
 		"MIME-Version: 1.0",
 	}
 	if len(payload.CcEmails) > 0 {

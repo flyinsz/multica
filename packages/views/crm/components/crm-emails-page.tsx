@@ -816,13 +816,19 @@ export function CRMEmailsPage() {
     const replyAll = mode === "reply-all";
     const date = lastMsg ? messageTime(lastMsg.sent_at || lastMsg.received_at) : "";
     const from = lastMsg?.from_name || lastMsg?.from_email || "";
-    const originalBody = lastMsg?.body_text || "";
+    const originalBody = lastMsg?.body_text || lastMsg?.body_html?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
+    const quotedBody = originalBody ? originalBody.split('\n').map((line: string) => `> ${line}`).join('\n') : "> (no body)";
     let body = "";
     if (mode === "reply" || mode === "reply-all") {
-      body = `\n\n\n> On ${date} ${from} wrote:\n> ${originalBody.split('\n').join('\n> ')}`;
+      body = `\n\n\n> On ${date} ${from} wrote:\n${quotedBody}`;
     } else if (mode === "forward") {
       body = `\n\n---- Forwarded message ----\nSubject: ${subjectBase}\nFrom: ${from}\nDate: ${date}\n\n${originalBody}`;
     }
+    const forwardAttachments = mode === "forward"
+      ? (lastMsg?.attachments ?? [])
+        .filter((a: any) => typeof a.content === "string" && a.content.trim().length > 0)
+        .map((a: any) => ({ file_name: a.filename || a.file_name || "attachment", content_type: a.content_type || "application/octet-stream", content: a.content, size: a.size_bytes || a.size || undefined }))
+      : [];
     setComposeDraft({
       mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
       accountId: selectedThread?.account_id ?? "",
@@ -832,7 +838,7 @@ export function CRMEmailsPage() {
       bcc: "",
       subject,
       body,
-      attachments: mode === "forward" ? (lastMsg?.attachments?.map((a: any) => ({file_name: a.filename || 'attachment', content_type: a.content_type || 'application/octet-stream', content: a.content || '', size: a.size_bytes})) || []) : [],
+      attachments: forwardAttachments,
     });
   };
 

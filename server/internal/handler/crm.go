@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -1773,6 +1774,7 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
+	h.trySyncCRMEmailThreadFlags(r.Context(), workspaceID, threadID, req.IsRead, req.IsStarred)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
 }
 
@@ -2506,7 +2508,7 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	messageID, _, err := sendCRMEmailProvider(cfg, payload)
+	messageID, rawMessage, sentAt, err := sendCRMEmailProvider(cfg, payload)
 	if err != nil {
 		_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
 		writeError(w, http.StatusBadGateway, "failed to send CRM email draft: "+err.Error())
@@ -2514,8 +2516,14 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	appendWarning := ""
 	if payload.AppendToSent {
-		appendWarning = "Sent folder append is not configured; outbound CRM state was saved after SMTP success"
-		slog.Warn("CRM sent append skipped", "draft_id", uuidToString(draftID), "workspace_id", uuidToString(workspaceID), "warning", appendWarning)
+		if len(rawMessage) == 0 {
+			appendWarning = "Sent folder append skipped because SMTP provider did not return raw RFC822 message"
+		} else if err := appendCRMIMAPSentMessage(cfg, rawMessage, sentAt); err != nil {
+			appendWarning = "Sent folder append failed: " + sanitizeCRMSendError(err).Error()
+		}
+		if appendWarning != "" {
+			slog.Warn("CRM sent append failed", "draft_id", uuidToString(draftID), "workspace_id", uuidToString(workspaceID), "warning", appendWarning)
+		}
 	}
 	if !threadID.Valid {
 		mailboxEmail := cleanStringForDB(cfg.Email)
@@ -2524,8 +2532,8 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now()); UPDATE crm_email_thread SET direction='outbound', status='open', last_message_at=now(), message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning))
-	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=now(), sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning))
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt)
+	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": messageID, "sent_append_warning": appendWarning})
 }
 
@@ -3446,15 +3454,39 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	att := attachments[index]
+	if strings.TrimSpace(att.Content) == "" {
+		writeError(w, http.StatusNotFound, "attachment content is not available for this message")
+		return
+	}
 	raw, err := base64.StdEncoding.DecodeString(att.Content)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to decode attachment content")
 		return
 	}
-	w.Header().Set("Content-Type", att.ContentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+att.FileName+`"`)
+	contentType := strings.TrimSpace(att.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	fileName := sanitizeCRMEmailAttachmentFileName(att.FileName, index)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+	w.Header().Set("Content-Disposition", `attachment; filename="`+fileName+`"; filename*=UTF-8''`+url.PathEscape(fileName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+func sanitizeCRMEmailAttachmentFileName(value string, index int) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\x00", "")
+	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\n", "")
+	value = strings.ReplaceAll(value, "\"", "")
+	value = strings.ReplaceAll(value, "\\", "_")
+	value = strings.ReplaceAll(value, "/", "_")
+	if value == "" || value == "." || value == ".." {
+		return "attachment-" + strconv.Itoa(index+1)
+	}
+	return value
 }
 
 func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
