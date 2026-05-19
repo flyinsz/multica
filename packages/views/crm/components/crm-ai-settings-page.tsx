@@ -292,14 +292,14 @@ export function CRMAISettingsPage() {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <PageHeader className="justify-between px-5">
         <div className="flex items-center gap-2">
           <Bot className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">CRM AI</h1>
         </div>
       </PageHeader>
-      <div className="space-y-4 p-5">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 pb-10">
         <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
           这些设置控制 Hermes 低成本 SQL watchdog。SQL 先做候选筛选与去重/已处理审视；只有发现真实待处理事项时，才创建 Multica issue 并启动 AI。
         </div>
