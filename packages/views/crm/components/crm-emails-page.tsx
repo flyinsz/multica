@@ -899,7 +899,7 @@ export function CRMEmailsPage() {
     const forwardAttachments = mode === "forward"
       ? (lastMsg?.attachments ?? [])
         .filter((a: any) => typeof a.content === "string" && a.content.trim().length > 0)
-        .map((a: any) => ({ file_name: a.filename || a.file_name || "attachment", content_type: a.content_type || "application/octet-stream", content: a.content, size: a.size_bytes || a.size || undefined }))
+        .map((a: any, index: number) => ({ file_name: a.file_name || a.filename || `attachment-${index + 1}`, content_type: a.content_type || "application/octet-stream", content: a.content, size: a.size_bytes || a.size || 0 }))
       : [];
     setComposeDraft({
       mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
@@ -1311,16 +1311,20 @@ export function CRMEmailsPage() {
                           <div className="text-xs font-medium text-muted-foreground">{emailCopy.attachments}</div>
                           {message.attachments?.length ? (
                             <div className="mt-2 space-y-2">
-                              {message.attachments.map((attachment, index) => (
+                              {message.attachments.map((attachment, index) => {
+                                const attachmentName = attachment.file_name || attachment.filename || attachment.content_id || `attachment-${index + 1}`;
+                                const attachmentSize = attachment.size_bytes ?? attachment.size ?? 0;
+                                return (
                                 <div key={`${message.id}-attachment-${index}`} className="rounded border bg-background px-3 py-2 text-xs">
                                   <a
                                     href={api.getCRMEmailAttachmentUrl(wsId, message.id, index)}
-                                    download={attachment.filename || `attachment-${index}`}
+                                    download={attachmentName}
                                     className="font-medium text-primary hover:underline"
-                                  >{attachment.filename || attachment.content_id || emailCopy.attachments}</a>
-                                  <div className="mt-1 text-muted-foreground">{[attachment.content_type, attachment.disposition, `${attachment.size_bytes} ${emailCopy.bytes}`].filter(Boolean).join(" · ")}</div>
+                                  >{attachmentName}</a>
+                                  <div className="mt-1 text-muted-foreground">{[attachment.content_type, attachment.disposition, attachmentSize ? `${attachmentSize} ${emailCopy.bytes}` : ""].filter(Boolean).join(" · ")}</div>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           ) : <div className="mt-2 text-xs text-muted-foreground">{emailCopy.noAttachments}</div>}
                         </div>

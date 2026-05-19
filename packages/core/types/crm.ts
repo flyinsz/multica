@@ -199,10 +199,12 @@ export type CRMEmailThreadStatus = "open" | "archived" | "trashed";
 export type CRMEmailMessageDirection = "inbound" | "outbound";
 
 export interface CRMEmailAttachment {
+  file_name?: string;
   filename?: string;
   content_type?: string;
-  size_bytes: number;
-  inline: boolean;
+  size_bytes?: number;
+  size?: number;
+  inline?: boolean;
   content_id?: string;
   disposition?: string;
   content?: string;

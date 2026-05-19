@@ -6,21 +6,46 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net"
 	"net/smtp"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type crmEmailAttachment struct {
 	FileName    string `json:"file_name"`
+	LegacyName  string `json:"filename,omitempty"`
 	ContentType string `json:"content_type"`
 	Content     string `json:"content,omitempty"`
 	ContentID   string `json:"content_id,omitempty"`
 	Size        int    `json:"size_bytes"`
+	LegacySize  int    `json:"size,omitempty"`
+}
+
+func (a crmEmailAttachment) DisplayName(index int) string {
+	name := strings.TrimSpace(a.FileName)
+	if name == "" {
+		name = strings.TrimSpace(a.LegacyName)
+	}
+	if decoded, err := new(mime.WordDecoder).DecodeHeader(name); err == nil && strings.TrimSpace(decoded) != "" {
+		name = strings.TrimSpace(decoded)
+	}
+	if name == "" {
+		name = "attachment-" + strconv.Itoa(index+1)
+	}
+	return name
+}
+
+func (a crmEmailAttachment) DisplaySize() int {
+	if a.Size > 0 {
+		return a.Size
+	}
+	return a.LegacySize
 }
 
 type crmEmailSendPayload struct {

@@ -406,12 +406,15 @@ func parseCRMIMAPBodyParts(header mail.Header, body io.Reader) (string, string, 
 			continue
 		}
 		if strings.HasPrefix(disposition, "attachment") || contentID != "" {
+			fileName := filenameFromPartHeader(part.Header, contentID)
 			attachments = append(attachments, crmEmailAttachment{
-				FileName:    filenameFromPartHeader(part.Header, contentID),
-				ContentType: partType,
+				FileName:    fileName,
+				LegacyName:  fileName,
+				ContentType: cleanCRMEmailAttachmentContentType(partType),
 				Content:     base64.StdEncoding.EncodeToString([]byte(decoded)),
 				ContentID:   contentID,
 				Size:        len(partBody),
+				LegacySize:  len(partBody),
 			})
 			continue
 		}
@@ -453,6 +456,17 @@ func filenameFromPartHeader(header textproto.MIMEHeader, fallback string) string
 		return fallback
 	}
 	return "attachment"
+}
+
+func cleanCRMEmailAttachmentContentType(value string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
+	if err == nil && strings.TrimSpace(mediaType) != "" {
+		return strings.TrimSpace(mediaType)
+	}
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return "application/octet-stream"
 }
 
 func extractReadableEmailBodies(contentType string, body []byte) (string, string) {

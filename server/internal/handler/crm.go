@@ -475,6 +475,29 @@ func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
 	}
 }
 
+func normalizeCRMEmailAttachments(raw []byte) []crmEmailAttachment {
+	attachments := []crmEmailAttachment{}
+	if len(raw) == 0 {
+		return attachments
+	}
+	if err := json.Unmarshal(raw, &attachments); err != nil {
+		return attachments
+	}
+	for i := range attachments {
+		attachments[i] = normalizeCRMEmailAttachment(attachments[i], i)
+	}
+	return attachments
+}
+
+func normalizeCRMEmailAttachment(att crmEmailAttachment, index int) crmEmailAttachment {
+	att.FileName = att.DisplayName(index)
+	att.LegacyName = att.FileName
+	att.ContentType = cleanCRMEmailAttachmentContentType(att.ContentType)
+	att.Size = att.DisplaySize()
+	att.LegacySize = att.Size
+	return att
+}
+
 func crmEmailMessageToResponse(row crmEmailMessageRow) CRMEmailMessageResponse {
 	toEmails := row.ToEmails
 	if toEmails == nil {
@@ -492,10 +515,7 @@ func crmEmailMessageToResponse(row crmEmailMessageRow) CRMEmailMessageResponse {
 	if referenceIDs == nil {
 		referenceIDs = []string{}
 	}
-	attachments := []crmEmailAttachment{}
-	if len(row.Attachments) > 0 {
-		_ = json.Unmarshal(row.Attachments, &attachments)
-	}
+	attachments := normalizeCRMEmailAttachments(row.Attachments)
 	rawHeaders := map[string][]string{}
 	if len(row.RawHeaders) > 0 {
 		_ = json.Unmarshal(row.RawHeaders, &rawHeaders)
@@ -3529,6 +3549,9 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to parse attachments")
 		return
 	}
+	for i := range attachments {
+		attachments[i] = normalizeCRMEmailAttachment(attachments[i], i)
+	}
 	if index >= len(attachments) {
 		writeError(w, http.StatusNotFound, "attachment index out of range")
 		return
@@ -3547,7 +3570,7 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	fileName := sanitizeCRMEmailAttachmentFileName(att.FileName, index)
+	fileName := sanitizeCRMEmailAttachmentFileName(att.DisplayName(index), index)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+fileName+`"; filename*=UTF-8''`+url.PathEscape(fileName))
