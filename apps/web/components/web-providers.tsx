@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import { createBrowserCookieLocaleAdapter } from "@multica/core/i18n/browser";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
@@ -21,7 +21,15 @@ import { PageviewTracker } from "./pageview-tracker";
 function hasLegacyToken(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return Boolean(window.localStorage.getItem("multica_token"));
+    const token = window.localStorage.getItem("multica_token");
+    // Self-hosted web uses HttpOnly session cookies. A stale empty/invalid
+    // migration token in localStorage forced token mode and made every API
+    // call miss the cookie auth path, producing 401 loops on /api/workspaces.
+    if (!token || token === "null" || token === "undefined") {
+      window.localStorage.removeItem("multica_token");
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -52,7 +60,7 @@ export function WebProviders({
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
 }) {
-  const cookieAuth = !hasLegacyToken();
+  const [cookieAuth] = useState(() => !hasLegacyToken());
   // Stable identity reference so downstream effects keyed on it don't see a
   // new object on every parent render.
   const identity = useMemo(

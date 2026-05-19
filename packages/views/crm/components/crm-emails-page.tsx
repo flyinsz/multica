@@ -517,10 +517,14 @@ export function CRMEmailsPage() {
     return syncRuns.filter((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
   }, [syncRuns]);
 
+  const lastCompletedSyncRunRef = useRef<string | null>(null);
   useEffect(() => {
     if (!wsId || !syncRunsUpdatedAt) return;
     const latest = syncRuns[0];
     if (!latest || latest.status === "running") return;
+    const runKey = String(latest.id ?? latest.started_at ?? latest.completed_at ?? syncRunsUpdatedAt);
+    if (lastCompletedSyncRunRef.current === runKey) return;
+    lastCompletedSyncRunRef.current = runKey;
     void queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"], refetchType: "active" });
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"], refetchType: "active" });
