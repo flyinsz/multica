@@ -384,7 +384,7 @@ export function CRMEmailsPage() {
   const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
-  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts"], queryFn: () => api.listCRMEmailDrafts(), enabled: Boolean(wsId) });
+  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts"], queryFn: () => api.listCRMEmailDrafts(), enabled: Boolean(wsId), refetchOnMount: "always" });
   const { data: mailboxData } = useQuery({
     queryKey: ["crm", wsId, "imap-settings"],
     queryFn: () => api.listCRMIMAPSettings(),
@@ -449,12 +449,13 @@ export function CRMEmailsPage() {
   }, [emailDrafts, selectedMailbox?.id]);
 
   const visibleMailboxDrafts = useMemo(
-    () => mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded"),
+    () => mailboxDrafts.filter((draft: any) => draft.status !== "discarded"),
     [mailboxDrafts],
   );
 
   useEffect(() => {
     if (activeFolder !== "drafts") return;
+    void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     if (!visibleMailboxDrafts.length) {
       setComposeDraft(null);
       return;
@@ -718,6 +719,7 @@ export function CRMEmailsPage() {
     onSuccess: () => {
       setComposeDraft(null);
       setMailboxStatus(emailCopy.draftSaved);
+      setActiveFolder("drafts");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     },
   });
