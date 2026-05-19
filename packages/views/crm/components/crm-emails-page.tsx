@@ -229,6 +229,7 @@ export function CRMEmailsPage() {
     replyAll: "全部回复",
     forward: "转发",
     send: "发送",
+    edit: "编辑",
     to: "收件人",
     cc: "抄送",
     bcc: "密送",
@@ -297,6 +298,7 @@ export function CRMEmailsPage() {
     replyAll: "Reply all",
     forward: "Forward",
     send: "Send",
+    edit: "Edit",
     to: "To",
     cc: "Cc",
     bcc: "Bcc",
@@ -373,10 +375,11 @@ export function CRMEmailsPage() {
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const composeFullWidth = Boolean(composeDraft && activeFolder !== "drafts");
+  const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
@@ -419,8 +422,15 @@ export function CRMEmailsPage() {
     })) : [],
   });
 
+  const openDraftPreview = (draft: any) => {
+    setSelectedThreadId(null);
+    setSelectedDraftId(draft.id ?? null);
+    setComposeDraft(null);
+  };
+
   const openDraftInComposer = (draft: any) => {
     setSelectedThreadId(null);
+    setSelectedDraftId(draft.id ?? null);
     setComposeDraft(draftToCompose(draft));
   };
 
@@ -452,17 +462,22 @@ export function CRMEmailsPage() {
     () => mailboxDrafts.filter((draft: any) => draft.status !== "discarded"),
     [mailboxDrafts],
   );
+  const selectedDraft = useMemo(
+    () => visibleMailboxDrafts.find((draft: any) => draft.id === selectedDraftId) ?? null,
+    [visibleMailboxDrafts, selectedDraftId],
+  );
 
   useEffect(() => {
     if (activeFolder !== "drafts") return;
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     if (!visibleMailboxDrafts.length) {
       setComposeDraft(null);
+      setSelectedDraftId(null);
       return;
     }
-    if (composeDraft?.draftId && visibleMailboxDrafts.some((draft: any) => draft.id === composeDraft.draftId)) return;
-    openDraftInComposer(visibleMailboxDrafts[0]);
-  }, [activeFolder, visibleMailboxDrafts, composeDraft?.draftId]);
+    if (selectedDraftId && visibleMailboxDrafts.some((draft: any) => draft.id === selectedDraftId)) return;
+    openDraftPreview(visibleMailboxDrafts[0]);
+  }, [activeFolder, visibleMailboxDrafts, selectedDraftId]);
 
   const folderThreads = useMemo(() => {
     return mailboxThreads.filter((thread) => {
@@ -596,6 +611,7 @@ export function CRMEmailsPage() {
     onSuccess: () => {
       setMailboxStatus(emailCopy.draftSent);
       setComposeDraft(null);
+      setSelectedDraftId(null);
       setActiveFolder("sent");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
       queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
@@ -933,8 +949,8 @@ export function CRMEmailsPage() {
         </div>
       </PageHeader>
 
-      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-0 ${composeFullWidth ? "lg:grid-cols-1" : "lg:grid-cols-[220px_360px_minmax(0,1fr)]"}`}>
-        <aside className={`min-h-0 flex-col border-r bg-card/80 p-3 ${composeFullWidth ? "hidden" : "flex"}`}>
+      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-0 ${composeHidesList ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[220px_360px_minmax(0,1fr)]"}`}>
+        <aside className="flex min-h-0 flex-col border-r bg-card/80 p-3">
           <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
             <select
@@ -979,7 +995,7 @@ export function CRMEmailsPage() {
           <Button className="mt-auto" variant="outline" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{t(($) => $.emails.add_mailbox)}</Button>
         </aside>
 
-        <aside className={`min-h-0 flex-col border-r bg-background ${composeFullWidth ? "hidden" : "flex"}`}>
+        <aside className={`min-h-0 flex-col border-r bg-background ${composeHidesList ? "hidden" : "flex"}`}>
           <div className="border-b p-3">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -994,9 +1010,9 @@ export function CRMEmailsPage() {
           ) : activeFolder === "drafts" ? (
             <section className="min-h-0 flex-1 overflow-y-auto p-3">
               {visibleMailboxDrafts.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : visibleMailboxDrafts.map((draft: any) => {
-                const active = composeDraft?.draftId === draft.id;
+                const active = selectedDraftId === draft.id;
                 return (
-                  <button key={draft.id} type="button" className={`mb-2 block w-full rounded-lg border bg-card p-3 text-left text-sm hover:bg-muted/60 ${active ? "ring-2 ring-primary/40" : ""}`} onClick={() => openDraftInComposer(draft)}>
+                  <button key={draft.id} type="button" className={`mb-2 block w-full rounded-lg border bg-card p-3 text-left text-sm hover:bg-muted/60 ${active ? "ring-2 ring-primary/40" : ""}`} onClick={() => openDraftPreview(draft)}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate font-medium">{draft.subject || emailCopy.noSubject}</div>
@@ -1080,6 +1096,27 @@ export function CRMEmailsPage() {
                     <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
                     <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
                   </div>
+                </div>
+              </div>
+            </div>
+          ) : activeFolder === "drafts" && selectedDraft ? (
+            <div className="flex h-full min-h-0 flex-col bg-background p-5">
+              <div className="flex h-full min-h-0 flex-col rounded-lg border bg-card">
+                <div className="border-b p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="truncate text-base font-semibold">{selectedDraft.subject || emailCopy.noSubject}</h2>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{emailCopy.to}: {(selectedDraft.to_emails ?? []).join(", ") || "—"}</p>
+                    </div>
+                    <Badge variant="outline">{selectedDraft.status}</Badge>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+                    <Button size="sm" onClick={() => openDraftInComposer(selectedDraft)}>{emailCopy.edit}</Button>
+                    <Button size="sm" variant="default" disabled={!selectedDraft.id || sendDraft.isPending} onClick={() => selectedDraft.id && sendDraft.mutate(selectedDraft.id)}>{emailCopy.send}</Button>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                  <div className="whitespace-pre-wrap rounded-md border bg-background p-4 text-sm leading-6 text-foreground/90">{selectedDraft.body_text || selectedDraft.body_html || emailCopy.noSubject}</div>
                 </div>
               </div>
             </div>
