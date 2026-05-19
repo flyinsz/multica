@@ -2496,7 +2496,7 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	var mailboxID, threadID, accountID, contactID pgtype.UUID
 	var payload crmEmailSendPayload
 	var attachmentsJSON []byte
-	if err := h.DB.QueryRow(r.Context(), `SELECT mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
+	if err := h.DB.QueryRow(r.Context(), `SELECT mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
 		writeError(w, http.StatusNotFound, "CRM email draft not found")
 		return
 	}
@@ -2532,7 +2532,7 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt)
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
 	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": messageID, "sent_append_warning": appendWarning})
 }
@@ -3560,28 +3560,31 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported folder")
 		return
 	}
-	cmd, err := h.DB.Exec(r.Context(),
+	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(),
 		`UPDATE crm_email_thread
-		 SET mailbox=$3,
-		     status = CASE $4
+		 SET status = CASE $3
 		       WHEN 'archived' THEN 'archived'
 		       ELSE 'open'
 		     END,
-		     direction = CASE $4 WHEN 'sent' THEN 'outbound' ELSE direction END,
-		     is_starred = CASE $4 WHEN 'starred' THEN true ELSE is_starred END,
-		     is_trashed = CASE $4 WHEN 'trash' THEN true ELSE false END,
+		     direction = CASE $3 WHEN 'sent' THEN 'outbound' ELSE direction END,
+		     is_starred = CASE $3 WHEN 'starred' THEN true ELSE is_starred END,
+		     is_trashed = CASE $3 WHEN 'trash' THEN true ELSE false END,
 		     updated_at=now()
-		 WHERE id=$1 AND workspace_id=$2`,
-		threadID, workspaceID, req.Folder, req.Folder)
+		 WHERE id=$1 AND workspace_id=$2
+		 RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject,
+		          external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at,
+		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed`,
+		threadID, workspaceID, req.Folder))
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "CRM email thread not found")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to move CRM email thread")
 		return
 	}
-	if cmd.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "CRM email thread not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
+	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
 }
 
 func (h *Handler) DeleteCRMEmailThread(w http.ResponseWriter, r *http.Request) {

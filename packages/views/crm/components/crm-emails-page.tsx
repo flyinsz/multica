@@ -608,13 +608,13 @@ export function CRMEmailsPage() {
 
   const sendDraft = useMutation({
     mutationFn: (draftId: string) => api.sendCRMEmailDraft(draftId),
-    onSuccess: () => {
+    onSuccess: async () => {
       setMailboxStatus(emailCopy.draftSent);
       setComposeDraft(null);
       setSelectedDraftId(null);
       setActiveFolder("sent");
-      queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
-      queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => {
       setMailboxStatus(`SMTP send failed: ${mutationErrorMessage(error, "unknown error")}`);
@@ -694,10 +694,11 @@ export function CRMEmailsPage() {
 
   const moveThread = useMutation({
     mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(threadId, folder),
-    onSuccess: async (_result, variables) => {
+    onSuccess: async (thread, variables) => {
       setMailboxStatus(`Moved to ${variables.folder}.`);
+      updateCachedThread(thread);
       setActiveFolder(variables.folder as typeof activeFolder);
-      setSelectedThreadId(null);
+      setSelectedThreadId(thread.id);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => setMailboxStatus(`Move failed: ${mutationErrorMessage(error, "unknown error")}`),

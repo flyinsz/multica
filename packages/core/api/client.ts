@@ -1423,8 +1423,8 @@ export class ApiClient {
     await this.fetch(`/api/crm/email-threads/${threadId}/delete`, { method: "DELETE" });
   }
 
-  async moveCRMEmailThread(threadId: string, folder: string): Promise<void> {
-    await this.fetch(`/api/crm/email-threads/${threadId}/move-folder`, {
+  async moveCRMEmailThread(threadId: string, folder: string): Promise<CRMEmailThread> {
+    return this.fetch<CRMEmailThread>(`/api/crm/email-threads/${threadId}/move-folder`, {
       method: "POST",
       body: JSON.stringify({ folder }),
     });
