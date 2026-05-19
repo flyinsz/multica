@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, Building2, ChevronDown, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
+import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -391,6 +391,29 @@ export function CRMEmailsPage() {
   const emailDrafts = draftsData?.drafts ?? [];
   const syncRuns = syncRunsData?.runs ?? [];
 
+  const draftToCompose = (draft: any): ComposeDraft => ({
+    draftId: draft.id,
+    mailboxId: draft.mailbox_id ?? selectedMailbox?.id ?? "",
+    accountId: draft.account_id ?? "",
+    contactId: draft.contact_id ?? "",
+    to: (draft.to_emails ?? []).join(", "),
+    cc: (draft.cc_emails ?? []).join(", "),
+    bcc: (draft.bcc_emails ?? []).join(", "),
+    subject: draft.subject ?? "",
+    body: draft.body_text ?? "",
+    attachments: Array.isArray(draft.attachments) ? draft.attachments.map((attachment: any) => ({
+      file_name: attachment.file_name || attachment.filename || "attachment",
+      content_type: attachment.content_type || "application/octet-stream",
+      content: attachment.content || "",
+      size: attachment.size || attachment.size_bytes || 0,
+    })) : [],
+  });
+
+  const openDraftInComposer = (draft: any) => {
+    setSelectedThreadId(null);
+    setComposeDraft(draftToCompose(draft));
+  };
+
   const activeSyncRuns = useMemo(() => {
     const cutoff = Date.now() - 2 * 60 * 1000;
     return syncRuns.filter((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
@@ -414,6 +437,21 @@ export function CRMEmailsPage() {
     if (!selectedMailbox?.id) return emailDrafts;
     return emailDrafts.filter((draft: any) => (draft.mailbox_id ?? "") === selectedMailbox.id);
   }, [emailDrafts, selectedMailbox?.id]);
+
+  const visibleMailboxDrafts = useMemo(
+    () => mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded"),
+    [mailboxDrafts],
+  );
+
+  useEffect(() => {
+    if (activeFolder !== "drafts") return;
+    if (!visibleMailboxDrafts.length) {
+      setComposeDraft(null);
+      return;
+    }
+    if (composeDraft?.draftId && visibleMailboxDrafts.some((draft: any) => draft.id === composeDraft.draftId)) return;
+    openDraftInComposer(visibleMailboxDrafts[0]);
+  }, [activeFolder, visibleMailboxDrafts, composeDraft?.draftId]);
 
   const folderThreads = useMemo(() => {
     return mailboxThreads.filter((thread) => {
@@ -439,12 +477,12 @@ export function CRMEmailsPage() {
   const folderCounts = useMemo(() => ({
     inbox: mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed).length,
     sent: mailboxThreads.filter((thread) => thread.direction === "outbound" && !thread.is_trashed).length,
-    drafts: mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").length,
+    drafts: visibleMailboxDrafts.length,
     archived: mailboxThreads.filter((thread) => thread.status === "archived" && !thread.is_trashed).length,
     starred: mailboxThreads.filter((thread) => thread.is_starred && !thread.is_trashed).length,
     unlinked: mailboxThreads.filter((thread) => !thread.account_id && !thread.is_trashed).length,
     trash: mailboxThreads.filter((thread) => thread.status === "trashed" || thread.is_trashed).length,
-  } as const), [mailboxThreads, mailboxDrafts]);
+  } as const), [mailboxThreads, visibleMailboxDrafts.length]);
 
   const saveMailbox = useMutation({
     mutationFn: () => api.upsertCRMIMAPSetting({
@@ -564,36 +602,45 @@ export function CRMEmailsPage() {
   });
 
   const trashThread = useMutation({
-    mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(wsId, threadId),
+    mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(threadId),
     onSuccess: async () => {
+      setMailboxStatus("Moved to trash.");
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
+    onError: (error) => setMailboxStatus(`Trash failed: ${mutationErrorMessage(error, "unknown error")}`),
   });
 
   const restoreThread = useMutation({
-    mutationFn: ({ threadId }: { threadId: string }) => api.restoreCRMEmailThread(wsId, threadId),
+    mutationFn: ({ threadId }: { threadId: string }) => api.restoreCRMEmailThread(threadId),
     onSuccess: async () => {
+      setMailboxStatus("Restored.");
       setActiveFolder("inbox");
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
+    onError: (error) => setMailboxStatus(`Restore failed: ${mutationErrorMessage(error, "unknown error")}`),
   });
 
   const deleteThread = useMutation({
-    mutationFn: ({ threadId }: { threadId: string }) => api.deleteCRMEmailThread(wsId, threadId),
+    mutationFn: ({ threadId }: { threadId: string }) => api.deleteCRMEmailThread(threadId),
     onSuccess: async () => {
+      setMailboxStatus("Deleted forever.");
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
+    onError: (error) => setMailboxStatus(`Delete failed: ${mutationErrorMessage(error, "unknown error")}`),
   });
 
   const moveThread = useMutation({
-    mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(wsId, threadId, folder),
-    onSuccess: async () => {
+    mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(threadId, folder),
+    onSuccess: async (_result, variables) => {
+      setMailboxStatus(`Moved to ${variables.folder}.`);
+      setActiveFolder(variables.folder as typeof activeFolder);
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
+    onError: (error) => setMailboxStatus(`Move failed: ${mutationErrorMessage(error, "unknown error")}`),
   });
 
   const refreshMailbox = useMutation({
@@ -901,22 +948,21 @@ export function CRMEmailsPage() {
             </section>
           ) : activeFolder === "drafts" ? (
             <section className="min-h-0 flex-1 overflow-y-auto p-3">
-              {mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : mailboxDrafts.filter((draft: any) => draft.status !== "sent" && draft.status !== "discarded").map((draft: any) => (
-                <div key={draft.id} className="mb-2 rounded-lg border bg-card p-3 text-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{draft.subject || emailCopy.noSubject}</div>
-                      <div className="truncate text-xs text-muted-foreground">{emailCopy.to}: {(draft.to_emails ?? []).join(", ") || "—"}</div>
+              {visibleMailboxDrafts.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : visibleMailboxDrafts.map((draft: any) => {
+                const active = composeDraft?.draftId === draft.id;
+                return (
+                  <button key={draft.id} type="button" className={`mb-2 block w-full rounded-lg border bg-card p-3 text-left text-sm hover:bg-muted/60 ${active ? "ring-2 ring-primary/40" : ""}`} onClick={() => openDraftInComposer(draft)}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{draft.subject || emailCopy.noSubject}</div>
+                        <div className="truncate text-xs text-muted-foreground">{emailCopy.to}: {(draft.to_emails ?? []).join(", ") || "—"}</div>
+                      </div>
+                      <Badge variant="outline">{draft.status}</Badge>
                     </div>
-                    <Badge variant="outline">{draft.status}</Badge>
-                  </div>
-                  <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
-                  <div className="mt-3 flex gap-2">
-                    <Button size="sm" variant="outline" disabled={draft.status === "sent"} onClick={() => setComposeDraft({ draftId: draft.id, mailboxId: draft.mailbox_id ?? selectedMailbox?.id ?? "", accountId: draft.account_id ?? "", contactId: draft.contact_id ?? "", to: (draft.to_emails ?? []).join(", "), cc: (draft.cc_emails ?? []).join(", "), bcc: (draft.bcc_emails ?? []).join(", "), subject: draft.subject ?? "", body: draft.body_text ?? "", attachments: Array.isArray(draft.attachments) ? draft.attachments.map((attachment: any) => ({ file_name: attachment.file_name || attachment.filename || "attachment", content_type: attachment.content_type || "application/octet-stream", content: attachment.content || "", size: attachment.size || attachment.size_bytes || 0 })) : [] })}>Edit</Button>
-                    <Button size="sm" variant="outline" disabled={draft.status === "sent" || sendDraft.isPending} onClick={() => sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
-                  </div>
-                </div>
-              ))}
+                    <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
+                  </button>
+                );
+              })}
             </section>
           ) : filteredThreads.length === 0 ? (
             <section className="m-3 rounded-lg border border-dashed bg-card p-10 text-center">
@@ -932,10 +978,11 @@ export function CRMEmailsPage() {
             <section className="min-h-0 flex-1 overflow-y-auto">
               {filteredThreads.map((thread) => {
                 const active = selectedThread?.id === thread.id;
+                const isUnread = thread.is_read !== true;
                 return (
-                  <button key={thread.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => { setSelectedThreadId(thread.id); if (!thread.is_read) updateThreadState.mutate({ threadId: thread.id, data: { is_read: true } }); }}>
+                  <button key={thread.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => { setSelectedThreadId(thread.id); if (isUnread) updateThreadState.mutate({ threadId: thread.id, data: { is_read: true } }); }}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className={`min-w-0 flex-1 truncate ${thread.is_read ? "font-medium text-foreground/80" : "font-bold text-foreground"}`}>{thread.subject}</div>
+                      <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{thread.subject}</div>
                       {!thread.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -998,7 +1045,7 @@ export function CRMEmailsPage() {
               <div className="border-b bg-background p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <h2 className="truncate text-base font-semibold">{selectedThread.subject}</h2>
+                    <h2 className={`truncate text-base ${selectedThread.is_read === true ? "font-semibold text-foreground/80" : "font-bold text-foreground"}`}>{selectedThread.subject}</h2>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {[selectedThread.mailbox, selectedThread.direction, selectedThread.status, messageTime(selectedThread.last_message_at)].filter(Boolean).join(" · ")}
                     </p>
@@ -1009,7 +1056,7 @@ export function CRMEmailsPage() {
                   </Button>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2">
-                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: !selectedThread.is_read } })}><MailOpen className="mr-1 size-3" />{selectedThread.is_read ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: selectedThread.is_read !== true } })}>{selectedThread.is_read === true ? <Mail className="mr-1 size-3" /> : <MailOpen className="mr-1 size-3" />}{selectedThread.is_read === true ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? "Unarchive" : t(($) => $.emails.archive)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? "Unstar" : t(($) => $.emails.star)}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />{emailCopy.reply}</Button>

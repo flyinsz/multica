@@ -434,7 +434,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Post("/trash", h.TrashCRMEmailThread)
 						r.Post("/restore", h.RestoreCRMEmailThread)
 						r.Post("/move-folder", h.MoveCRMEmailThread)
-						r.Post("/delete", h.DeleteCRMEmailThread)
+						r.Delete("/delete", h.DeleteCRMEmailThread)
 					})
 				})
 				r.Get("/email-messages/{messageId}/attachment/{attachmentIndex}", h.ServeCRMEmailAttachment)

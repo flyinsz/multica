@@ -1410,20 +1410,20 @@ export class ApiClient {
     return `/api/crm/${wsId}/email-messages/${messageId}/attachment/${attachmentIndex}`;
   }
 
-  async trashCRMEmailThread(wsId: string, threadId: string): Promise<void> {
-    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/trash`, { method: "POST" });
+  async trashCRMEmailThread(threadId: string): Promise<void> {
+    await this.fetch(`/api/crm/email-threads/${threadId}/trash`, { method: "POST" });
   }
 
-  async restoreCRMEmailThread(wsId: string, threadId: string): Promise<void> {
-    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/restore`, { method: "POST" });
+  async restoreCRMEmailThread(threadId: string): Promise<void> {
+    await this.fetch(`/api/crm/email-threads/${threadId}/restore`, { method: "POST" });
   }
 
-  async deleteCRMEmailThread(wsId: string, threadId: string): Promise<void> {
-    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/delete`, { method: "POST" });
+  async deleteCRMEmailThread(threadId: string): Promise<void> {
+    await this.fetch(`/api/crm/email-threads/${threadId}/delete`, { method: "DELETE" });
   }
 
-  async moveCRMEmailThread(wsId: string, threadId: string, folder: string): Promise<void> {
-    await this.fetch(`/api/crm/${wsId}/email-threads/${threadId}/move-folder`, {
+  async moveCRMEmailThread(threadId: string, folder: string): Promise<void> {
+    await this.fetch(`/api/crm/email-threads/${threadId}/move-folder`, {
       method: "POST",
       body: JSON.stringify({ folder }),
     });

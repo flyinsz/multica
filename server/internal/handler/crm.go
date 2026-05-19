@@ -3523,17 +3523,25 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "folder is required")
 		return
 	}
+	allowed := map[string]bool{"inbox": true, "sent": true, "archived": true, "starred": true, "trash": true}
+	if !allowed[req.Folder] {
+		writeError(w, http.StatusBadRequest, "unsupported folder")
+		return
+	}
 	cmd, err := h.DB.Exec(r.Context(),
 		`UPDATE crm_email_thread
 		 SET mailbox=$3,
-		     status = CASE $3
+		     status = CASE $4
 		       WHEN 'archived' THEN 'archived'
+		       WHEN 'trash' THEN 'trashed'
 		       ELSE 'open'
 		     END,
-		     is_trashed = CASE $3 WHEN 'trash' THEN true ELSE false END,
+		     direction = CASE $4 WHEN 'sent' THEN 'outbound' ELSE direction END,
+		     is_starred = CASE $4 WHEN 'starred' THEN true ELSE is_starred END,
+		     is_trashed = CASE $4 WHEN 'trash' THEN true ELSE false END,
 		     updated_at=now()
 		 WHERE id=$1 AND workspace_id=$2`,
-		threadID, workspaceID, req.Folder)
+		threadID, workspaceID, req.Folder, req.Folder)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to move CRM email thread")
 		return
