@@ -222,6 +222,7 @@ export interface CRMEmailThread {
   direction: CRMEmailThreadDirection;
   status: CRMEmailThreadStatus;
   last_message_at?: string | null;
+  last_snippet?: string | null;
   message_count: number;
   is_read?: boolean;
   is_starred?: boolean;

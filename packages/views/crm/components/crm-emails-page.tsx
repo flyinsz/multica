@@ -288,6 +288,37 @@ export function CRMEmailsPage() {
     providerStatusFallback: "原生 IMAP/SMTP",
     savingImporting: "正在保存邮箱并导入所选范围…",
     mailboxSavedNoMessages: "邮箱已保存。所选范围内没有邮件。",
+    refreshNewMail: "刷新新邮件",
+    folderTrash: "废纸篓",
+    unarchive: "取消归档",
+    unstar: "取消星标",
+    restore: "恢复",
+    deleteForever: "永久删除",
+    deleteForeverConfirm: "确定永久删除？此操作无法撤销。",
+    moveTo: "移动到…",
+    folderInbox: "收件箱",
+    folderSent: "已发送",
+    folderArchived: "已归档",
+    folderStarred: "星标",
+    trash: "移入废纸篓",
+    addAttachment: "添加附件",
+    remove: "移除",
+    manualRecipient: "手动输入收件人邮箱",
+    activeMailbox: "当前邮箱",
+    crmMailboxRecord: "CRM 邮箱记录",
+    noEmail: "无邮箱",
+    unknownError: "未知错误",
+    importFailed: (message: string) => `导入失败：${message}`,
+    smtpSendFailed: (message: string) => `SMTP 发送失败：${message}`,
+    updateFailed: (message: string) => `更新失败：${message}`,
+    trashFailed: (message: string) => `移入废纸篓失败：${message}`,
+    restoreFailed: (message: string) => `恢复失败：${message}`,
+    deleteFailed: (message: string) => `删除失败：${message}`,
+    moveFailed: (message: string) => `移动失败：${message}`,
+    movedTo: (folder: string) => `已移动到${folder}。`,
+    restored: "已恢复。",
+    deletedForever: "已永久删除。",
+    movedToTrash: "已移入废纸篓。",
     imported: (imported: number, skipped: number) => `已导入 ${imported} 封；跳过 ${skipped} 封。`,
     fetched: (note: string, total: number) => `${note} 已获取 ${total} 封邮件。`,
     savedImported: (imported: number, skipped: number) => `邮箱已保存。已导入 ${imported} 封；跳过 ${skipped} 封。`,
@@ -357,10 +388,50 @@ export function CRMEmailsPage() {
     providerStatusFallback: "Native IMAP/SMTP",
     savingImporting: "Saving mailbox and importing selected range…",
     mailboxSavedNoMessages: "Mailbox saved. No messages found in selected range.",
+    refreshNewMail: "Refresh new mail",
+    folderTrash: "Trash",
+    unarchive: "Unarchive",
+    unstar: "Unstar",
+    restore: "Restore",
+    deleteForever: "Delete forever",
+    deleteForeverConfirm: "Delete forever? This cannot be undone.",
+    moveTo: "Move to…",
+    folderInbox: "Inbox",
+    folderSent: "Sent",
+    folderArchived: "Archived",
+    folderStarred: "Starred",
+    trash: "Trash",
+    addAttachment: "Add attachment",
+    remove: "Remove",
+    manualRecipient: "Manual recipient email",
+    activeMailbox: "Active mailbox",
+    crmMailboxRecord: "CRM mailbox record",
+    noEmail: "No email",
+    unknownError: "unknown error",
+    importFailed: (message: string) => `Import failed: ${message}`,
+    smtpSendFailed: (message: string) => `SMTP send failed: ${message}`,
+    updateFailed: (message: string) => `Update failed: ${message}`,
+    trashFailed: (message: string) => `Trash failed: ${message}`,
+    restoreFailed: (message: string) => `Restore failed: ${message}`,
+    deleteFailed: (message: string) => `Delete failed: ${message}`,
+    moveFailed: (message: string) => `Move failed: ${message}`,
+    movedTo: (folder: string) => `Moved to ${folder}.`,
+    restored: "Restored.",
+    deletedForever: "Deleted forever.",
+    movedToTrash: "Moved to trash.",
     imported: (imported: number, skipped: number) => `Imported ${imported}; skipped ${skipped}.`,
     fetched: (note: string, total: number) => `${note} ${total} messages fetched.`,
     savedImported: (imported: number, skipped: number) => `Mailbox saved. Imported ${imported}; skipped ${skipped}.`,
   };
+
+  const folderLabelMap: Record<string, string> = {
+    inbox: emailCopy.folderInbox,
+    sent: emailCopy.folderSent,
+    archived: emailCopy.folderArchived,
+    starred: emailCopy.folderStarred,
+    trash: emailCopy.folderTrash,
+  };
+
   const [search, setSearch] = useState("");
   const [activeFolder, setActiveFolder] = useState<"inbox" | "sent" | "drafts" | "archived" | "starred" | "unlinked" | "trash">("inbox");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -602,7 +673,7 @@ export function CRMEmailsPage() {
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
       setSettingsOpen(false);
     } catch (error) {
-      setMailboxStatus(`Import failed: ${mutationErrorMessage(error, "unknown error")}`);
+      setMailboxStatus(emailCopy.importFailed(mutationErrorMessage(error, emailCopy.unknownError)));
     }
   };
 
@@ -617,7 +688,7 @@ export function CRMEmailsPage() {
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => {
-      setMailboxStatus(`SMTP send failed: ${mutationErrorMessage(error, "unknown error")}`);
+      setMailboxStatus(emailCopy.smtpSendFailed(mutationErrorMessage(error, emailCopy.unknownError)));
     },
   });
 
@@ -656,7 +727,7 @@ export function CRMEmailsPage() {
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
     },
     onError: async (error) => {
-      setMailboxStatus(`Update failed: ${mutationErrorMessage(error, "unknown error")}`);
+      setMailboxStatus(emailCopy.updateFailed(mutationErrorMessage(error, emailCopy.unknownError)));
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
     },
   });
@@ -664,44 +735,44 @@ export function CRMEmailsPage() {
   const trashThread = useMutation({
     mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(threadId),
     onSuccess: async () => {
-      setMailboxStatus("Moved to trash.");
+      setMailboxStatus(emailCopy.movedToTrash);
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
-    onError: (error) => setMailboxStatus(`Trash failed: ${mutationErrorMessage(error, "unknown error")}`),
+    onError: (error) => setMailboxStatus(emailCopy.trashFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
 
   const restoreThread = useMutation({
     mutationFn: ({ threadId }: { threadId: string }) => api.restoreCRMEmailThread(threadId),
     onSuccess: async () => {
-      setMailboxStatus("Restored.");
+      setMailboxStatus(emailCopy.restored);
       setActiveFolder("inbox");
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
-    onError: (error) => setMailboxStatus(`Restore failed: ${mutationErrorMessage(error, "unknown error")}`),
+    onError: (error) => setMailboxStatus(emailCopy.restoreFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
 
   const deleteThread = useMutation({
     mutationFn: ({ threadId }: { threadId: string }) => api.deleteCRMEmailThread(threadId),
     onSuccess: async () => {
-      setMailboxStatus("Deleted forever.");
+      setMailboxStatus(emailCopy.deletedForever);
       setSelectedThreadId(null);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
-    onError: (error) => setMailboxStatus(`Delete failed: ${mutationErrorMessage(error, "unknown error")}`),
+    onError: (error) => setMailboxStatus(emailCopy.deleteFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
 
   const moveThread = useMutation({
     mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(threadId, folder),
     onSuccess: async (thread, variables) => {
-      setMailboxStatus(`Moved to ${variables.folder}.`);
+      setMailboxStatus(emailCopy.movedTo(folderLabelMap[variables.folder] ?? variables.folder));
       updateCachedThread(thread);
       setActiveFolder(variables.folder as typeof activeFolder);
       setSelectedThreadId(thread.id);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
-    onError: (error) => setMailboxStatus(`Move failed: ${mutationErrorMessage(error, "unknown error")}`),
+    onError: (error) => setMailboxStatus(emailCopy.moveFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
 
   const refreshMailbox = useMutation({
@@ -961,7 +1032,7 @@ export function CRMEmailsPage() {
           <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
             <select
-              aria-label="Active mailbox"
+              aria-label={emailCopy.activeMailbox}
               className="mt-2 h-9 w-full rounded-md border bg-background px-2 text-sm"
               value={selectedMailbox?.id ?? ""}
               onChange={(event) => setSelectedMailboxId(event.target.value || null)}
@@ -974,7 +1045,7 @@ export function CRMEmailsPage() {
             ) : null}
             {selectedMailbox ? (
               <Button className="mt-3 w-full" size="sm" variant="outline" disabled={refreshMailbox.isPending} onClick={() => refreshMailbox.mutate()}>
-                {refreshMailbox.isPending ? emailCopy.syncing : "Refresh new mail"}
+                {refreshMailbox.isPending ? emailCopy.syncing : emailCopy.refreshNewMail}
               </Button>
             ) : null}
           </div>
@@ -986,7 +1057,7 @@ export function CRMEmailsPage() {
               ["archived", Archive, t(($) => $.emails.folder_archived)],
               ["starred", Star, t(($) => $.emails.folder_starred)],
               ["unlinked", Link2, t(($) => $.emails.folder_unlinked)],
-              ["trash", Trash2, "Trash"],
+              ["trash", Trash2, emailCopy.folderTrash],
             ] as const).map(([folder, Icon, label]) => (
               <button
                 key={folder}
@@ -1053,6 +1124,7 @@ export function CRMEmailsPage() {
                       <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{thread.subject}</div>
                       {!thread.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
                     </div>
+                    {thread.last_snippet ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{thread.last_snippet}</p> : null}
                     <div className="mt-1 truncate text-xs text-muted-foreground">
                       {[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}
                     </div>
@@ -1094,7 +1166,7 @@ export function CRMEmailsPage() {
                   <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
                   <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
                   <div className="rounded-md border bg-muted/20 p-3 text-sm">
-                    <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground"><span>{emailCopy.attachments}</span><label className="inline-flex cursor-pointer items-center gap-1 rounded border bg-background px-2 py-1 hover:bg-muted"><Paperclip className="size-3" />添加附件<input type="file" multiple className="hidden" onChange={async (event) => { const files = Array.from(event.target.files ?? []); const added = await Promise.all(files.map((file) => new Promise<ComposeAttachment>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ file_name: file.name, content_type: file.type || "application/octet-stream", content: String(reader.result || "").split(",")[1] || "", size: file.size }); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }))); setComposeDraft({ ...composeDraft, attachments: [...composeDraft.attachments, ...added] }); event.currentTarget.value = ""; }} /></label></div>
+                    <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground"><span>{emailCopy.attachments}</span><label className="inline-flex cursor-pointer items-center gap-1 rounded border bg-background px-2 py-1 hover:bg-muted"><Paperclip className="size-3" />{emailCopy.addAttachment}<input type="file" multiple className="hidden" onChange={async (event) => { const files = Array.from(event.target.files ?? []); const added = await Promise.all(files.map((file) => new Promise<ComposeAttachment>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ file_name: file.name, content_type: file.type || "application/octet-stream", content: String(reader.result || "").split(",")[1] || "", size: file.size }); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }))); setComposeDraft({ ...composeDraft, attachments: [...composeDraft.attachments, ...added] }); event.currentTarget.value = ""; }} /></label></div>
                     {composeDraft.attachments.length ? <div className="space-y-2">{composeDraft.attachments.map((attachment, index) => <div key={`${attachment.file_name}-${index}`} className="flex items-center justify-between rounded border bg-background px-3 py-2 text-xs"><span className="truncate">{attachment.file_name} · {Math.ceil(attachment.size / 1024)} KB</span><Button variant="ghost" size="sm" onClick={() => setComposeDraft({ ...composeDraft, attachments: composeDraft.attachments.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 className="size-3" /></Button></div>)}</div> : <div className="text-xs text-muted-foreground">{emailCopy.noAttachments}</div>}
                   </div>
                   {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
@@ -1146,33 +1218,33 @@ export function CRMEmailsPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2">
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: selectedThread.is_read !== true } })}>{selectedThread.is_read === true ? <Mail className="mr-1 size-3" /> : <MailOpen className="mr-1 size-3" />}{selectedThread.is_read === true ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
-                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? "Unarchive" : t(($) => $.emails.archive)}</Button>
-                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? "Unstar" : t(($) => $.emails.star)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? emailCopy.unarchive : t(($) => $.emails.archive)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? emailCopy.unstar : t(($) => $.emails.star)}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />{emailCopy.reply}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply-all")}>{emailCopy.replyAll}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("forward")}>{emailCopy.forward}</Button>
                   <Button variant="outline" size="sm" disabled={!selectedAccount} onClick={openEmailLinkDialog}><Link2 className="mr-1 size-3" />{t(($) => $.emails.link_project_issue)}</Button>
                   {activeFolder !== "trash" ? (
-                    <Button variant="outline" size="sm" disabled={trashThread.isPending} onClick={() => trashThread.mutate({ threadId: selectedThread.id })}><Trash2 className="mr-1 size-3" />Trash</Button>
+                    <Button variant="outline" size="sm" disabled={trashThread.isPending} onClick={() => trashThread.mutate({ threadId: selectedThread.id })}><Trash2 className="mr-1 size-3" />{emailCopy.trash}</Button>
                   ) : (
                     <>
-                      <Button variant="outline" size="sm" disabled={restoreThread.isPending} onClick={() => restoreThread.mutate({ threadId: selectedThread.id })}><Undo2 className="mr-1 size-3" />Restore</Button>
-                      <Button variant="destructive" size="sm" disabled={deleteThread.isPending} onClick={() => { if (window.confirm("Delete forever? This cannot be undone.")) deleteThread.mutate({ threadId: selectedThread.id }); }}><Trash2 className="mr-1 size-3" />Delete forever</Button>
+                      <Button variant="outline" size="sm" disabled={restoreThread.isPending} onClick={() => restoreThread.mutate({ threadId: selectedThread.id })}><Undo2 className="mr-1 size-3" />{emailCopy.restore}</Button>
+                      <Button variant="destructive" size="sm" disabled={deleteThread.isPending} onClick={() => { if (window.confirm(emailCopy.deleteForeverConfirm)) deleteThread.mutate({ threadId: selectedThread.id }); }}><Trash2 className="mr-1 size-3" />{emailCopy.deleteForever}</Button>
                     </>
                   )}
                   <div className="relative inline-flex items-center">
                     <select
-                      aria-label="Move to folder"
+                      aria-label={emailCopy.moveTo}
                       className="h-8 rounded-md border bg-background px-2 text-xs"
                       value=""
                       onChange={(e) => { if (e.target.value) { moveThread.mutate({ threadId: selectedThread.id, folder: e.target.value }); } }}
                     >
-                      <option value="">Move to…</option>
-                      <option value="inbox">Inbox</option>
-                      <option value="sent">Sent</option>
-                      <option value="archived">Archived</option>
-                      <option value="starred">Starred</option>
-                      <option value="trash">Trash</option>
+                      <option value="">{emailCopy.moveTo}</option>
+                      <option value="inbox">{emailCopy.folderInbox}</option>
+                      <option value="sent">{emailCopy.folderSent}</option>
+                      <option value="archived">{emailCopy.folderArchived}</option>
+                      <option value="starred">{emailCopy.folderStarred}</option>
+                      <option value="trash">{emailCopy.folderTrash}</option>
                     </select>
                   </div>
                 </div>
@@ -1420,14 +1492,14 @@ export function CRMEmailsPage() {
                     {composeAccountContacts.map((contact: any) => (
                       <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { setComposeDraft({ ...composeDraft, contactId: contact.id, to: contact.email ?? composeDraft.to }); setComposeRecipientPickerOpen(false); }}>
                         <div className="font-medium">{contact.name}</div>
-                        <div className="text-xs text-muted-foreground">{contact.email || "No email"}</div>
+                        <div className="text-xs text-muted-foreground">{contact.email || emailCopy.noEmail}</div>
                       </button>
                     ))}
                     {!composeAccountContacts.length && <div className="text-xs text-muted-foreground">No contacts. Type recipient manually.</div>}
                   </div>
                 </div>
               )}
-              <Input aria-label={emailCopy.to} placeholder="Manual recipient email" value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
+              <Input aria-label={emailCopy.to} placeholder={emailCopy.manualRecipient} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
             </div>
           )}
           <DialogFooter>
@@ -1462,7 +1534,7 @@ export function CRMEmailsPage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <select
-              aria-label="CRM mailbox record"
+              aria-label={emailCopy.crmMailboxRecord}
               className="h-9 rounded-md border bg-background px-3 text-sm sm:col-span-2"
               value={mailboxDraft.id ?? "new"}
               onChange={(event) => setMailboxDraft(event.target.value === "new" ? emptyMailboxDraft : mailboxToDraft(mailboxes.find((mailbox) => mailbox.id === event.target.value)))}

@@ -268,13 +268,14 @@ type CRMEmailThreadResponse struct {
 	ContactID        *string  `json:"contact_id"`
 	ProjectID        *string  `json:"project_id"`
 	IssueID          *string  `json:"issue_id"`
-	IssueIDs         []string `json:"issue_ids"`
+	IssueIDs         []string `json:"issue_ids,omitempty"`
 	Subject          string   `json:"subject"`
 	ExternalThreadID *string  `json:"external_thread_id"`
 	Mailbox          *string  `json:"mailbox"`
 	Direction        string   `json:"direction"`
 	Status           string   `json:"status"`
 	LastMessageAt    *string  `json:"last_message_at"`
+	LastSnippet      *string  `json:"last_snippet"`
 	MessageCount     int64    `json:"message_count"`
 	IsRead           bool     `json:"is_read"`
 	IsStarred        bool     `json:"is_starred"`
@@ -297,6 +298,7 @@ type crmEmailThreadRow struct {
 	Direction        string
 	Status           string
 	LastMessageAt    pgtype.Timestamptz
+	LastSnippet      pgtype.Text
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	MessageCount     int64
@@ -306,26 +308,32 @@ type crmEmailThreadRow struct {
 }
 
 type CRMEmailMessageResponse struct {
-	ID                string   `json:"id"`
-	WorkspaceID       string   `json:"workspace_id"`
-	ThreadID          string   `json:"thread_id"`
-	AccountID         *string  `json:"account_id"`
-	ContactID         *string  `json:"contact_id"`
-	ExternalMessageID *string  `json:"external_message_id"`
-	FromEmail         *string  `json:"from_email"`
-	FromName          *string  `json:"from_name"`
-	ToEmails          []string `json:"to_emails"`
-	CcEmails          []string `json:"cc_emails"`
-	BccEmails         []string `json:"bcc_emails"`
-	Subject           *string  `json:"subject"`
-	SentAt            *string  `json:"sent_at"`
-	ReceivedAt        *string  `json:"received_at"`
-	BodyText          *string  `json:"body_text"`
-	BodyHTML          *string  `json:"body_html"`
-	Snippet           *string  `json:"snippet"`
-	Direction         string   `json:"direction"`
-	CreatedAt         string   `json:"created_at"`
-	UpdatedAt         string   `json:"updated_at"`
+	ID                string               `json:"id"`
+	WorkspaceID       string               `json:"workspace_id"`
+	ThreadID          string               `json:"thread_id"`
+	AccountID         *string              `json:"account_id"`
+	ContactID         *string              `json:"contact_id"`
+	ExternalMessageID *string              `json:"external_message_id"`
+	InReplyTo         *string              `json:"in_reply_to"`
+	ReferenceIDs      []string             `json:"reference_ids"`
+	Attachments       []crmEmailAttachment `json:"attachments"`
+	SentAppendWarning *string              `json:"sent_append_warning"`
+	RawSizeBytes      *int64               `json:"raw_size_bytes"`
+	RawHeaders        map[string][]string  `json:"raw_headers"`
+	FromEmail         *string              `json:"from_email"`
+	FromName          *string              `json:"from_name"`
+	ToEmails          []string             `json:"to_emails"`
+	CcEmails          []string             `json:"cc_emails"`
+	BccEmails         []string             `json:"bcc_emails"`
+	Subject           *string              `json:"subject"`
+	SentAt            *string              `json:"sent_at"`
+	ReceivedAt        *string              `json:"received_at"`
+	BodyText          *string              `json:"body_text"`
+	BodyHTML          *string              `json:"body_html"`
+	Snippet           *string              `json:"snippet"`
+	Direction         string               `json:"direction"`
+	CreatedAt         string               `json:"created_at"`
+	UpdatedAt         string               `json:"updated_at"`
 }
 
 type crmEmailMessageRow struct {
@@ -335,6 +343,12 @@ type crmEmailMessageRow struct {
 	AccountID         pgtype.UUID
 	ContactID         pgtype.UUID
 	ExternalMessageID pgtype.Text
+	InReplyTo         pgtype.Text
+	ReferenceIDs      []string
+	Attachments       []byte
+	SentAppendWarning pgtype.Text
+	RawSizeBytes      pgtype.Int8
+	RawHeaders        []byte
 	FromEmail         pgtype.Text
 	FromName          pgtype.Text
 	ToEmails          []string
@@ -448,6 +462,7 @@ func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
 		Direction:        row.Direction,
 		Status:           row.Status,
 		LastMessageAt:    timestampToPtr(row.LastMessageAt),
+		LastSnippet:      textToPtr(row.LastSnippet),
 		MessageCount:     row.MessageCount,
 		IsRead:           row.IsRead,
 		IsStarred:        row.IsStarred,
@@ -470,6 +485,23 @@ func crmEmailMessageToResponse(row crmEmailMessageRow) CRMEmailMessageResponse {
 	if bccEmails == nil {
 		bccEmails = []string{}
 	}
+	referenceIDs := row.ReferenceIDs
+	if referenceIDs == nil {
+		referenceIDs = []string{}
+	}
+	attachments := []crmEmailAttachment{}
+	if len(row.Attachments) > 0 {
+		_ = json.Unmarshal(row.Attachments, &attachments)
+	}
+	rawHeaders := map[string][]string{}
+	if len(row.RawHeaders) > 0 {
+		_ = json.Unmarshal(row.RawHeaders, &rawHeaders)
+	}
+	var rawSizeBytes *int64
+	if row.RawSizeBytes.Valid {
+		value := row.RawSizeBytes.Int64
+		rawSizeBytes = &value
+	}
 	return CRMEmailMessageResponse{
 		ID:                uuidToString(row.ID),
 		WorkspaceID:       uuidToString(row.WorkspaceID),
@@ -477,6 +509,12 @@ func crmEmailMessageToResponse(row crmEmailMessageRow) CRMEmailMessageResponse {
 		AccountID:         uuidToPtr(row.AccountID),
 		ContactID:         uuidToPtr(row.ContactID),
 		ExternalMessageID: textToPtr(row.ExternalMessageID),
+		InReplyTo:         textToPtr(row.InReplyTo),
+		ReferenceIDs:      referenceIDs,
+		Attachments:       attachments,
+		SentAppendWarning: textToPtr(row.SentAppendWarning),
+		RawSizeBytes:      rawSizeBytes,
+		RawHeaders:        rawHeaders,
 		FromEmail:         textToPtr(row.FromEmail),
 		FromName:          textToPtr(row.FromName),
 		ToEmails:          toEmails,
@@ -1430,22 +1468,40 @@ func (h *Handler) scanCRMContact(row pgx.Row) (crmContactRow, error) {
 
 func (h *Handler) scanCRMEmailThread(row pgx.Row) (crmEmailThreadRow, error) {
 	var thread crmEmailThreadRow
+	var lastSnippet pgtype.Text
 	err := row.Scan(
 		&thread.ID, &thread.WorkspaceID, &thread.AccountID, &thread.ContactID, &thread.ProjectID, &thread.IssueID,
 		&thread.Subject, &thread.ExternalThreadID, &thread.Mailbox, &thread.Direction,
-		&thread.Status, &thread.LastMessageAt, &thread.CreatedAt, &thread.UpdatedAt,
+		&thread.Status, &thread.LastMessageAt, &lastSnippet, &thread.CreatedAt, &thread.UpdatedAt,
 		&thread.MessageCount, &thread.IsRead, &thread.IsStarred, &thread.IsTrashed,
 	)
+	thread.LastSnippet = cleanSnippetText(lastSnippet)
 	return thread, err
+}
+
+func cleanSnippetText(value pgtype.Text) pgtype.Text {
+	if !value.Valid {
+		return value
+	}
+	text := strings.Join(strings.Fields(value.String), " ")
+	if text == "" {
+		return pgtype.Text{}
+	}
+	if len([]rune(text)) > 180 {
+		runes := []rune(text)
+		text = string(runes[:180]) + "…"
+	}
+	return pgtype.Text{String: text, Valid: true}
 }
 
 func (h *Handler) scanCRMEmailMessage(row pgx.Row) (crmEmailMessageRow, error) {
 	var message crmEmailMessageRow
 	err := row.Scan(
 		&message.ID, &message.WorkspaceID, &message.ThreadID, &message.AccountID,
-		&message.ContactID, &message.ExternalMessageID, &message.FromEmail, &message.FromName,
-		&message.ToEmails, &message.CcEmails, &message.BccEmails, &message.Subject,
-		&message.SentAt, &message.ReceivedAt, &message.BodyText, &message.BodyHTML,
+		&message.ContactID, &message.ExternalMessageID, &message.InReplyTo, &message.ReferenceIDs,
+		&message.Attachments, &message.SentAppendWarning, &message.RawSizeBytes, &message.RawHeaders,
+		&message.FromEmail, &message.FromName, &message.ToEmails, &message.CcEmails, &message.BccEmails,
+		&message.Subject, &message.SentAt, &message.ReceivedAt, &message.BodyText, &message.BodyHTML,
 		&message.Snippet, &message.Direction, &message.CreatedAt, &message.UpdatedAt,
 	)
 	return message, err
@@ -1455,6 +1511,11 @@ func (h *Handler) getCRMEmailThread(w http.ResponseWriter, r *http.Request, thre
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
 		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
+		       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
+		        FROM crm_email_message m2
+		        WHERE m2.thread_id = t.id AND m2.workspace_id = t.workspace_id
+		        ORDER BY COALESCE(m2.sent_at, m2.received_at, m2.created_at) DESC
+		        LIMIT 1) AS last_snippet,
 		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
 		FROM crm_email_thread t
 		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
@@ -1484,6 +1545,11 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
+		       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
+		        FROM crm_email_message m2
+		        WHERE m2.thread_id = t.id AND m2.workspace_id = t.workspace_id
+		        ORDER BY COALESCE(m2.sent_at, m2.received_at, m2.created_at) DESC
+		        LIMIT 1) AS last_snippet,
 		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
 		FROM crm_email_thread t
 		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
@@ -1762,8 +1828,10 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		    updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject,
-		          external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at,
-		          0::bigint AS message_count, is_read, is_starred, is_trashed
+		          external_thread_id, mailbox, direction, status, last_message_at,
+		          (SELECT COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC LIMIT 1) AS last_snippet,
+		          created_at, updated_at,
+		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed
 	`, threadID, workspaceID, req.Status, req.IsRead, req.IsStarred))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1847,7 +1915,9 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 		UPDATE crm_email_thread
 		SET account_id = $3, contact_id = $4, project_id = $5, issue_id = $6, updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
-		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject, external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at,
+		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject, external_thread_id, mailbox, direction, status, last_message_at,
+		          (SELECT COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC LIMIT 1) AS last_snippet,
+		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed
 	`, threadID, workspaceID, accountID, contactID, projectID, primaryIssueID))
 	if err != nil {
@@ -2691,7 +2761,7 @@ func (h *Handler) CreateCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
 		INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, external_thread_id, mailbox, direction, status, last_message_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject, external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at, 0::bigint, is_read, is_starred
+		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject, external_thread_id, mailbox, direction, status, last_message_at, NULL::text AS last_snippet, created_at, updated_at, 0::bigint, is_read, is_starred, is_trashed
 	`, workspaceID, accountID, contactID, subject, cleanOptionalText(req.ExternalThreadID), cleanOptionalText(req.Mailbox), cleanDefault(req.Direction, "inbound"), cleanDefault(req.Status, "open"), lastMessageAt))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create CRM email thread")
@@ -2714,7 +2784,9 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT id, workspace_id, thread_id, account_id, contact_id, external_message_id,
-		       from_email, from_name, to_emails, cc_emails, bcc_emails, subject,
+		       in_reply_to, reference_ids, COALESCE(attachments, '[]'::jsonb), sent_append_warning,
+		       raw_size_bytes, COALESCE(raw_headers, '{}'::jsonb), from_email, from_name,
+		       to_emails, cc_emails, bcc_emails, subject,
 		       sent_at, received_at, body_text, body_html, snippet, direction,
 		       created_at, updated_at
 		FROM crm_email_message
@@ -2786,16 +2858,20 @@ func (h *Handler) CreateCRMEmailMessage(w http.ResponseWriter, r *http.Request) 
 	message, err := h.scanCRMEmailMessage(h.DB.QueryRow(r.Context(), `
 		INSERT INTO crm_email_message (
 			workspace_id, thread_id, account_id, contact_id, external_message_id,
-			from_email, from_name, to_emails, cc_emails, bcc_emails, subject,
-			sent_at, received_at, body_text, body_html, snippet, direction
+			in_reply_to, reference_ids, attachments, from_email, from_name,
+			to_emails, cc_emails, bcc_emails, subject, sent_at, received_at,
+			body_text, body_html, snippet, direction
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-		        $11, $12, $13, $14, $15, $16, $17)
+		        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING id, workspace_id, thread_id, account_id, contact_id, external_message_id,
-		          from_email, from_name, to_emails, cc_emails, bcc_emails, subject,
+		          in_reply_to, reference_ids, COALESCE(attachments, '[]'::jsonb), sent_append_warning,
+		          raw_size_bytes, COALESCE(raw_headers, '{}'::jsonb), from_email, from_name,
+		          to_emails, cc_emails, bcc_emails, subject,
 		          sent_at, received_at, body_text, body_html, snippet, direction,
 		          created_at, updated_at
 	`, workspaceID, threadID, accountID, contactID, cleanOptionalText(req.ExternalMessageID),
+		cleanOptionalText(req.InReplyTo), cleanOptionalStringList(req.ReferenceIDs), attachmentsJSON,
 		cleanOptionalText(req.FromEmail), cleanOptionalText(req.FromName), cleanOptionalStringList(req.ToEmails),
 		cleanOptionalStringList(req.CcEmails), cleanOptionalStringList(req.BccEmails), cleanOptionalText(req.Subject),
 		sentAt, receivedAt, cleanOptionalText(req.BodyText), cleanOptionalText(req.BodyHTML), cleanOptionalText(req.Snippet), direction))
@@ -3572,7 +3648,9 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		     updated_at=now()
 		 WHERE id=$1 AND workspace_id=$2
 		 RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject,
-		          external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at,
+		          external_thread_id, mailbox, direction, status, last_message_at,
+		          (SELECT COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC LIMIT 1) AS last_snippet,
+		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed`,
 		threadID, workspaceID, req.Folder))
 	if err != nil {
