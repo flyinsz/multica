@@ -139,6 +139,16 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
   const testConnection = useMutation({
     mutationFn: (config: Record<string, unknown>) => api.testCRMIMAPConnection(wsId, config),
   });
+  const diagnosticMailboxes = Array.isArray((diagnostics.data as any)?.mailboxes)
+    ? (diagnostics.data as any).mailboxes
+    : Array.isArray(diagnostics.data)
+      ? diagnostics.data
+      : [];
+  const syncErrorItems = Array.isArray((syncErrors.data as any)?.errors)
+    ? (syncErrors.data as any).errors
+    : Array.isArray(syncErrors.data)
+      ? syncErrors.data
+      : [];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -152,17 +162,17 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
           <p className="text-sm text-destructive">Failed to load diagnostics</p>
         ) : (
           <div className="space-y-3">
-            {Array.isArray(diagnostics.data) ? diagnostics.data.map((mailbox: any, i: number) => (
+            {diagnosticMailboxes.length ? diagnosticMailboxes.map((mailbox: any, i: number) => (
               <div key={mailbox.id || i} className="rounded-lg border bg-card p-4 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">{mailbox.email || mailbox.label || `Mailbox ${i + 1}`}</span>
                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                    mailbox.connection_status === "ok" ? "bg-green-100 text-green-700" :
-                    mailbox.connection_status === "error" ? "bg-red-100 text-red-700" :
+                    mailbox.connected || mailbox.connection_status === "ok" ? "bg-green-100 text-green-700" :
+                    mailbox.last_error || mailbox.connection_status === "error" ? "bg-red-100 text-red-700" :
                     "bg-yellow-100 text-yellow-700"
                   }`}>
                     <Activity className="size-3" />
-                    {mailbox.connection_status || "unknown"}
+                    {mailbox.connected ? "ok" : mailbox.connection_status || "unknown"}
                   </span>
                 </div>
                 {mailbox.last_error && <p className="mt-1 text-xs text-red-600">Error: {mailbox.last_error}</p>}
@@ -178,7 +188,7 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
                 </Button>
               </div>
             )) : (
-              <p className="text-sm text-muted-foreground">{JSON.stringify(diagnostics.data)}</p>
+              <p className="text-sm text-muted-foreground">No mailbox diagnostics found.</p>
             )}
           </div>
         )}
@@ -186,9 +196,9 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
           <h4 className="mb-2 text-sm font-semibold">Recent Sync Errors</h4>
           {syncErrors.isLoading ? (
             <Skeleton className="h-20 w-full" />
-          ) : Array.isArray(syncErrors.data) && syncErrors.data.length > 0 ? (
+          ) : syncErrorItems.length > 0 ? (
             <div className="max-h-40 space-y-2 overflow-y-auto">
-              {syncErrors.data.map((err: any, i: number) => (
+              {syncErrorItems.map((err: any, i: number) => (
                 <div key={i} className="rounded border bg-muted/20 px-3 py-2 text-xs">
                   <span className="font-medium text-red-600">{err.error || err.message}</span>
                   {err.mailbox && <span className="ml-2 text-muted-foreground">· {err.mailbox}</span>}
@@ -594,10 +604,43 @@ export function CRMEmailsPage() {
     },
   });
 
+  const updateCachedThread = (thread: CRMEmailThread) => {
+    queryClient.setQueriesData<any>({ queryKey: crmKeys.emailThreads(wsId) }, (current: any) => {
+      if (Array.isArray(current)) return current.map((item) => item.id === thread.id ? { ...item, ...thread } : item);
+      if (Array.isArray(current?.threads)) {
+        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === thread.id ? { ...item, ...thread } : item) };
+      }
+      return current;
+    });
+    queryClient.setQueryData(crmKeys.emailThread(wsId, thread.id), thread);
+  };
+
+  const patchCachedThread = (threadId: string, patch: Partial<CRMEmailThread>) => {
+    queryClient.setQueriesData<any>({ queryKey: crmKeys.emailThreads(wsId) }, (current: any) => {
+      if (Array.isArray(current)) return current.map((item) => item.id === threadId ? { ...item, ...patch } : item);
+      if (Array.isArray(current?.threads)) {
+        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === threadId ? { ...item, ...patch } : item) };
+      }
+      return current;
+    });
+    queryClient.setQueryData<CRMEmailThread | undefined>(crmKeys.emailThread(wsId, threadId), (current) => (
+      current ? { ...current, ...patch } : current
+    ));
+  };
+
   const updateThreadState = useMutation({
-    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived" | "trashed"; is_read?: boolean; is_starred?: boolean } }) => api.updateCRMEmailThreadState(threadId, data),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean } }) => api.updateCRMEmailThreadState(threadId, data),
+    onMutate: async ({ threadId, data }) => {
+      await queryClient.cancelQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      patchCachedThread(threadId, data);
+    },
+    onSuccess: async (thread) => {
+      updateCachedThread(thread);
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+    },
+    onError: async (error) => {
+      setMailboxStatus(`Update failed: ${mutationErrorMessage(error, "unknown error")}`);
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
     },
   });
 

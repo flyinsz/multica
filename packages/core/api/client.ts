@@ -1399,7 +1399,7 @@ export class ApiClient {
     });
   }
 
-  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived" | "trashed"; is_read?: boolean; is_starred?: boolean }): Promise<CRMEmailThread> {
+  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean }): Promise<CRMEmailThread> {
     return this.fetch(`/api/crm/email-threads/${threadId}/state`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -1429,23 +1429,23 @@ export class ApiClient {
     });
   }
 
-  async getCRMIMAPDiagnostics(wsId: string): Promise<unknown> {
-    return this.fetch(`/api/crm/${wsId}/imap/diagnostics`);
+  async getCRMIMAPDiagnostics(_wsId: string): Promise<unknown> {
+    return this.fetch("/api/crm/imap/diagnostics");
   }
 
-  async testCRMIMAPConnection(wsId: string, config: Record<string, unknown>): Promise<unknown> {
-    return this.fetch(`/api/crm/${wsId}/imap/test-connection`, {
+  async testCRMIMAPConnection(_wsId: string, config: Record<string, unknown>): Promise<unknown> {
+    return this.fetch("/api/crm/imap/test-connection", {
       method: "POST",
       body: JSON.stringify(config),
     });
   }
 
-  async listCRMIMAPSyncErrors(wsId: string): Promise<unknown> {
-    return this.fetch(`/api/crm/${wsId}/sync-runs/errors`);
+  async listCRMIMAPSyncErrors(_wsId: string): Promise<unknown> {
+    return this.fetch("/api/crm/sync-runs/errors");
   }
 
-  async toggleCRMIMAPSyncCron(wsId: string, mailboxId: string, sync_enabled: boolean): Promise<unknown> {
-    return this.fetch(`/api/crm/${wsId}/imap/${mailboxId}/sync-cron`, {
+  async toggleCRMIMAPSyncCron(_wsId: string, mailboxId: string, sync_enabled: boolean): Promise<unknown> {
+    return this.fetch(`/api/crm/imap/${mailboxId}/sync-cron`, {
       method: "POST",
       body: JSON.stringify({ sync_enabled }),
     });

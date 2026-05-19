@@ -1762,7 +1762,7 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject,
 		          external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at,
-		          0::bigint AS message_count, is_read, is_starred
+		          0::bigint AS message_count, is_read, is_starred, is_trashed
 	`, threadID, workspaceID, req.Status, req.IsRead, req.IsStarred))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1846,7 +1846,7 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 		SET account_id = $3, contact_id = $4, project_id = $5, issue_id = $6, updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject, external_thread_id, mailbox, direction, status, last_message_at, created_at, updated_at,
-		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred
+		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed
 	`, threadID, workspaceID, accountID, contactID, projectID, primaryIssueID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email thread association")
@@ -3467,7 +3467,7 @@ func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd, err := h.DB.Exec(r.Context(),
-		`UPDATE crm_email_thread SET status='trashed', is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		`UPDATE crm_email_thread SET is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
 		threadID, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to trash CRM email thread")
@@ -3533,7 +3533,6 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		 SET mailbox=$3,
 		     status = CASE $4
 		       WHEN 'archived' THEN 'archived'
-		       WHEN 'trash' THEN 'trashed'
 		       ELSE 'open'
 		     END,
 		     direction = CASE $4 WHEN 'sent' THEN 'outbound' ELSE direction END,
