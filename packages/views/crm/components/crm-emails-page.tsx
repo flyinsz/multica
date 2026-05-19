@@ -454,7 +454,13 @@ export function CRMEmailsPage() {
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
-  const { data: threads = [], isLoading } = useQuery(crmEmailThreadListOptions(wsId));
+  const { data: threads = [], isLoading } = useQuery({
+    ...crmEmailThreadListOptions(wsId),
+    enabled: Boolean(wsId),
+    refetchInterval: 30000,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
+  });
   const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
@@ -468,7 +474,8 @@ export function CRMEmailsPage() {
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),
     enabled: Boolean(wsId),
-    refetchInterval: (query) => query.state.data?.runs?.some((run: any) => run.status === "running") ? 3000 : false,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
   const mailboxes = mailboxData?.settings ?? [];
   const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
@@ -514,9 +521,9 @@ export function CRMEmailsPage() {
     if (!wsId || !syncRunsUpdatedAt) return;
     const latest = syncRuns[0];
     if (!latest || latest.status === "running") return;
-    queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
-    queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
-    queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
+    void queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+    void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"], refetchType: "active" });
+    void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"], refetchType: "active" });
   }, [queryClient, syncRuns, syncRunsUpdatedAt, wsId]);
 
   const mailboxThreads = useMemo(() => {

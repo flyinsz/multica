@@ -495,7 +495,23 @@ func normalizeCRMEmailAttachment(att crmEmailAttachment, index int) crmEmailAtta
 	att.ContentType = cleanCRMEmailAttachmentContentType(att.ContentType)
 	att.Size = att.DisplaySize()
 	att.LegacySize = att.Size
+	if strings.TrimSpace(att.Content) != "" {
+		att.Content = normalizeCRMEmailAttachmentContent(att.Content)
+	}
 	return att
+}
+
+func normalizeCRMEmailAttachmentContent(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "data:") {
+		if comma := strings.Index(value, ","); comma >= 0 {
+			return strings.TrimSpace(value[comma+1:])
+		}
+	}
+	return value
 }
 
 func crmEmailMessageToResponse(row crmEmailMessageRow) CRMEmailMessageResponse {
@@ -2339,37 +2355,37 @@ func normalizeCRMEmailThreadSubject(subject string) string {
 	}
 }
 
-func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, error) {
+func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, pgtype.UUID, error) {
 	subject = cleanStringForDB(subject)
 	message.FromEmail = cleanStringForDB(message.FromEmail)
 	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
 		var threadID pgtype.UUID
-		if err := h.DB.QueryRow(ctx, `SELECT thread_id FROM crm_email_message WHERE workspace_id=$1 AND external_message_id=$2 ORDER BY created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID); err == nil {
-			return threadID, nil
+		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, t.account_id FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID); err == nil {
+			return threadID, accountID, nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, err
+			return pgtype.UUID{}, pgtype.UUID{}, err
 		}
 	}
 	threadKey := cfg.ID + ":subject-from:" + normalizeCRMEmailThreadSubject(subject) + ":" + strings.ToLower(strings.TrimSpace(message.FromEmail))
-	var threadID pgtype.UUID
-	if err := h.DB.QueryRow(ctx, `SELECT id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID); err == nil {
-		return threadID, nil
+	var threadID, accountID pgtype.UUID
+	if err := h.DB.QueryRow(ctx, `SELECT id, account_id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID); err == nil {
+		return threadID, accountID, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	accountID, contactID, err := h.matchCRMEmailContact(ctx, workspaceID, message.FromEmail)
 	if err != nil {
-		return pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	lastAt := pgtype.Timestamptz{}
 	if !message.Date.IsZero() {
 		lastAt = pgtype.Timestamptz{Time: message.Date, Valid: true}
 	}
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, external_thread_id, mailbox, direction, status, last_message_at) VALUES ($1,$2,$3,$4,$5,$6,'inbound','open',$7) RETURNING id`, workspaceID, accountID, contactID, subject, threadKey, cfg.Email, lastAt).Scan(&threadID); err != nil {
-		return pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return threadID, nil
+	return threadID, accountID, nil
 }
 
 func (h *Handler) matchCRMEmailContact(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.UUID, pgtype.UUID, error) {
@@ -2411,7 +2427,7 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		if isCRMIMAPSentFolder(folder) {
 			direction = "outbound"
 		}
-		threadID, err := h.resolveCRMEmailThreadForImport(ctx, workspaceID, cfg, message, subject)
+		threadID, accountID, err := h.resolveCRMEmailThreadForImport(ctx, workspaceID, cfg, message, subject)
 		if err != nil {
 			return imported, skipped, err
 		}
@@ -2430,6 +2446,13 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 			return imported, skipped, execErr
 		}
 		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET last_message_at=COALESCE($3,last_message_at,now()), direction=CASE WHEN $4='outbound' THEN 'outbound' WHEN direction='outbound' THEN 'mixed' ELSE direction END, updated_at=now() WHERE id=$1 AND workspace_id=$2`, threadID, workspaceID, receivedAt, direction)
+		if accountID.Valid {
+			if shouldAutoRefreshCRMAccountProfile(ctx, h.DB, workspaceID) {
+				if _, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID); err != nil {
+					slog.Warn("CRM account profile auto refresh failed after new email", "account_id", uuidToString(accountID), "error", err)
+				}
+			}
+		}
 		imported++
 	}
 	return imported, skipped, nil
@@ -2627,6 +2650,11 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
 	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
+	if accountID.Valid && shouldAutoRefreshCRMAccountProfile(r.Context(), h.DB, workspaceID) {
+		if _, err := h.regenerateCRMAccountProfile(r.Context(), workspaceID, accountID); err != nil {
+			slog.Warn("CRM account profile auto refresh failed after sent email", "account_id", uuidToString(accountID), "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": messageID, "sent_append_warning": appendWarning})
 }
 
@@ -3366,6 +3394,8 @@ func defaultCRMAISettings(workspaceID pgtype.UUID) []CRMAISettingResponse {
 	return []CRMAISettingResponse{
 		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "email_pending_reply", Enabled: true, IntervalMinutes: 5, MaxItemsPerRun: 5, Config: json.RawMessage(`{}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
 		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "due_followup", Enabled: true, IntervalMinutes: 15, MaxItemsPerRun: 10, Config: json.RawMessage(`{}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "profile_new_activity_refresh", Enabled: true, IntervalMinutes: 5, MaxItemsPerRun: 20, Config: json.RawMessage(`{"trigger":"new_activity"}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "profile_daily_refresh", Enabled: false, IntervalMinutes: 1440, MaxItemsPerRun: 100, Config: json.RawMessage(`{"time":"03:00"}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
 	}
 }
 
@@ -3380,6 +3410,10 @@ func (h *Handler) ListCRMAISettings(w http.ResponseWriter, r *http.Request) {
 			SELECT $1::uuid AS workspace_id, 'email_pending_reply'::text AS automation_key, true AS enabled, 5::int AS interval_minutes, NULL::uuid AS assignee_agent_id, 5::int AS max_items_per_run, '{}'::jsonb AS config
 			UNION ALL
 			SELECT $1::uuid, 'due_followup'::text, true, 15::int, NULL::uuid, 10::int, '{}'::jsonb
+			UNION ALL
+			SELECT $1::uuid, 'profile_new_activity_refresh'::text, true, 5::int, NULL::uuid, 20::int, '{"trigger":"new_activity"}'::jsonb
+			UNION ALL
+			SELECT $1::uuid, 'profile_daily_refresh'::text, false, 1440::int, NULL::uuid, 100::int, '{"time":"03:00"}'::jsonb
 		)
 		SELECT d.workspace_id, d.automation_key,
 		       COALESCE(s.enabled, d.enabled) AS enabled,
@@ -3393,7 +3427,7 @@ func (h *Handler) ListCRMAISettings(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(s.updated_at, now()) AS updated_at
 		FROM defaults d
 		LEFT JOIN crm_ai_setting s ON s.workspace_id = d.workspace_id AND s.automation_key = d.automation_key
-		ORDER BY CASE d.automation_key WHEN 'email_pending_reply' THEN 1 ELSE 2 END`, workspaceID)
+		ORDER BY CASE d.automation_key WHEN 'email_pending_reply' THEN 1 WHEN 'due_followup' THEN 2 WHEN 'profile_new_activity_refresh' THEN 3 ELSE 4 END`, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load CRM AI settings")
 		return
@@ -3432,7 +3466,7 @@ func (h *Handler) UpdateCRMAISetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := chi.URLParam(r, "automationKey")
-	if key != "email_pending_reply" && key != "due_followup" {
+	if key != "email_pending_reply" && key != "due_followup" && key != "profile_new_activity_refresh" && key != "profile_daily_refresh" {
 		writeError(w, http.StatusBadRequest, "invalid CRM AI setting key")
 		return
 	}
@@ -3445,9 +3479,18 @@ func (h *Handler) UpdateCRMAISetting(w http.ResponseWriter, r *http.Request) {
 	enabled := true
 	intervalMinutes := int32(5)
 	maxItems := int32(5)
+	config := json.RawMessage(`{}`)
 	if key == "due_followup" {
 		intervalMinutes = 15
 		maxItems = 10
+	} else if key == "profile_new_activity_refresh" {
+		intervalMinutes = 5
+		maxItems = 20
+		config = json.RawMessage(`{"trigger":"new_activity"}`)
+	} else if key == "profile_daily_refresh" {
+		intervalMinutes = 1440
+		maxItems = 100
+		config = json.RawMessage(`{"time":"03:00"}`)
 	}
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -3466,7 +3509,6 @@ func (h *Handler) UpdateCRMAISetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "max_items_per_run must be between 1 and 100")
 		return
 	}
-	config := json.RawMessage(`{}`)
 	if len(req.Config) > 0 {
 		config = req.Config
 	}
@@ -3545,7 +3587,9 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var attachments []crmEmailAttachment
-	if err := json.Unmarshal(attachmentsJSON, &attachments); err != nil {
+	if normalized := normalizeCRMEmailAttachments(attachmentsJSON); len(normalized) > 0 {
+		attachments = normalized
+	} else if err := json.Unmarshal(attachmentsJSON, &attachments); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to parse attachments")
 		return
 	}
@@ -3562,6 +3606,15 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	raw, err := base64.StdEncoding.DecodeString(att.Content)
+	if err != nil {
+		raw, err = base64.RawStdEncoding.DecodeString(att.Content)
+	}
+	if err != nil {
+		raw, err = base64.URLEncoding.DecodeString(att.Content)
+	}
+	if err != nil {
+		raw, err = base64.RawURLEncoding.DecodeString(att.Content)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to decode attachment content")
 		return
