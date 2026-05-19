@@ -79,10 +79,11 @@ export function ChatWindow() {
   // Single sessions cache. The dropdown groups locally into "active" /
   // "archived" — eliminating the separate active/all queries that used
   // to drift during the WS-invalidate window.
-  const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
+  const { data: sessions = [], isLoading: sessionsLoading } = useQuery(chatSessionsOptions(wsId));
+  const activeSessionExists = Boolean(activeSessionId && sessions.some((s) => s.id === activeSessionId));
   const { data: rawMessages, isLoading: messagesLoading } = useQuery({
     ...chatMessagesOptions(activeSessionId ?? ""),
-    enabled: Boolean(activeSessionId && sessions.some((s) => s.id === activeSessionId)),
+    enabled: activeSessionExists,
     retry: false,
     throwOnError: false,
   });
@@ -100,18 +101,18 @@ export function ChatWindow() {
   // This is the SOLE source for pendingTaskId — no mirror in the store.
   const { data: pendingTask } = useQuery({
     ...pendingChatTaskOptions(activeSessionId ?? ""),
-    enabled: Boolean(activeSessionId && sessions.some((s) => s.id === activeSessionId)),
+    enabled: activeSessionExists,
     retry: false,
     throwOnError: false,
   });
   const pendingTaskId = pendingTask?.task_id ?? null;
 
   useEffect(() => {
-    if (!activeSessionId) return;
-    if (sessions.some((s) => s.id === activeSessionId)) return;
+    if (!activeSessionId || sessionsLoading) return;
+    if (activeSessionExists) return;
     uiLogger.warn("clearing missing active chat session", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [activeSessionId, sessions, setActiveSession]);
+  }, [activeSessionId, activeSessionExists, sessionsLoading, setActiveSession]);
 
   // Legacy archived sessions (the old soft-archive feature was removed but
   // pre-existing rows with status='archived' may still exist) render as
