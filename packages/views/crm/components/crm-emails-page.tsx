@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, MoreHorizontal, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -511,15 +511,18 @@ export function CRMEmailsPage() {
   const emailListQuery = useQuery({
     ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, selectedMailbox?.email ?? ""),
     enabled: Boolean(wsId && (selectedMailbox?.email || mailboxes.length === 0)),
-    refetchInterval: 30000,
-    refetchIntervalInBackground: true,
-    staleTime: 15000,
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+    staleTime: 60000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
   const emailListData = emailListQuery.data;
   const threads = emailListData?.threads ?? [];
   const messageList = emailListData?.messages ?? [];
   const serverCounts = emailListData?.counts ?? null;
-  const isLoading = emailListQuery.isLoading;
+  const isInitialEmailLoading = emailListQuery.isLoading && !emailListData;
+  const isEmailRefreshing = emailListQuery.isFetching && !isInitialEmailLoading;
   const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
@@ -1132,7 +1135,8 @@ export function CRMEmailsPage() {
         <div className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.emails.workspace_title)}</h1>
-          {!isLoading && <Badge variant="secondary" className="tabular-nums">{emailListData?.total ?? filteredMessages.length}</Badge>}
+          {!isInitialEmailLoading && <Badge variant="secondary" className="tabular-nums">{emailListData?.total ?? filteredMessages.length}</Badge>}
+          {isEmailRefreshing ? <Badge variant="outline">刷新中</Badge> : null}
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("new")}>
@@ -1166,8 +1170,8 @@ export function CRMEmailsPage() {
               <div className="mt-2 text-xs text-muted-foreground">{emailCopy.syncing}…</div>
             ) : null}
             {selectedMailbox ? (
-              <Button className="mt-3 w-full" size="sm" variant="outline" disabled={refreshMailbox.isPending} onClick={() => refreshMailbox.mutate()}>
-                {refreshMailbox.isPending ? emailCopy.syncing : emailCopy.refreshNewMail}
+              <Button className="mt-3 w-full" size="sm" variant="outline" disabled={refreshMailbox.isPending || isEmailRefreshing} onClick={() => refreshMailbox.mutate()}>
+                {refreshMailbox.isPending ? emailCopy.syncing : isEmailRefreshing ? "刷新中" : emailCopy.refreshNewMail}
               </Button>
             ) : null}
           </div>
@@ -1230,7 +1234,7 @@ export function CRMEmailsPage() {
               ))}
             </div>
           </div>
-          {isLoading ? (
+          {isInitialEmailLoading ? (
             <section className="space-y-2 p-3">
               <Skeleton className="h-16 w-full" />
               <Skeleton className="h-16 w-full" />
