@@ -68,7 +68,6 @@ export function crmEmailThreadListOptions(wsId: string, accountId = "", folder =
   return queryOptions({
     queryKey: crmKeys.emailThreads(wsId, accountId, folder, filter, mailbox),
     queryFn: () => api.listCRMEmailThreads({ account_id: accountId || undefined, folder: folder || undefined, filter: filter || undefined, mailbox: mailbox || undefined }),
-    select: (data) => data.threads,
   });
 }
 
