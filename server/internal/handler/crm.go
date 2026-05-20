@@ -1819,7 +1819,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       m.direction, t.status, COALESCE(m.is_read, t.is_read) AS is_read,
 			       COALESCE(m.is_starred, t.is_starred) AS is_starred, COALESCE(m.is_trashed, t.is_trashed) AS is_trashed,
 			       m.from_email, m.from_name, m.to_emails, m.sent_at, m.received_at,
-			       COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(COALESCE(m.attachments, '[]'::jsonb)) AS elem), '[]'::jsonb) AS attachments,
+			       COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(m.attachments) = 'array' THEN m.attachments ELSE '[]'::jsonb END) AS elem), '[]'::jsonb) AS attachments,
 			       COUNT(*) OVER (PARTITION BY m.thread_id)::bigint AS thread_message_count,
 			       m.created_at, m.updated_at
 			FROM crm_email_message m
@@ -1859,6 +1859,11 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		threadIDs[resp.ThreadID] = true
 		messages = append(messages, resp)
 	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("list CRM email messages iteration failed", "error", err, "workspace_id", uuidToString(workspaceID), "folder", folder, "filter", filter, "mailbox", mailbox)
+		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages: "+err.Error())
+		return
+	}
 	threadIDKeys := make([]string, 0, len(threadIDs))
 	for rawThreadID := range threadIDs {
 		threadIDKeys = append(threadIDKeys, rawThreadID)
@@ -1897,6 +1902,11 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			threads = append(threads, crmEmailListThreadToResponse(thread))
+		}
+		if err := threadRows.Err(); err != nil {
+			slog.Warn("list CRM email threads iteration failed", "error", err, "workspace_id", uuidToString(workspaceID), "folder", folder)
+			writeError(w, http.StatusInternalServerError, "failed to list CRM email threads: "+err.Error())
+			return
 		}
 	}
 	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID, mailbox)
