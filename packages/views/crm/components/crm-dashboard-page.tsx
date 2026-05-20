@@ -100,7 +100,8 @@ export function CRMDashboardPage() {
   const { data: hotAccounts = [], isLoading: hotLoading } = useQuery(crmAccountListOptions(wsId, { rating: "hot", sort: "priority_rating" }));
   const { data: recentAccounts = [], isLoading: recentLoading } = useQuery(crmAccountListOptions(wsId, { sort: "updated" }));
   const { data: allAccounts = [], isLoading: reportsLoading } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
-  const { data: emailThreads = [], isLoading: emailLoading } = useQuery(crmEmailThreadListOptions(wsId));
+  const { data: emailThreadData, isLoading: emailLoading } = useQuery(crmEmailThreadListOptions(wsId));
+  const emailThreads = emailThreadData?.threads ?? [];
   const topTodayFollowUps = todayFollowUps.slice(0, 6);
   const topWeekFollowUps = weekFollowUps.slice(0, 6);
   const topOverdueFollowUps = overdueFollowUps.slice(0, 6);

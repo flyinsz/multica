@@ -233,6 +233,44 @@ export interface CRMEmailThread {
   updated_at: string;
 }
 
+export interface CRMEmailListCounts {
+  inbox: number;
+  inbox_unread: number;
+  sent: number;
+  spam: number;
+  archived: number;
+  starred: number;
+  unlinked: number;
+  trash: number;
+}
+
+export interface CRMEmailListItem {
+  id: string;
+  workspace_id: string;
+  thread_id: string;
+  account_id?: string | null;
+  contact_id?: string | null;
+  subject: string;
+  snippet?: string | null;
+  mailbox?: string | null;
+  folder: string;
+  direction: CRMEmailMessageDirection;
+  status: CRMEmailThreadStatus;
+  is_read?: boolean;
+  is_starred?: boolean;
+  is_trashed?: boolean;
+  from_email?: string | null;
+  from_name?: string | null;
+  to_emails: string[];
+  sent_at?: string | null;
+  received_at?: string | null;
+  attachments?: CRMEmailAttachment[];
+  attachment_count?: number;
+  thread_message_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CRMEmailMessage {
   id: string;
   workspace_id: string;
@@ -264,6 +302,8 @@ export interface CRMEmailMessage {
 
 export interface ListCRMEmailThreadsResponse {
   threads: CRMEmailThread[];
+  messages?: CRMEmailListItem[];
+  counts?: CRMEmailListCounts;
   total: number;
 }
 

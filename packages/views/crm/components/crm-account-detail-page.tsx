@@ -446,7 +446,8 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const { data: profile, isLoading: profileLoading } = useQuery(crmAccountProfileOptions(wsId, accountId));
   const { data: contacts = [], isLoading: contactsLoading } = useQuery(crmContactListOptions(wsId, accountId));
   const { data: notes = [], isLoading: notesLoading } = useQuery(crmCommunicationNoteListOptions(wsId, accountId));
-  const { data: emailThreads = [], isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId));
+  const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId));
+  const emailThreads = emailThreadData?.threads ?? [];
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
 
   const [accountForm, setAccountForm] = useState<AccountFormState | null>(null);

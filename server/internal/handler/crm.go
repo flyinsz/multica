@@ -284,6 +284,93 @@ type CRMEmailThreadResponse struct {
 	UpdatedAt        string   `json:"updated_at"`
 }
 
+type CRMEmailListItemResponse struct {
+	ID                 string               `json:"id"`
+	WorkspaceID        string               `json:"workspace_id"`
+	ThreadID           string               `json:"thread_id"`
+	AccountID          *string              `json:"account_id"`
+	ContactID          *string              `json:"contact_id"`
+	Subject            string               `json:"subject"`
+	Snippet            *string              `json:"snippet"`
+	Mailbox            *string              `json:"mailbox"`
+	Folder             string               `json:"folder"`
+	Direction          string               `json:"direction"`
+	Status             string               `json:"status"`
+	IsRead             bool                 `json:"is_read"`
+	IsStarred          bool                 `json:"is_starred"`
+	IsTrashed          bool                 `json:"is_trashed"`
+	FromEmail          *string              `json:"from_email"`
+	FromName           *string              `json:"from_name"`
+	ToEmails           []string             `json:"to_emails"`
+	SentAt             *string              `json:"sent_at"`
+	ReceivedAt         *string              `json:"received_at"`
+	Attachments        []crmEmailAttachment `json:"attachments"`
+	AttachmentCount    int                  `json:"attachment_count"`
+	ThreadMessageCount int64                `json:"thread_message_count"`
+	CreatedAt          string               `json:"created_at"`
+	UpdatedAt          string               `json:"updated_at"`
+}
+
+type CRMEmailListCountsResponse struct {
+	Inbox       int64 `json:"inbox"`
+	InboxUnread int64 `json:"inbox_unread"`
+	Sent        int64 `json:"sent"`
+	Spam        int64 `json:"spam"`
+	Archived    int64 `json:"archived"`
+	Starred     int64 `json:"starred"`
+	Unlinked    int64 `json:"unlinked"`
+	Trash       int64 `json:"trash"`
+}
+
+type crmEmailListItemRow struct {
+	ID                 pgtype.UUID
+	WorkspaceID        pgtype.UUID
+	ThreadID           pgtype.UUID
+	AccountID          pgtype.UUID
+	ContactID          pgtype.UUID
+	Subject            pgtype.Text
+	Snippet            pgtype.Text
+	Mailbox            pgtype.Text
+	Folder             string
+	Direction          string
+	Status             string
+	IsRead             bool
+	IsStarred          bool
+	IsTrashed          bool
+	FromEmail          pgtype.Text
+	FromName           pgtype.Text
+	ToEmails           []string
+	SentAt             pgtype.Timestamptz
+	ReceivedAt         pgtype.Timestamptz
+	Attachments        []byte
+	ThreadMessageCount int64
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type crmEmailListThreadRow struct {
+	ID               pgtype.UUID
+	WorkspaceID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ContactID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	IssueID          pgtype.UUID
+	Subject          pgtype.Text
+	ExternalThreadID pgtype.Text
+	Mailbox          pgtype.Text
+	Direction        string
+	Status           string
+	LastMessageAt    pgtype.Timestamptz
+	LastSnippet      pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	MessageCount     int64
+	IsRead           bool
+	IsStarred        bool
+	IsTrashed        bool
+	IssueIDs         []string
+}
+
 type crmEmailThreadRow struct {
 	ID               pgtype.UUID
 	WorkspaceID      pgtype.UUID
@@ -460,6 +547,69 @@ func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
 		IssueID:          uuidToPtr(row.IssueID),
 		IssueIDs:         uuidSliceToStrings(row.IssueIDs),
 		Subject:          row.Subject,
+		ExternalThreadID: textToPtr(row.ExternalThreadID),
+		Mailbox:          textToPtr(row.Mailbox),
+		Direction:        row.Direction,
+		Status:           row.Status,
+		LastMessageAt:    timestampToPtr(row.LastMessageAt),
+		LastSnippet:      textToPtr(row.LastSnippet),
+		MessageCount:     row.MessageCount,
+		IsRead:           row.IsRead,
+		IsStarred:        row.IsStarred,
+		IsTrashed:        row.IsTrashed,
+		CreatedAt:        timestampToString(row.CreatedAt),
+		UpdatedAt:        timestampToString(row.UpdatedAt),
+	}
+}
+
+func crmEmailListItemToResponse(row crmEmailListItemRow) CRMEmailListItemResponse {
+	toEmails := row.ToEmails
+	if toEmails == nil {
+		toEmails = []string{}
+	}
+	attachments := normalizeCRMEmailAttachments(row.Attachments)
+	subject := strings.TrimSpace(crmTextValue(row.Subject))
+	if subject == "" {
+		subject = "(no subject)"
+	}
+	return CRMEmailListItemResponse{
+		ID:                 uuidToString(row.ID),
+		WorkspaceID:        uuidToString(row.WorkspaceID),
+		ThreadID:           uuidToString(row.ThreadID),
+		AccountID:          uuidToPtr(row.AccountID),
+		ContactID:          uuidToPtr(row.ContactID),
+		Subject:            subject,
+		Snippet:            textToPtr(row.Snippet),
+		Mailbox:            textToPtr(row.Mailbox),
+		Folder:             row.Folder,
+		Direction:          row.Direction,
+		Status:             row.Status,
+		IsRead:             row.IsRead,
+		IsStarred:          row.IsStarred,
+		IsTrashed:          row.IsTrashed,
+		FromEmail:          textToPtr(row.FromEmail),
+		FromName:           textToPtr(row.FromName),
+		ToEmails:           toEmails,
+		SentAt:             timestampToPtr(row.SentAt),
+		ReceivedAt:         timestampToPtr(row.ReceivedAt),
+		Attachments:        attachments,
+		AttachmentCount:    len(attachments),
+		ThreadMessageCount: row.ThreadMessageCount,
+		CreatedAt:          timestampToString(row.CreatedAt),
+		UpdatedAt:          timestampToString(row.UpdatedAt),
+	}
+}
+
+func crmEmailListThreadToResponse(row crmEmailListThreadRow) CRMEmailThreadResponse {
+	return CRMEmailThreadResponse{
+		ID:               uuidToString(row.ID),
+		WorkspaceID:      uuidToString(row.WorkspaceID),
+		AccountID:        uuidToPtr(row.AccountID),
+		ContactID:        uuidToPtr(row.ContactID),
+		ProjectID:        uuidToPtr(row.ProjectID),
+		IssueID:          uuidToPtr(row.IssueID),
+		IssueIDs:         row.IssueIDs,
+		Subject:          crmTextValue(row.Subject),
 		ExternalThreadID: textToPtr(row.ExternalThreadID),
 		Mailbox:          textToPtr(row.Mailbox),
 		Direction:        row.Direction,
@@ -1581,38 +1731,135 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
+	if folder == "" {
+		folder = "inbox"
+	}
+	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
+	if filter == "" {
+		filter = "all"
+	}
 	rows, err := h.DB.Query(r.Context(), `
-		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
-		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
-		       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
-		        FROM crm_email_message m2
-		        WHERE m2.thread_id = t.id AND m2.workspace_id = t.workspace_id
-		        ORDER BY COALESCE(m2.sent_at, m2.received_at, m2.created_at) DESC
-		        LIMIT 1) AS last_snippet,
-		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
-		FROM crm_email_thread t
-		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
-		WHERE t.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2)
-		GROUP BY t.id
-		ORDER BY COALESCE(t.last_message_at, t.updated_at) DESC
+		WITH message_rows AS (
+			SELECT m.id, m.workspace_id, m.thread_id, t.account_id, t.contact_id,
+			       m.subject, COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) AS snippet,
+			       t.mailbox, COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX') AS folder,
+			       m.direction, t.status, COALESCE(m.is_read, t.is_read) AS is_read,
+			       COALESCE(m.is_starred, t.is_starred) AS is_starred, COALESCE(m.is_trashed, t.is_trashed) AS is_trashed,
+			       m.from_email, m.from_name, m.to_emails, m.sent_at, m.received_at,
+			       COALESCE(m.attachments, '[]'::jsonb) AS attachments,
+			       COUNT(*) OVER (PARTITION BY m.thread_id)::bigint AS thread_message_count,
+			       m.created_at, m.updated_at
+			FROM crm_email_message m
+			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
+			WHERE m.workspace_id = $1
+			  AND ($2::uuid IS NULL OR t.account_id = $2)
+			  AND (
+				$3 = 'all'
+				OR ($3 = 'inbox' AND m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%']))
+				OR ($3 = 'sent' AND m.direction = 'outbound')
+				OR ($3 = 'spam' AND (lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%'))
+				OR ($3 = 'archived' AND t.status = 'archived')
+				OR ($3 = 'starred' AND COALESCE(m.is_starred, t.is_starred) = true)
+				OR ($3 = 'unlinked' AND t.account_id IS NULL AND t.contact_id IS NULL)
+				OR ($3 = 'trash' AND (t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true))
+			  )
+			  AND (
+				$4 = 'all'
+				OR ($4 = 'unlinked' AND t.account_id IS NULL AND t.contact_id IS NULL)
+				OR ($4 = 'linked' AND (t.account_id IS NOT NULL OR t.contact_id IS NOT NULL))
+				OR ($4 = 'unread' AND COALESCE(m.is_read, t.is_read) = false)
+				OR ($4 = 'read' AND COALESCE(m.is_read, t.is_read) = true)
+			  )
+		)
+		SELECT id, workspace_id, thread_id, account_id, contact_id, subject, snippet, mailbox, folder,
+		       direction, status, is_read, is_starred, is_trashed, from_email, from_name, to_emails,
+		       sent_at, received_at, attachments, thread_message_count, created_at, updated_at
+		FROM message_rows
+		ORDER BY COALESCE(sent_at, received_at, created_at) DESC
 		LIMIT 100
-	`, workspaceID, accountID)
+	`, workspaceID, accountID, folder, filter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list CRM email threads")
+		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
 	}
 	defer rows.Close()
-	threads := []CRMEmailThreadResponse{}
+	messages := []CRMEmailListItemResponse{}
+	threadIDs := map[string]bool{}
 	for rows.Next() {
-		thread, err := h.scanCRMEmailThread(rows)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to scan CRM email thread")
+		var item crmEmailListItemRow
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.ThreadID, &item.AccountID, &item.ContactID, &item.Subject,
+			&item.Snippet, &item.Mailbox, &item.Folder, &item.Direction, &item.Status, &item.IsRead, &item.IsStarred,
+			&item.IsTrashed, &item.FromEmail, &item.FromName, &item.ToEmails, &item.SentAt, &item.ReceivedAt,
+			&item.Attachments, &item.ThreadMessageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scan CRM email message")
 			return
 		}
-		thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
-		threads = append(threads, crmEmailThreadToResponse(thread))
+		resp := crmEmailListItemToResponse(item)
+		threadIDs[resp.ThreadID] = true
+		messages = append(messages, resp)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"threads": threads, "total": len(threads)})
+	threadIDKeys := make([]string, 0, len(threadIDs))
+	for rawThreadID := range threadIDs {
+		threadIDKeys = append(threadIDKeys, rawThreadID)
+	}
+	threadIDValues, _ := parseUUIDSliceOrBadRequest(w, threadIDKeys, "thread id")
+	threads := []CRMEmailThreadResponse{}
+	if len(threadIDValues) > 0 {
+		threadRows, err := h.DB.Query(r.Context(), `
+			SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
+			       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
+			       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
+			        FROM crm_email_message m2
+			        WHERE m2.thread_id = t.id AND m2.workspace_id = t.workspace_id
+			        ORDER BY COALESCE(m2.sent_at, m2.received_at, m2.created_at) DESC
+			        LIMIT 1) AS last_snippet,
+			       t.created_at, t.updated_at, COUNT(DISTINCT m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed,
+			       COALESCE(array_agg(DISTINCT l.issue_id::text) FILTER (WHERE l.issue_id IS NOT NULL), ARRAY[]::text[]) AS issue_ids
+			FROM crm_email_thread t
+			LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
+			LEFT JOIN crm_email_thread_issue_link l ON l.thread_id = t.id
+			WHERE t.workspace_id = $1 AND t.id = ANY($2::uuid[])
+			GROUP BY t.id
+		`, workspaceID, threadIDValues)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list CRM email threads")
+			return
+		}
+		defer threadRows.Close()
+		for threadRows.Next() {
+			var thread crmEmailListThreadRow
+			if err := threadRows.Scan(&thread.ID, &thread.WorkspaceID, &thread.AccountID, &thread.ContactID, &thread.ProjectID,
+				&thread.IssueID, &thread.Subject, &thread.ExternalThreadID, &thread.Mailbox, &thread.Direction, &thread.Status,
+				&thread.LastMessageAt, &thread.LastSnippet, &thread.CreatedAt, &thread.UpdatedAt, &thread.MessageCount,
+				&thread.IsRead, &thread.IsStarred, &thread.IsTrashed, &thread.IssueIDs); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to scan CRM email thread")
+				return
+			}
+			threads = append(threads, crmEmailListThreadToResponse(thread))
+		}
+	}
+	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID)
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "threads": threads, "total": len(messages), "counts": counts})
+}
+
+func (h *Handler) crmEmailFolderCounts(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID) CRMEmailListCountsResponse {
+	var counts CRMEmailListCountsResponse
+	_ = h.DB.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])),
+			COUNT(*) FILTER (WHERE m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_read, t.is_read) = false AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])),
+			COUNT(*) FILTER (WHERE m.direction = 'outbound'),
+			COUNT(*) FILTER (WHERE lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%'),
+			COUNT(*) FILTER (WHERE t.status = 'archived'),
+			COUNT(*) FILTER (WHERE COALESCE(m.is_starred, t.is_starred) = true),
+			COUNT(*) FILTER (WHERE t.account_id IS NULL AND t.contact_id IS NULL),
+			COUNT(*) FILTER (WHERE t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true)
+		FROM crm_email_message m
+		JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
+		WHERE m.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2)
+	`, workspaceID, accountID).Scan(&counts.Inbox, &counts.InboxUnread, &counts.Sent, &counts.Spam, &counts.Archived, &counts.Starred, &counts.Unlinked, &counts.Trash)
+	return counts
 }
 
 func (h *Handler) GetCRMEmailThread(w http.ResponseWriter, r *http.Request) {
@@ -1880,6 +2127,15 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email thread")
 		return
 	}
+	_, _ = h.DB.Exec(r.Context(), `
+		UPDATE crm_email_message
+		SET is_read = COALESCE($3, is_read),
+		    is_starred = COALESCE($4, is_starred),
+		    folder = CASE WHEN $5='archived' THEN 'Archive' WHEN $5='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
+		    is_trashed = CASE WHEN $5='open' THEN false ELSE is_trashed END,
+		    updated_at = now()
+		WHERE thread_id = $1 AND workspace_id = $2
+	`, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
 	h.trySyncCRMEmailThreadFlags(r.Context(), workspaceID, threadID, req.IsRead, req.IsStarred)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
@@ -2263,12 +2519,46 @@ func (h *Handler) SyncCRMIMAP(w http.ResponseWriter, r *http.Request) {
 		finishRun(`UPDATE crm_imap_sync_run SET status='ok', fetched_count=$2, imported_count=$3, skipped_count=$4, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), imported, skipped)
 	}(runID, workspaceID, cfg, folder, limit, req.RangeDays)
 }
-
-func cleanCRMIMAPFolder(value *string) string {
-	if value == nil || strings.TrimSpace(*value) == "" || strings.EqualFold(strings.TrimSpace(*value), "inbox") {
+func cleanCRMIMAPFolder(folder *string) string {
+	if folder == nil {
 		return "INBOX"
 	}
-	return strings.TrimSpace(*value)
+	value := strings.TrimSpace(*folder)
+	if value == "" {
+		return "INBOX"
+	}
+	return value
+}
+
+func isCRMEmailSpamFolder(folder string) bool {
+	value := strings.ToLower(strings.TrimSpace(folder))
+	value = strings.Trim(value, `"`)
+	value = strings.ReplaceAll(value, "\\", "/")
+	return value == "spam" || value == "junk" || strings.Contains(value, "/spam") || strings.Contains(value, "/junk") || strings.Contains(value, "垃圾") || strings.Contains(value, "垃圾邮件")
+}
+
+func canonicalCRMEmailFolder(folder string) string {
+	value := strings.TrimSpace(folder)
+	if value == "" {
+		value = "INBOX"
+	}
+	if isCRMEmailSpamFolder(value) {
+		return "Spam"
+	}
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "sent" || strings.Contains(lower, "/sent") || strings.Contains(lower, "已发送") || strings.Contains(lower, "sent messages") {
+		return "Sent"
+	}
+	if lower == "trash" || strings.Contains(lower, "/trash") || strings.Contains(lower, "deleted") || strings.Contains(lower, "废纸") || strings.Contains(lower, "已删除") {
+		return "Trash"
+	}
+	if lower == "archive" || lower == "archived" || strings.Contains(lower, "/archive") || strings.Contains(lower, "归档") {
+		return "Archive"
+	}
+	if strings.EqualFold(value, "INBOX") || strings.Contains(lower, "收件") {
+		return "INBOX"
+	}
+	return value
 }
 
 func isCRMIMAPSentFolder(folder string) bool {
@@ -2440,7 +2730,10 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		if strings.TrimSpace(bodyHTML) == "" && looksLikeCRMHTML(message.BodyText) {
 			bodyHTML = message.BodyText
 		}
-		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction)
+		canonicalFolder := canonicalCRMEmailFolder(folder)
+		isRead := strings.EqualFold(canonicalFolder, "Sent")
+		sourceMetadataJSON, _ := json.Marshal(map[string]any{"provider": "imap", "mailbox_id": cfg.ID, "folder": canonicalFolder, "source_folder": folder, "uid": message.UID})
+		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction, folder, is_read, source_metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction, canonicalFolder, isRead, sourceMetadataJSON)
 		if execErr != nil {
 			return imported, skipped, execErr
 		}
@@ -3710,7 +4003,7 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "folder is required")
 		return
 	}
-	allowed := map[string]bool{"inbox": true, "sent": true, "archived": true, "starred": true, "trash": true}
+	allowed := map[string]bool{"inbox": true, "sent": true, "spam": true, "archived": true, "starred": true, "trash": true}
 	if !allowed[req.Folder] {
 		writeError(w, http.StatusBadRequest, "unsupported folder")
 		return
@@ -3740,6 +4033,20 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to move CRM email thread")
 		return
 	}
+	_, _ = h.DB.Exec(r.Context(), `
+		UPDATE crm_email_message
+		SET folder = CASE $3
+		      WHEN 'archived' THEN 'Archive'
+		      WHEN 'trash' THEN folder
+		      WHEN 'spam' THEN 'Spam'
+		      WHEN 'sent' THEN 'Sent'
+		      ELSE 'INBOX'
+		    END,
+		    is_starred = CASE $3 WHEN 'starred' THEN true ELSE is_starred END,
+		    is_trashed = CASE $3 WHEN 'trash' THEN true ELSE false END,
+		    updated_at = now()
+		WHERE thread_id = $1 AND workspace_id = $2
+	`, threadID, workspaceID, req.Folder)
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
 }

@@ -9,7 +9,7 @@ import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
 import { useModalStore } from "@multica/core/modals";
 import { crmAccountListOptions, crmContactListOptions, crmEmailMessageListOptions, crmEmailThreadListOptions, crmKeys } from "@multica/core/crm/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { CRMAccount, CRMContact, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPPreviewMessage, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
+import type { CRMAccount, CRMContact, CRMEmailListCounts, CRMEmailListItem, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPPreviewMessage, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { normalizeLocale } from "../geo";
@@ -26,6 +26,9 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
+
+type EmailFolderKey = "inbox" | "sent" | "drafts" | "spam" | "archived" | "starred" | "unlinked" | "trash";
+type EmailQuickFilter = "all" | "unread" | "read" | "linked" | "unlinked";
 
 type AssociationDraft = {
   accountId: string;
@@ -86,6 +89,21 @@ function mailboxToDraft(setting?: CRMIMAPSetting | null): MailboxDraft {
 
 function messageTime(value?: string | null) {
   return value ? new Date(value).toLocaleString() : "—";
+}
+
+function emailMessageSearchText(message: CRMEmailListItem, thread?: CRMEmailThread | null) {
+  return [
+    message.subject,
+    message.snippet,
+    message.mailbox,
+    message.folder,
+    message.direction,
+    message.status,
+    message.from_email,
+    message.from_name,
+    message.to_emails?.join(" "),
+    thread?.last_snippet,
+  ].filter(Boolean).join(" ").toLowerCase();
 }
 
 function inferContactDraft(messages: Array<{ from_name?: string | null; from_email?: string | null; direction: string }>): Pick<AssociationDraft, "contactName" | "contactEmail"> {
@@ -300,6 +318,7 @@ export function CRMEmailsPage() {
     folderSent: "已发送",
     folderArchived: "已归档",
     folderStarred: "星标",
+    folderSpam: "垃圾邮件",
     trash: "移入废纸篓",
     addAttachment: "添加附件",
     remove: "移除",
@@ -400,6 +419,7 @@ export function CRMEmailsPage() {
     folderSent: "Sent",
     folderArchived: "Archived",
     folderStarred: "Starred",
+    folderSpam: "Spam",
     trash: "Trash",
     addAttachment: "Add attachment",
     remove: "Remove",
@@ -428,12 +448,14 @@ export function CRMEmailsPage() {
     inbox: emailCopy.folderInbox,
     sent: emailCopy.folderSent,
     archived: emailCopy.folderArchived,
+    spam: emailCopy.folderSpam,
     starred: emailCopy.folderStarred,
     trash: emailCopy.folderTrash,
   };
 
   const [search, setSearch] = useState("");
-  const [activeFolder, setActiveFolder] = useState<"inbox" | "sent" | "drafts" | "archived" | "starred" | "unlinked" | "trash">("inbox");
+  const [activeFolder, setActiveFolder] = useState<EmailFolderKey>("inbox");
+  const [quickFilter, setQuickFilter] = useState<EmailQuickFilter>("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
   const [mailboxDraft, setMailboxDraft] = useState<MailboxDraft>(emptyMailboxDraft);
@@ -454,13 +476,18 @@ export function CRMEmailsPage() {
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
-  const { data: threads = [], isLoading } = useQuery({
-    ...crmEmailThreadListOptions(wsId),
+  const emailListQuery = useQuery({
+    ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter),
     enabled: Boolean(wsId),
     refetchInterval: 30000,
     refetchIntervalInBackground: true,
     staleTime: 0,
   });
+  const emailListData = emailListQuery.data;
+  const threads = emailListData?.threads ?? [];
+  const messageList = emailListData?.messages ?? [];
+  const serverCounts = emailListData?.counts ?? null;
+  const isLoading = emailListQuery.isLoading;
   const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
@@ -534,6 +561,11 @@ export function CRMEmailsPage() {
     if (!selectedMailbox?.email) return threads;
     return threads.filter((thread) => (thread.mailbox ?? "") === selectedMailbox.email);
   }, [selectedMailbox?.email, threads]);
+  const threadById = useMemo(() => new Map(mailboxThreads.map((thread) => [thread.id, thread])), [mailboxThreads]);
+  const mailboxMessages = useMemo(() => {
+    if (!selectedMailbox?.email) return messageList;
+    return messageList.filter((message) => (message.mailbox ?? "") === selectedMailbox.email);
+  }, [messageList, selectedMailbox?.email]);
 
   const mailboxDrafts = useMemo(() => {
     if (!selectedMailbox?.id) return emailDrafts;
@@ -561,36 +593,35 @@ export function CRMEmailsPage() {
     openDraftPreview(visibleMailboxDrafts[0]);
   }, [activeFolder, visibleMailboxDrafts, selectedDraftId]);
 
-  const folderThreads = useMemo(() => {
-    return mailboxThreads.filter((thread) => {
-      if (activeFolder === "trash") return thread.status === "trashed" || thread.is_trashed === true;
-      if (activeFolder === "sent") return thread.direction === "outbound" && !thread.is_trashed;
-      if (activeFolder === "archived") return thread.status === "archived" && !thread.is_trashed;
-      if (activeFolder === "starred") return Boolean(thread.is_starred) && !thread.is_trashed;
-      if (activeFolder === "unlinked") return !thread.account_id && !thread.is_trashed;
-      return thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed;
-    });
-  }, [activeFolder, mailboxThreads]);
+  const folderMessages = useMemo(() => mailboxMessages, [mailboxMessages]);
 
-  const filteredThreads = useMemo(() => {
+  const filteredMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return folderThreads;
-    return folderThreads.filter((thread) => [thread.subject, thread.mailbox, thread.direction, thread.status]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(q));
-  }, [folderThreads, search]);
+    if (!q) return folderMessages;
+    return folderMessages.filter((message) => emailMessageSearchText(message, threadById.get(message.thread_id)).includes(q));
+  }, [folderMessages, search, threadById]);
 
-  const folderCounts = useMemo(() => ({
+  const fallbackCounts = useMemo<CRMEmailListCounts>(() => ({
     inbox: mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed).length,
+    inbox_unread: mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed && thread.is_read !== true).length,
     sent: mailboxThreads.filter((thread) => thread.direction === "outbound" && !thread.is_trashed).length,
-    drafts: visibleMailboxDrafts.length,
+    spam: mailboxMessages.filter((message) => message.folder?.toLowerCase().includes("spam") || message.folder?.toLowerCase().includes("junk")).length,
     archived: mailboxThreads.filter((thread) => thread.status === "archived" && !thread.is_trashed).length,
     starred: mailboxThreads.filter((thread) => thread.is_starred && !thread.is_trashed).length,
     unlinked: mailboxThreads.filter((thread) => !thread.account_id && !thread.is_trashed).length,
     trash: mailboxThreads.filter((thread) => thread.status === "trashed" || thread.is_trashed).length,
-  } as const), [mailboxThreads, visibleMailboxDrafts.length]);
+  }), [mailboxMessages, mailboxThreads]);
+  const folderCounts = { ...fallbackCounts, ...(serverCounts ?? {}) };
+  const displayFolderCounts = { ...folderCounts, drafts: visibleMailboxDrafts.length };
+
+  const quickCount = (predicate: (message: CRMEmailListItem) => boolean) => folderMessages.filter(predicate).length;
+  const quickFilters: Array<[EmailQuickFilter, string, number]> = [
+    ["all", "全部", folderMessages.length],
+    ["unread", "未读", quickCount((message) => message.is_read !== true)],
+    ["read", "已读", quickCount((message) => message.is_read === true)],
+    ["linked", "已关联", quickCount((message) => Boolean(message.account_id))],
+    ["unlinked", "未关联", quickCount((message) => !message.account_id)],
+  ];
 
   const saveMailbox = useMutation({
     mutationFn: () => api.upsertCRMIMAPSetting({
@@ -707,7 +738,10 @@ export function CRMEmailsPage() {
     queryClient.setQueriesData<any>({ queryKey: crmKeys.emailThreads(wsId) }, (current: any) => {
       if (Array.isArray(current)) return current.map((item) => item.id === thread.id ? { ...item, ...thread } : item);
       if (Array.isArray(current?.threads)) {
-        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === thread.id ? { ...item, ...thread } : item) };
+        const patchedMessages = Array.isArray(current.messages)
+          ? current.messages.map((item: CRMEmailListItem) => item.thread_id === thread.id ? { ...item, ...thread } : item)
+          : current.messages;
+        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === thread.id ? { ...item, ...thread } : item), messages: patchedMessages };
       }
       return current;
     });
@@ -718,7 +752,11 @@ export function CRMEmailsPage() {
     queryClient.setQueriesData<any>({ queryKey: crmKeys.emailThreads(wsId) }, (current: any) => {
       if (Array.isArray(current)) return current.map((item) => item.id === threadId ? { ...item, ...patch } : item);
       if (Array.isArray(current?.threads)) {
-        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === threadId ? { ...item, ...patch } : item) };
+        const patchedThreads = current.threads.map((item: CRMEmailThread) => item.id === threadId ? { ...item, ...patch } : item);
+        const patchedMessages = Array.isArray(current.messages)
+          ? current.messages.map((item: CRMEmailListItem) => item.thread_id === threadId ? { ...item, ...patch } : item)
+          : current.messages;
+        return { ...current, threads: patchedThreads, messages: patchedMessages };
       }
       return current;
     });
@@ -824,9 +862,11 @@ export function CRMEmailsPage() {
   });
 
   const selectedThread = useMemo<CRMEmailThread | null>(() => {
-    const found = filteredThreads.find((thread) => thread.id === selectedThreadId) ?? filteredThreads[0] ?? null;
-    return found;
-  }, [filteredThreads, selectedThreadId]);
+    if (activeFolder === "drafts") return null;
+    const selectedMessage = filteredMessages.find((message) => message.thread_id === selectedThreadId) ?? filteredMessages[0] ?? null;
+    if (!selectedMessage) return null;
+    return threadById.get(selectedMessage.thread_id) ?? null;
+  }, [activeFolder, filteredMessages, selectedThreadId, threadById]);
 
   const linkedAccountId = selectedThread?.account_id ?? "";
   const { data: contacts = [] } = useQuery({
@@ -1021,7 +1061,7 @@ export function CRMEmailsPage() {
         <div className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.emails.workspace_title)}</h1>
-          {!isLoading && <Badge variant="secondary" className="tabular-nums">{threads.length}</Badge>}
+          {!isLoading && <Badge variant="secondary" className="tabular-nums">{emailListData?.total ?? filteredMessages.length}</Badge>}
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("new")}>
@@ -1065,6 +1105,7 @@ export function CRMEmailsPage() {
               ["inbox", Inbox, t(($) => $.emails.folder_inbox)],
               ["sent", MailOpen, t(($) => $.emails.folder_sent)],
               ["drafts", Send, emailCopy.drafts],
+              ["spam", Mail, emailCopy.folderSpam],
               ["archived", Archive, t(($) => $.emails.folder_archived)],
               ["starred", Star, t(($) => $.emails.folder_starred)],
               ["unlinked", Link2, t(($) => $.emails.folder_unlinked)],
@@ -1077,7 +1118,7 @@ export function CRMEmailsPage() {
                 onClick={() => setActiveFolder(folder)}
               >
                 <span className="flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{label}</span>
-                <Badge variant="secondary" className="tabular-nums">{folderCounts[folder]}</Badge>
+                <Badge variant="secondary" className="tabular-nums">{displayFolderCounts[folder] ?? 0}</Badge>
               </button>
             ))}
           </nav>
@@ -1089,6 +1130,18 @@ export function CRMEmailsPage() {
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
               <Input className="pl-8" placeholder={t(($) => $.emails.search_placeholder)} value={search} onChange={(event) => setSearch(event.target.value)} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {quickFilters.map(([filter, label, count]) => (
+                <button
+                  key={filter}
+                  type="button"
+                  className={`rounded-full border px-2.5 py-1 text-xs hover:bg-muted ${quickFilter === filter ? "bg-muted font-medium" : "bg-background"}`}
+                  onClick={() => setQuickFilter(filter)}
+                >
+                  {label}<span className="ml-1 tabular-nums text-muted-foreground">{count}</span>
+                </button>
+              ))}
             </div>
           </div>
           {isLoading ? (
@@ -1114,7 +1167,7 @@ export function CRMEmailsPage() {
                 );
               })}
             </section>
-          ) : filteredThreads.length === 0 ? (
+          ) : filteredMessages.length === 0 ? (
             <section className="m-3 rounded-lg border border-dashed bg-card p-10 text-center">
               <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Mail className="size-5" />
@@ -1126,18 +1179,24 @@ export function CRMEmailsPage() {
             </section>
           ) : (
             <section className="min-h-0 flex-1 overflow-y-auto">
-              {filteredThreads.map((thread) => {
-                const active = selectedThread?.id === thread.id;
-                const isUnread = thread.is_read !== true;
+              {filteredMessages.map((message) => {
+                const thread = threadById.get(message.thread_id);
+                const active = selectedThread?.id === message.thread_id;
+                const isUnread = message.is_read !== true;
+                const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
-                  <button key={thread.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => { setSelectedThreadId(thread.id); if (isUnread) updateThreadState.mutate({ threadId: thread.id, data: { is_read: true } }); }}>
+                  <button key={message.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => { setSelectedThreadId(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{thread.subject}</div>
-                      {!thread.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
+                      <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
+                      {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
                     </div>
-                    {thread.last_snippet ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{thread.last_snippet}</p> : null}
                     <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}
+                      {[message.from_name || message.from_email, messageTime(message.sent_at || message.received_at)].filter(Boolean).join(" · ")}
+                    </div>
+                    {message.snippet ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{message.snippet}</p> : null}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      {[message.mailbox, message.folder, message.direction, message.status, t(($) => $.common.count_messages, { count: message.thread_message_count ?? thread?.message_count ?? 1 })].filter(Boolean).map((item) => <span key={String(item)}>{item}</span>)}
+                      {attachmentCount > 0 ? <Badge variant="secondary" className="gap-1"><Paperclip className="size-3" />{attachmentCount}</Badge> : null}
                     </div>
                   </button>
                 );
@@ -1254,6 +1313,7 @@ export function CRMEmailsPage() {
                       <option value="inbox">{emailCopy.folderInbox}</option>
                       <option value="sent">{emailCopy.folderSent}</option>
                       <option value="archived">{emailCopy.folderArchived}</option>
+                      <option value="spam">{emailCopy.folderSpam}</option>
                       <option value="starred">{emailCopy.folderStarred}</option>
                       <option value="trash">{emailCopy.folderTrash}</option>
                     </select>

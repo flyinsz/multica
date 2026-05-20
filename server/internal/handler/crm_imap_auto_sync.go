@@ -68,7 +68,7 @@ func (s *CRMIMAPAutoSyncScheduler) runOnce(parent context.Context) {
 		  AND COALESCE((
 			SELECT max(COALESCE(r.finished_at, r.started_at, r.created_at))
 			FROM crm_imap_sync_run r
-			WHERE r.workspace_id=s.workspace_id AND r.mailbox_id=s.id AND r.folder='INBOX' AND r.status IN ('ok','failed')
+			WHERE r.workspace_id=s.workspace_id AND r.mailbox_id=s.id AND r.folder IN ('INBOX','Spam','Junk') AND r.status IN ('ok','failed')
 		  ), 'epoch'::timestamptz) <= now() - $1::interval
 		ORDER BY s.updated_at DESC
 		LIMIT 10`, s.interval.String())
@@ -121,12 +121,19 @@ func scanCRMIMAPAutoSyncMailbox(row pgx.Row) (crmIMAPMailboxConfig, pgtype.UUID,
 }
 
 func (s *CRMIMAPAutoSyncScheduler) syncMailbox(parent context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig) {
+	folders := []string{"INBOX", "Spam", "Junk"}
+	for _, folder := range folders {
+		s.syncMailboxFolder(parent, workspaceID, cfg, folder)
+	}
+}
+
+func (s *CRMIMAPAutoSyncScheduler) syncMailboxFolder(parent context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, folder string) {
 	runCtx, runCancel := context.WithTimeout(parent, 5*time.Minute)
 	defer runCancel()
 
 	var runID pgtype.UUID
-	if err := s.db.QueryRow(runCtx, `INSERT INTO crm_imap_sync_run (workspace_id, mailbox_id, folder, requested_limit) VALUES ($1,$2,'INBOX',$3) RETURNING id`, workspaceID, cfg.UUID, s.limit).Scan(&runID); err != nil {
-		slog.Warn("CRM IMAP auto sync run create failed", "mailbox", cfg.Email, "error", err)
+	if err := s.db.QueryRow(runCtx, `INSERT INTO crm_imap_sync_run (workspace_id, mailbox_id, folder, requested_limit) VALUES ($1,$2,$3,$4) RETURNING id`, workspaceID, cfg.UUID, folder, s.limit).Scan(&runID); err != nil {
+		slog.Warn("CRM IMAP auto sync run create failed", "mailbox", cfg.Email, "folder", folder, "error", err)
 		return
 	}
 	finishRun := func(query string, args ...any) {
@@ -134,21 +141,26 @@ func (s *CRMIMAPAutoSyncScheduler) syncMailbox(parent context.Context, workspace
 		defer cancel()
 		_, _ = s.db.Exec(ctx, query, args...)
 	}
-	messages, err := fetchCRMEmailProviderMessages(cfg, "INBOX", s.limit, 0, nil)
+	messages, err := fetchCRMEmailProviderMessages(cfg, folder, s.limit, 0, nil)
 	if err != nil {
+		if isCRMEmailSpamFolder(folder) {
+			finishRun(`UPDATE crm_imap_sync_run SET status='failed', error_message=$2, finished_at=now(), updated_at=now() WHERE id=$1`, runID, err.Error())
+			slog.Info("CRM IMAP auto sync optional spam folder skipped", "mailbox", cfg.Email, "folder", folder, "error", err)
+			return
+		}
 		finishRun(`UPDATE crm_imap_sync_run SET status='failed', error_message=$2, finished_at=now(), updated_at=now() WHERE id=$1`, runID, err.Error())
-		slog.Warn("CRM IMAP auto sync fetch failed", "mailbox", cfg.Email, "error", err)
+		slog.Warn("CRM IMAP auto sync fetch failed", "mailbox", cfg.Email, "folder", folder, "error", err)
 		return
 	}
 	importCtx, importCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer importCancel()
 	h := &Handler{DB: s.db}
-	imported, skipped, err := h.importCRMIMAPMessages(importCtx, workspaceID, cfg, "INBOX", messages)
+	imported, skipped, err := h.importCRMIMAPMessages(importCtx, workspaceID, cfg, folder, messages)
 	if err != nil {
 		finishRun(`UPDATE crm_imap_sync_run SET status='failed', fetched_count=$2, error_message=$3, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), err.Error())
-		slog.Warn("CRM IMAP auto sync import failed", "mailbox", cfg.Email, "error", err)
+		slog.Warn("CRM IMAP auto sync import failed", "mailbox", cfg.Email, "folder", folder, "error", err)
 		return
 	}
 	finishRun(`UPDATE crm_imap_sync_run SET status='ok', fetched_count=$2, imported_count=$3, skipped_count=$4, finished_at=now(), updated_at=now() WHERE id=$1`, runID, len(messages), imported, skipped)
-	slog.Info("CRM IMAP auto sync completed", "mailbox", cfg.Email, "fetched", len(messages), "imported", imported, "skipped", skipped)
+	slog.Info("CRM IMAP auto sync completed", "mailbox", cfg.Email, "folder", folder, "fetched", len(messages), "imported", imported, "skipped", skipped)
 }

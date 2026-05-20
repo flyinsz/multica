@@ -15,8 +15,8 @@ export const crmKeys = {
     [...crmKeys.accountDetail(wsId, accountId), "profile"] as const,
   notes: (wsId: string, accountId: string) =>
     [...crmKeys.accountDetail(wsId, accountId), "notes"] as const,
-  emailThreads: (wsId: string, accountId = "") =>
-    [...crmKeys.all(wsId), "email-threads", accountId] as const,
+  emailThreads: (wsId: string, accountId = "", folder = "", filter = "") =>
+    [...crmKeys.all(wsId), "email-threads", accountId, folder, filter] as const,
   emailThread: (wsId: string, threadId: string) =>
     [...crmKeys.all(wsId), "email-threads", threadId] as const,
   emailMessages: (wsId: string, threadId: string) =>
@@ -64,11 +64,10 @@ export function crmCommunicationNoteListOptions(wsId: string, accountId: string)
   });
 }
 
-export function crmEmailThreadListOptions(wsId: string, accountId = "") {
+export function crmEmailThreadListOptions(wsId: string, accountId = "", folder = "", filter = "") {
   return queryOptions({
-    queryKey: crmKeys.emailThreads(wsId, accountId),
-    queryFn: () => api.listCRMEmailThreads(accountId ? { account_id: accountId } : undefined),
-    select: (data) => data.threads,
+    queryKey: crmKeys.emailThreads(wsId, accountId, folder, filter),
+    queryFn: () => api.listCRMEmailThreads({ account_id: accountId || undefined, folder: folder || undefined, filter: filter || undefined }),
   });
 }
 
