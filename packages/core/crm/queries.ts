@@ -15,8 +15,8 @@ export const crmKeys = {
     [...crmKeys.accountDetail(wsId, accountId), "profile"] as const,
   notes: (wsId: string, accountId: string) =>
     [...crmKeys.accountDetail(wsId, accountId), "notes"] as const,
-  emailThreads: (wsId: string, accountId = "", folder = "", filter = "") =>
-    [...crmKeys.all(wsId), "email-threads", accountId, folder, filter] as const,
+  emailThreads: (wsId: string, accountId = "", folder = "", filter = "", mailbox = "") =>
+    [...crmKeys.all(wsId), "email-threads", accountId, folder, filter, mailbox] as const,
   emailThread: (wsId: string, threadId: string) =>
     [...crmKeys.all(wsId), "email-threads", threadId] as const,
   emailMessages: (wsId: string, threadId: string) =>
@@ -64,10 +64,10 @@ export function crmCommunicationNoteListOptions(wsId: string, accountId: string)
   });
 }
 
-export function crmEmailThreadListOptions(wsId: string, accountId = "", folder = "", filter = "") {
+export function crmEmailThreadListOptions(wsId: string, accountId = "", folder = "", filter = "", mailbox = "") {
   return queryOptions({
-    queryKey: crmKeys.emailThreads(wsId, accountId, folder, filter),
-    queryFn: () => api.listCRMEmailThreads({ account_id: accountId || undefined, folder: folder || undefined, filter: filter || undefined }),
+    queryKey: crmKeys.emailThreads(wsId, accountId, folder, filter, mailbox),
+    queryFn: () => api.listCRMEmailThreads({ account_id: accountId || undefined, folder: folder || undefined, filter: filter || undefined, mailbox: mailbox || undefined }),
   });
 }
 

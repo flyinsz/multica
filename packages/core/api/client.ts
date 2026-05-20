@@ -1367,11 +1367,12 @@ export class ApiClient {
     return this.fetch(`/api/crm/email-drafts/${draftId}/send`, { method: "POST" });
   }
 
-  async listCRMEmailThreads(params?: { account_id?: string; folder?: string; filter?: string }): Promise<ListCRMEmailThreadsResponse> {
+  async listCRMEmailThreads(params?: { account_id?: string; folder?: string; filter?: string; mailbox?: string }): Promise<ListCRMEmailThreadsResponse> {
     const search = new URLSearchParams();
     if (params?.account_id) search.set("account_id", params.account_id);
     if (params?.folder) search.set("folder", params.folder);
     if (params?.filter) search.set("filter", params.filter);
+    if (params?.mailbox) search.set("mailbox", params.mailbox);
     const qs = search.toString();
     return this.fetch(`/api/crm/email-threads${qs ? `?${qs}` : ""}`);
   }

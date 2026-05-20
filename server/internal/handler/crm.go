@@ -1739,6 +1739,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	if filter == "" {
 		filter = "all"
 	}
+	mailbox := strings.TrimSpace(r.URL.Query().Get("mailbox"))
 	rows, err := h.DB.Query(r.Context(), `
 		WITH message_rows AS (
 			SELECT m.id, m.workspace_id, m.thread_id, t.account_id, t.contact_id,
@@ -1754,6 +1755,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
 			WHERE m.workspace_id = $1
 			  AND ($2::uuid IS NULL OR t.account_id = $2)
+			  AND ($5 = '' OR t.mailbox = $5)
 			  AND (
 				$3 = 'all'
 				OR ($3 = 'inbox' AND m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%']))
@@ -1778,7 +1780,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		FROM message_rows
 		ORDER BY COALESCE(sent_at, received_at, created_at) DESC
 		LIMIT 100
-	`, workspaceID, accountID, folder, filter)
+	`, workspaceID, accountID, folder, filter, mailbox)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
@@ -1839,11 +1841,11 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			threads = append(threads, crmEmailListThreadToResponse(thread))
 		}
 	}
-	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID)
+	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID, mailbox)
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "threads": threads, "total": len(messages), "counts": counts})
 }
 
-func (h *Handler) crmEmailFolderCounts(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID) CRMEmailListCountsResponse {
+func (h *Handler) crmEmailFolderCounts(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID, mailbox string) CRMEmailListCountsResponse {
 	var counts CRMEmailListCountsResponse
 	_ = h.DB.QueryRow(ctx, `
 		SELECT
@@ -1857,8 +1859,8 @@ func (h *Handler) crmEmailFolderCounts(ctx context.Context, workspaceID pgtype.U
 			COUNT(*) FILTER (WHERE t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true)
 		FROM crm_email_message m
 		JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
-		WHERE m.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2)
-	`, workspaceID, accountID).Scan(&counts.Inbox, &counts.InboxUnread, &counts.Sent, &counts.Spam, &counts.Archived, &counts.Starred, &counts.Unlinked, &counts.Trash)
+		WHERE m.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2) AND ($3 = '' OR t.mailbox = $3)
+	`, workspaceID, accountID, mailbox).Scan(&counts.Inbox, &counts.InboxUnread, &counts.Sent, &counts.Spam, &counts.Archived, &counts.Starred, &counts.Unlinked, &counts.Trash)
 	return counts
 }
 

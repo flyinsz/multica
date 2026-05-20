@@ -80,7 +80,9 @@ function safeEmailHTML(html: string) {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
     .replace(/\son\w+\s*=\s*(["']).*?\1/gi, "")
-    .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"');
+    .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"')
+    .replace(/\ssrc\s*=\s*(["'])\s*https?:\/\/[^"']*\1/gi, ' data-blocked-src="external-image"')
+    .replace(/\ssrcset\s*=\s*(["'])[\s\S]*?\1/gi, "");
 }
 
 function mailboxToDraft(setting?: CRMIMAPSetting | null): MailboxDraft {
@@ -500,11 +502,12 @@ export function CRMEmailsPage() {
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
   const emailListQuery = useQuery({
-    ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter),
-    enabled: Boolean(wsId),
+    ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, selectedMailbox?.email ?? ""),
+    enabled: Boolean(wsId && (selectedMailbox?.email || mailboxes.length === 0)),
     refetchInterval: 30000,
     refetchIntervalInBackground: true,
-    staleTime: 0,
+    staleTime: 15000,
+    keepPreviousData: true,
   });
   const emailListData = emailListQuery.data;
   const threads = emailListData?.threads ?? [];
@@ -580,15 +583,9 @@ export function CRMEmailsPage() {
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"], refetchType: "active" });
   }, [queryClient, syncRuns, syncRunsUpdatedAt, wsId]);
 
-  const mailboxThreads = useMemo(() => {
-    if (!selectedMailbox?.email) return threads;
-    return threads.filter((thread) => (thread.mailbox ?? "") === selectedMailbox.email);
-  }, [selectedMailbox?.email, threads]);
+  const mailboxThreads = useMemo(() => threads, [threads]);
   const threadById = useMemo(() => new Map(mailboxThreads.map((thread) => [thread.id, thread])), [mailboxThreads]);
-  const mailboxMessages = useMemo(() => {
-    if (!selectedMailbox?.email) return messageList;
-    return messageList.filter((message) => (message.mailbox ?? "") === selectedMailbox.email);
-  }, [messageList, selectedMailbox?.email]);
+  const mailboxMessages = useMemo(() => messageList, [messageList]);
 
   const mailboxDrafts = useMemo(() => {
     if (!selectedMailbox?.id) return emailDrafts;
@@ -640,10 +637,10 @@ export function CRMEmailsPage() {
   const quickCount = (predicate: (message: CRMEmailListItem) => boolean) => folderMessages.filter(predicate).length;
   const quickFilters: Array<[EmailQuickFilter, string, number]> = [
     ["all", "全部", folderMessages.length],
-    ["unread", "未读", quickCount((message) => message.is_read !== true)],
+    ["unread", "未读", folderCounts.inbox_unread ?? 0],
     ["read", "已读", quickCount((message) => message.is_read === true)],
     ["linked", "已关联", quickCount((message) => Boolean(message.account_id))],
-    ["unlinked", "未关联", quickCount((message) => !message.account_id)],
+    ["unlinked", "未关联", folderCounts.unlinked ?? 0],
   ];
 
   const saveMailbox = useMutation({
