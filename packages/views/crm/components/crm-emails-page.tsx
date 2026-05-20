@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, Building2, CheckSquare, Inbox, Link2, Mail, MailOpen, MoreHorizontal, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw, X } from "lucide-react";
+import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, MoreHorizontal, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -892,7 +892,6 @@ export function CRMEmailsPage() {
     return threadById.get(selectedMessage.thread_id) ?? null;
   }, [activeFolder, filteredMessages, selectedThreadIds, threadById]);
   const selectedThreadIdSet = useMemo(() => new Set(selectedThreadIds), [selectedThreadIds]);
-  const selectedMessages = useMemo(() => filteredMessages.filter((message) => selectedThreadIdSet.has(message.thread_id)), [filteredMessages, selectedThreadIdSet]);
   const selectedThreads = useMemo(() => selectedThreadIds.map((id) => threadById.get(id)).filter(Boolean) as CRMEmailThread[], [selectedThreadIds, threadById]);
 
   const linkedAccountId = selectedThread?.account_id ?? "";
@@ -1203,9 +1202,24 @@ export function CRMEmailsPage() {
 
         <aside className={`min-h-0 flex-col border-r bg-background ${composeHidesList ? "hidden" : "flex"}`}>
           <div className="border-b p-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-              <Input className="pl-8" placeholder={t(($) => $.emails.search_placeholder)} value={search} onChange={(event) => setSearch(event.target.value)} />
+            <div className="relative flex items-center gap-2">
+              <div className="relative min-w-0 flex-1">
+                <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                <Input className="pl-8" placeholder={t(($) => $.emails.search_placeholder)} value={search} onChange={(event) => setSearch(event.target.value)} />
+              </div>
+              <details className="relative shrink-0">
+                <summary className="list-none rounded-md border bg-background p-2 text-muted-foreground hover:text-foreground" title={emailCopy.bulkActions}><MoreHorizontal className="size-4" /></summary>
+                <div className="absolute right-0 z-30 mt-1 w-48 rounded-md border bg-popover p-1 text-xs shadow-md">
+                  <div className="px-2 py-1.5 text-muted-foreground">{emailCopy.selectedCount(selectedThreadIds.length)}</div>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("read")}>{t(($) => $.emails.mark_read)}</button>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("unread")}>{emailCopy.markUnread}</button>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("archive")}>{t(($) => $.emails.archive)}</button>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("spam")}>{emailCopy.moveToSpam}</button>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction(activeFolder === "trash" ? "restore" : "trash")}>{activeFolder === "trash" ? emailCopy.restore : emailCopy.trash}</button>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={openBulkAssociationDialog}>{emailCopy.associateSelected}</button>
+                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => setSelectedThreadIds([])}>{emailCopy.clearSelection}</button>
+                </div>
+              </details>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {quickFilters.map(([filter, label, count]) => (
@@ -1219,18 +1233,6 @@ export function CRMEmailsPage() {
                 </button>
               ))}
             </div>
-            {selectedThreadIds.length > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/30 p-2 text-xs">
-                <span className="font-medium"><CheckSquare className="mr-1 inline size-3" />{emailCopy.selectedCount(selectedThreadIds.length)}</span>
-                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("read")}><MailOpen className="mr-1 size-3" />{t(($) => $.emails.mark_read)}</Button>
-                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("unread")}><Mail className="mr-1 size-3" />{emailCopy.markUnread}</Button>
-                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("archive")}><Archive className="mr-1 size-3" />{t(($) => $.emails.archive)}</Button>
-                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("spam")}><Mail className="mr-1 size-3" />{emailCopy.moveToSpam}</Button>
-                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction(activeFolder === "trash" ? "restore" : "trash")}><Trash2 className="mr-1 size-3" />{activeFolder === "trash" ? emailCopy.restore : emailCopy.trash}</Button>
-                <Button size="sm" variant="ghost" onClick={openBulkAssociationDialog}><Link2 className="mr-1 size-3" />{emailCopy.associateSelected}</Button>
-                <Button size="sm" variant="ghost" onClick={() => setSelectedThreadIds([])}><X className="mr-1 size-3" />{emailCopy.clearSelection}</Button>
-              </div>
-            )}
           </div>
           {isLoading ? (
             <section className="space-y-2 p-3">
@@ -1274,18 +1276,13 @@ export function CRMEmailsPage() {
                 const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
                   <div key={message.id} className={`flex w-full items-start gap-2 border-b px-3 py-3 text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`}>
-                    <button
-                      type="button"
-                      aria-label={emailCopy.select}
-                      className="mt-1 rounded border bg-background p-1 text-muted-foreground hover:text-foreground"
-                      onClick={(event) => { event.stopPropagation(); toggleThreadSelection(message.thread_id); }}
-                    >
-                      <CheckSquare className={`size-4 ${selectedThreadIdSet.has(message.thread_id) ? "text-primary" : "opacity-40"}`} />
-                    </button>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyThread(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={(event) => { if (event.ctrlKey || event.metaKey) { toggleThreadSelection(message.thread_id); return; } selectOnlyThread(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
                       <div className="flex items-start justify-between gap-2">
                         <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
-                        {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
+                        <div className="flex shrink-0 items-center gap-1">
+                          {selectedThreadIdSet.has(message.thread_id) ? <Badge variant="secondary">{emailCopy.select}</Badge> : null}
+                          {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
+                        </div>
                       </div>
                       <div className="mt-1 truncate text-xs text-muted-foreground">
                         {[message.from_name || message.from_email, messageTime(message.sent_at || message.received_at)].filter(Boolean).join(" · ")}
@@ -1296,16 +1293,6 @@ export function CRMEmailsPage() {
                         {attachmentCount > 0 ? <Badge variant="secondary" className="gap-1"><Paperclip className="size-3" />{attachmentCount}</Badge> : null}
                       </div>
                     </button>
-                    <details className="relative mt-0.5 shrink-0">
-                      <summary className="list-none rounded border bg-background p-1 text-muted-foreground hover:text-foreground" title={emailCopy.moreActions}><MoreHorizontal className="size-4" /></summary>
-                      <div className="absolute right-0 z-20 mt-1 w-44 rounded-md border bg-popover p-1 text-xs shadow-md">
-                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: false } })}>{emailCopy.markUnread}</button>
-                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => updateThreadState.mutate({ threadId: message.thread_id, data: { status: "archived" } })}>{t(($) => $.emails.archive)}</button>
-                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => moveThread.mutate({ threadId: message.thread_id, folder: "spam" })}>{emailCopy.moveToSpam}</button>
-                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => { selectOnlyThread(message.thread_id); openAssociationDialog(); }}>{t(($) => $.emails.link_customer_contact)}</button>
-                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left text-destructive hover:bg-muted" onClick={() => trashThread.mutate({ threadId: message.thread_id })}>{emailCopy.trash}</button>
-                      </div>
-                    </details>
                   </div>
                 );
               })}
