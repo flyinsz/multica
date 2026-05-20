@@ -108,7 +108,9 @@ export function CRMDashboardPage() {
   const topHighPriorityAccounts = highPriorityAccounts.slice(0, 6);
   const topHotAccounts = hotAccounts.slice(0, 6);
   const topRecentAccounts = recentAccounts.slice(0, 6);
-  const topEmailThreads = emailThreads.slice(0, 6);
+  const emailMessages = emailThreadData?.messages ?? [];
+  const topEmailMessages = emailMessages.slice(0, 6);
+  const topEmailThreads = topEmailMessages.length ? topEmailMessages : emailThreads.slice(0, 6);
   const stats = useMemo(() => [
     { label: t(($) => $.dashboard.total_customers), value: allAccounts.length, icon: Users, filter: {} },
     { label: t(($) => $.dashboard.overdue_followups), value: overdueFollowUps.length, icon: Flame, filter: { follow_up: "overdue" } },
@@ -240,12 +242,16 @@ export function CRMDashboardPage() {
             <h2 className="text-sm font-medium">{t(($) => $.dashboard.recent_emails_title)}</h2>
             <div className="mt-3">
               {emailLoading ? <Skeleton className="h-24" /> : topEmailThreads.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.dashboard.no_emails)}</p> : (
-                <div className="space-y-2">{topEmailThreads.map((thread) => (
-                  <button key={thread.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(paths.crmEmails())}>
-                    <span className="truncate font-medium">{thread.subject || t(($) => $.notes.untitled)}</span>
-                    <span className="ml-2 shrink-0 text-xs text-muted-foreground">{formatDate(thread.last_message_at || thread.updated_at)}</span>
-                  </button>
-                ))}</div>
+                <div className="space-y-2">{topEmailThreads.map((item) => {
+                  const subject = item.subject || t(($) => $.notes.untitled);
+                  const emailPath = `${paths.crmEmails()}?thread=${encodeURIComponent((item as any).thread_id ?? item.id)}&folder=${encodeURIComponent((item as any).folder ?? "inbox")}`;
+                  return (
+                    <button key={item.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(emailPath)}>
+                      <span className="truncate font-medium">{subject}</span>
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{formatDate((item as any).received_at || (item as any).sent_at || (item as any).last_message_at || item.updated_at)}</span>
+                    </button>
+                  );
+                })}</div>
               )}
             </div>
           </section>

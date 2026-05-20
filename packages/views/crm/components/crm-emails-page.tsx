@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
+import { Archive, ArrowRight, Building2, CheckSquare, Inbox, Link2, Mail, MailOpen, MoreHorizontal, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw, X } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -31,6 +31,7 @@ type EmailFolderKey = "inbox" | "sent" | "drafts" | "spam" | "archived" | "starr
 type EmailQuickFilter = "all" | "unread" | "read" | "linked" | "unlinked";
 
 type AssociationDraft = {
+  threadIds?: string[];
   accountId: string;
   contactId: string;
   contactName: string;
@@ -326,6 +327,17 @@ export function CRMEmailsPage() {
     activeMailbox: "当前邮箱",
     crmMailboxRecord: "CRM 邮箱记录",
     noEmail: "无邮箱",
+    select: "选择",
+    clearSelection: "清除选择",
+    selectedCount: (count: number) => `已选 ${count} 封`,
+    moreActions: "更多操作",
+    bulkActions: "批量操作",
+    markUnread: "标记未读",
+    moveToSpam: "移入垃圾邮件",
+    associateSelected: "关联选中邮件",
+    noAssociationSuggestions: "暂无自动建议。请手动选择客户。",
+    manualAssociation: "手动关联",
+    suggestionMatch: "建议匹配",
     unknownError: "未知错误",
     importFailed: (message: string) => `导入失败：${message}`,
     smtpSendFailed: (message: string) => `SMTP 发送失败：${message}`,
@@ -427,6 +439,17 @@ export function CRMEmailsPage() {
     activeMailbox: "Active mailbox",
     crmMailboxRecord: "CRM mailbox record",
     noEmail: "No email",
+    select: "Select",
+    clearSelection: "Clear selection",
+    selectedCount: (count: number) => `${count} selected`,
+    moreActions: "More actions",
+    bulkActions: "Bulk actions",
+    markUnread: "Mark unread",
+    moveToSpam: "Move to spam",
+    associateSelected: "Associate selected emails",
+    noAssociationSuggestions: "No suggestions yet. Choose a customer manually.",
+    manualAssociation: "Manual association",
+    suggestionMatch: "Suggested match",
     unknownError: "unknown error",
     importFailed: (message: string) => `Import failed: ${message}`,
     smtpSendFailed: (message: string) => `SMTP send failed: ${message}`,
@@ -463,7 +486,7 @@ export function CRMEmailsPage() {
   const [previewMessages, setPreviewMessages] = useState<CRMIMAPPreviewMessage[]>([]);
   const [selectedPreviewUIDs, setSelectedPreviewUIDs] = useState<string[]>([]);
   const [importRangeDays, setImportRangeDays] = useState(30);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
@@ -528,13 +551,13 @@ export function CRMEmailsPage() {
   });
 
   const openDraftPreview = (draft: any) => {
-    setSelectedThreadId(null);
+    setSelectedThreadIds([]);
     setSelectedDraftId(draft.id ?? null);
     setComposeDraft(null);
   };
 
   const openDraftInComposer = (draft: any) => {
-    setSelectedThreadId(null);
+    setSelectedThreadIds([]);
     setSelectedDraftId(draft.id ?? null);
     setComposeDraft(draftToCompose(draft));
   };
@@ -785,7 +808,7 @@ export function CRMEmailsPage() {
     mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(threadId),
     onSuccess: async () => {
       setMailboxStatus(emailCopy.movedToTrash);
-      setSelectedThreadId(null);
+      setSelectedThreadIds([]);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => setMailboxStatus(emailCopy.trashFailed(mutationErrorMessage(error, emailCopy.unknownError))),
@@ -796,7 +819,7 @@ export function CRMEmailsPage() {
     onSuccess: async () => {
       setMailboxStatus(emailCopy.restored);
       setActiveFolder("inbox");
-      setSelectedThreadId(null);
+      setSelectedThreadIds([]);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => setMailboxStatus(emailCopy.restoreFailed(mutationErrorMessage(error, emailCopy.unknownError))),
@@ -806,7 +829,7 @@ export function CRMEmailsPage() {
     mutationFn: ({ threadId }: { threadId: string }) => api.deleteCRMEmailThread(threadId),
     onSuccess: async () => {
       setMailboxStatus(emailCopy.deletedForever);
-      setSelectedThreadId(null);
+      setSelectedThreadIds([]);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => setMailboxStatus(emailCopy.deleteFailed(mutationErrorMessage(error, emailCopy.unknownError))),
@@ -818,7 +841,7 @@ export function CRMEmailsPage() {
       setMailboxStatus(emailCopy.movedTo(folderLabelMap[variables.folder] ?? variables.folder));
       updateCachedThread(thread);
       setActiveFolder(variables.folder as typeof activeFolder);
-      setSelectedThreadId(thread.id);
+      setSelectedThreadIds([thread.id]);
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
     },
     onError: (error) => setMailboxStatus(emailCopy.moveFailed(mutationErrorMessage(error, emailCopy.unknownError))),
@@ -863,10 +886,14 @@ export function CRMEmailsPage() {
 
   const selectedThread = useMemo<CRMEmailThread | null>(() => {
     if (activeFolder === "drafts") return null;
-    const selectedMessage = filteredMessages.find((message) => message.thread_id === selectedThreadId) ?? filteredMessages[0] ?? null;
+    const primaryThreadId = selectedThreadIds[0] ?? "";
+    const selectedMessage = filteredMessages.find((message) => message.thread_id === primaryThreadId) ?? filteredMessages[0] ?? null;
     if (!selectedMessage) return null;
     return threadById.get(selectedMessage.thread_id) ?? null;
-  }, [activeFolder, filteredMessages, selectedThreadId, threadById]);
+  }, [activeFolder, filteredMessages, selectedThreadIds, threadById]);
+  const selectedThreadIdSet = useMemo(() => new Set(selectedThreadIds), [selectedThreadIds]);
+  const selectedMessages = useMemo(() => filteredMessages.filter((message) => selectedThreadIdSet.has(message.thread_id)), [filteredMessages, selectedThreadIdSet]);
+  const selectedThreads = useMemo(() => selectedThreadIds.map((id) => threadById.get(id)).filter(Boolean) as CRMEmailThread[], [selectedThreadIds, threadById]);
 
   const linkedAccountId = selectedThread?.account_id ?? "";
   const { data: contacts = [] } = useQuery({
@@ -968,6 +995,9 @@ export function CRMEmailsPage() {
   const updateAssociation = useMutation({
     mutationFn: async () => {
       if (!selectedThread || !associationDraft) throw new Error("No email association draft selected");
+      const draftThreadIds = associationDraft.threadIds?.length ? associationDraft.threadIds : selectedThreadIds;
+      const targetThreads = draftThreadIds.length ? draftThreadIds.map((id) => threadById.get(id)).filter(Boolean) as CRMEmailThread[] : [selectedThread];
+      if (!targetThreads.length) throw new Error("No email association target selected");
       let contactId = associationDraft.contactId || null;
       if (!contactId && associationDraft.accountId && associationDraft.contactName.trim()) {
         const payload: CreateCRMContactRequest = {
@@ -979,13 +1009,20 @@ export function CRMEmailsPage() {
         const contact = await api.createCRMContact(associationDraft.accountId, payload);
         contactId = contact.id;
       }
-      return api.updateCRMEmailThreadAssociation(selectedThread.id, {
-        account_id: associationDraft.accountId || null,
-        contact_id: contactId,
-      });
+      const results = [];
+      for (const thread of targetThreads) {
+        results.push(await api.updateCRMEmailThreadAssociation(thread.id, {
+          account_id: associationDraft.accountId || null,
+          contact_id: contactId,
+        }));
+      }
+      const updated = results[0];
+      if (!updated) throw new Error("No email association result");
+      return updated;
     },
     onSuccess: async (thread) => {
       setAssociationDraft(null);
+      setSelectedThreadIds((ids) => ids.slice(0, 1));
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThread(wsId, thread.id) });
       if (thread.account_id) await queryClient.invalidateQueries({ queryKey: crmKeys.contacts(wsId, thread.account_id) });
@@ -1054,6 +1091,45 @@ export function CRMEmailsPage() {
   };
 
   const draftContacts = associationDraft?.accountId ? draftAccountContacts : [];
+
+  const selectOnlyThread = (threadId: string) => {
+    setSelectedDraftId(null);
+    setSelectedThreadIds([threadId]);
+  };
+
+  const toggleThreadSelection = (threadId: string) => {
+    setSelectedDraftId(null);
+    setSelectedThreadIds((ids) => ids.includes(threadId) ? ids.filter((id) => id !== threadId) : [...ids, threadId]);
+  };
+
+  const runThreadBulkAction = async (action: "read" | "unread" | "archive" | "spam" | "trash" | "restore") => {
+    const ids = Array.from(new Set(selectedThreadIds));
+    if (!ids.length) return;
+    for (const threadId of ids) {
+      if (action === "read") await updateThreadState.mutateAsync({ threadId, data: { is_read: true } });
+      if (action === "unread") await updateThreadState.mutateAsync({ threadId, data: { is_read: false } });
+      if (action === "archive") await updateThreadState.mutateAsync({ threadId, data: { status: "archived" } });
+      if (action === "spam") await moveThread.mutateAsync({ threadId, folder: "spam" });
+      if (action === "trash") await trashThread.mutateAsync({ threadId });
+      if (action === "restore") await restoreThread.mutateAsync({ threadId });
+    }
+    setSelectedThreadIds([]);
+    await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+  };
+
+  const openBulkAssociationDialog = () => {
+    const firstThread = selectedThreads[0];
+    if (!firstThread) return;
+    const ids = Array.from(new Set(selectedThreadIds));
+    const inferred = inferContactDraft(messages);
+    setAssociationDraft({
+      threadIds: ids,
+      accountId: firstThread.account_id ?? "",
+      contactId: firstThread.contact_id ?? "",
+      contactName: selectedContact?.name ?? inferred.contactName,
+      contactEmail: selectedContact?.email ?? inferred.contactEmail,
+    });
+  };
 
   return (
     <div className="flex h-full flex-col bg-muted/20">
@@ -1143,6 +1219,18 @@ export function CRMEmailsPage() {
                 </button>
               ))}
             </div>
+            {selectedThreadIds.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/30 p-2 text-xs">
+                <span className="font-medium"><CheckSquare className="mr-1 inline size-3" />{emailCopy.selectedCount(selectedThreadIds.length)}</span>
+                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("read")}><MailOpen className="mr-1 size-3" />{t(($) => $.emails.mark_read)}</Button>
+                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("unread")}><Mail className="mr-1 size-3" />{emailCopy.markUnread}</Button>
+                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("archive")}><Archive className="mr-1 size-3" />{t(($) => $.emails.archive)}</Button>
+                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction("spam")}><Mail className="mr-1 size-3" />{emailCopy.moveToSpam}</Button>
+                <Button size="sm" variant="ghost" onClick={() => runThreadBulkAction(activeFolder === "trash" ? "restore" : "trash")}><Trash2 className="mr-1 size-3" />{activeFolder === "trash" ? emailCopy.restore : emailCopy.trash}</Button>
+                <Button size="sm" variant="ghost" onClick={openBulkAssociationDialog}><Link2 className="mr-1 size-3" />{emailCopy.associateSelected}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedThreadIds([])}><X className="mr-1 size-3" />{emailCopy.clearSelection}</Button>
+              </div>
+            )}
           </div>
           {isLoading ? (
             <section className="space-y-2 p-3">
@@ -1185,20 +1273,40 @@ export function CRMEmailsPage() {
                 const isUnread = message.is_read !== true;
                 const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
-                  <button key={message.id} type="button" className={`block w-full border-b px-4 py-3 text-left text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`} onClick={() => { setSelectedThreadId(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
-                      {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
-                    </div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {[message.from_name || message.from_email, messageTime(message.sent_at || message.received_at)].filter(Boolean).join(" · ")}
-                    </div>
-                    {message.snippet ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{message.snippet}</p> : null}
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                      {[message.mailbox, message.folder, message.direction, message.status, t(($) => $.common.count_messages, { count: message.thread_message_count ?? thread?.message_count ?? 1 })].filter(Boolean).map((item) => <span key={String(item)}>{item}</span>)}
-                      {attachmentCount > 0 ? <Badge variant="secondary" className="gap-1"><Paperclip className="size-3" />{attachmentCount}</Badge> : null}
-                    </div>
-                  </button>
+                  <div key={message.id} className={`flex w-full items-start gap-2 border-b px-3 py-3 text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`}>
+                    <button
+                      type="button"
+                      aria-label={emailCopy.select}
+                      className="mt-1 rounded border bg-background p-1 text-muted-foreground hover:text-foreground"
+                      onClick={(event) => { event.stopPropagation(); toggleThreadSelection(message.thread_id); }}
+                    >
+                      <CheckSquare className={`size-4 ${selectedThreadIdSet.has(message.thread_id) ? "text-primary" : "opacity-40"}`} />
+                    </button>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyThread(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
+                        {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {[message.from_name || message.from_email, messageTime(message.sent_at || message.received_at)].filter(Boolean).join(" · ")}
+                      </div>
+                      {message.snippet ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{message.snippet}</p> : null}
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                        {[message.mailbox, message.folder, message.direction, message.status, t(($) => $.common.count_messages, { count: message.thread_message_count ?? thread?.message_count ?? 1 })].filter(Boolean).map((item) => <span key={String(item)}>{item}</span>)}
+                        {attachmentCount > 0 ? <Badge variant="secondary" className="gap-1"><Paperclip className="size-3" />{attachmentCount}</Badge> : null}
+                      </div>
+                    </button>
+                    <details className="relative mt-0.5 shrink-0">
+                      <summary className="list-none rounded border bg-background p-1 text-muted-foreground hover:text-foreground" title={emailCopy.moreActions}><MoreHorizontal className="size-4" /></summary>
+                      <div className="absolute right-0 z-20 mt-1 w-44 rounded-md border bg-popover p-1 text-xs shadow-md">
+                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: false } })}>{emailCopy.markUnread}</button>
+                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => updateThreadState.mutate({ threadId: message.thread_id, data: { status: "archived" } })}>{t(($) => $.emails.archive)}</button>
+                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => moveThread.mutate({ threadId: message.thread_id, folder: "spam" })}>{emailCopy.moveToSpam}</button>
+                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted" onClick={() => { selectOnlyThread(message.thread_id); openAssociationDialog(); }}>{t(($) => $.emails.link_customer_contact)}</button>
+                        <button type="button" className="block w-full rounded px-2 py-1.5 text-left text-destructive hover:bg-muted" onClick={() => trashThread.mutate({ threadId: message.thread_id })}>{emailCopy.trash}</button>
+                      </div>
+                    </details>
+                  </div>
                 );
               })}
             </section>
@@ -1467,8 +1575,23 @@ export function CRMEmailsPage() {
             <DialogTitle>{t(($) => $.emails.link_customer_contact)}</DialogTitle>
             <DialogDescription>{t(($) => $.emails.link_help)}</DialogDescription>
           </DialogHeader>
+          {associationSuggestions.length > 0 ? (
+            <div className="mb-3 space-y-2 rounded-md border bg-muted/20 p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{emailCopy.suggestionMatch}</div>
+              {associationSuggestions.slice(0, 3).map((suggestion) => (
+                <button key={`${suggestion.account_id}:${suggestion.contact_id ?? "account"}`} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-xs hover:bg-muted" onClick={() => openAssociationDialog(suggestion)}>
+                  <span className="font-medium">{suggestion.account_name}{suggestion.contact_name ? ` · ${suggestion.contact_name}` : ""}</span>
+                  <span className="mt-1 block text-muted-foreground">{suggestion.reasons.join("; ")}</span>
+                </button>
+              ))}
+            </div>
+          ) : <div className="mb-3 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">{emailCopy.noAssociationSuggestions}</div>}
           {associationDraft && (
-            <div className="space-y-4">
+            <>
+              <div className="mb-3 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+                {emailCopy.associateSelected}: {associationDraft.threadIds?.length ?? 1}
+              </div>
+              <div className="space-y-4">
               <label className="space-y-1 text-sm">
                 <span className="text-xs font-medium text-muted-foreground">{t(($) => $.emails.linked_customer)}</span>
                 <select aria-label={t(($) => $.emails.linked_customer)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={associationDraft.accountId} onChange={(event) => setAssociationDraft({ ...associationDraft, accountId: event.target.value, contactId: "" })}>
@@ -1492,7 +1615,8 @@ export function CRMEmailsPage() {
                   <Input aria-label={t(($) => $.contacts.email)} value={associationDraft.contactEmail} onChange={(event) => setAssociationDraft({ ...associationDraft, contactEmail: event.target.value })} placeholder={t(($) => $.contacts.email)} />
                 </div>
               )}
-            </div>
+              </div>
+            </>
           )}
           {updateAssociation.isError && <p className="text-xs text-destructive">{t(($) => $.emails.association_error)}</p>}
           <DialogFooter>
