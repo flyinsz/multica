@@ -523,16 +523,24 @@ export function CRMEmailsPage() {
   const serverCounts = emailListData?.counts ?? null;
   const isInitialEmailLoading = emailListQuery.isLoading && !emailListData;
   const isEmailRefreshing = emailListQuery.isFetching && !isInitialEmailLoading;
-  const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
-  const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
-  const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
-  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts"], queryFn: () => api.listCRMEmailDrafts(), enabled: Boolean(wsId), refetchOnMount: "always" });
+  const { data: accounts = [] } = useQuery({
+    ...crmAccountListOptions(wsId, { sort: "name" }),
+    enabled: Boolean(wsId && (associationDraft || composeRecipientPickerOpen || settingsOpen)),
+  });
+  const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId && settingsOpen) });
+  const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId && settingsOpen) });
+  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts"], queryFn: () => api.listCRMEmailDrafts(), enabled: Boolean(wsId && activeFolder === "drafts"), refetchOnMount: "always" });
   const { data: syncRunsData, dataUpdatedAt: syncRunsUpdatedAt } = useQuery({
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),
     enabled: Boolean(wsId),
-    refetchInterval: 5000,
-    refetchIntervalInBackground: true,
+    refetchInterval: (query) => {
+      const runs = query.state.data?.runs ?? [];
+      const cutoff = Date.now() - 2 * 60 * 1000;
+      const hasFreshRunning = runs.some((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
+      return hasFreshRunning ? 5000 : 30000;
+    },
+    refetchIntervalInBackground: false,
   });
   const emailDrafts = draftsData?.drafts ?? [];
   const syncRuns = syncRunsData?.runs ?? [];

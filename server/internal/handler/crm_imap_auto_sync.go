@@ -68,7 +68,7 @@ func (s *CRMIMAPAutoSyncScheduler) runOnce(parent context.Context) {
 		  AND COALESCE((
 			SELECT max(COALESCE(r.finished_at, r.started_at, r.created_at))
 			FROM crm_imap_sync_run r
-			WHERE r.workspace_id=s.workspace_id AND r.mailbox_id=s.id AND r.folder IN ('INBOX','Spam','Junk') AND r.status IN ('ok','failed')
+			WHERE r.workspace_id=s.workspace_id AND r.mailbox_id=s.id AND r.folder IN ('INBOX','Spam') AND r.status IN ('ok','failed')
 		  ), 'epoch'::timestamptz) <= now() - $1::interval
 		ORDER BY s.updated_at DESC
 		LIMIT 10`, s.interval.String())
@@ -121,7 +121,7 @@ func scanCRMIMAPAutoSyncMailbox(row pgx.Row) (crmIMAPMailboxConfig, pgtype.UUID,
 }
 
 func (s *CRMIMAPAutoSyncScheduler) syncMailbox(parent context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig) {
-	folders := []string{"INBOX", "Spam", "Junk"}
+	folders := []string{"INBOX", "Spam"}
 	for _, folder := range folders {
 		s.syncMailboxFolder(parent, workspaceID, cfg, folder)
 	}
