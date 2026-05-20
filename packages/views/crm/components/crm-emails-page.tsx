@@ -501,13 +501,19 @@ export function CRMEmailsPage() {
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
+  const { data: mailboxData } = useQuery({
+    queryKey: ["crm", wsId, "imap-settings"],
+    queryFn: () => api.listCRMIMAPSettings(),
+    enabled: Boolean(wsId),
+  });
+  const mailboxes = mailboxData?.settings ?? [];
+  const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
   const emailListQuery = useQuery({
     ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, selectedMailbox?.email ?? ""),
     enabled: Boolean(wsId && (selectedMailbox?.email || mailboxes.length === 0)),
     refetchInterval: 30000,
     refetchIntervalInBackground: true,
     staleTime: 15000,
-    keepPreviousData: true,
   });
   const emailListData = emailListQuery.data;
   const threads = emailListData?.threads ?? [];
@@ -518,11 +524,6 @@ export function CRMEmailsPage() {
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
   const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts"], queryFn: () => api.listCRMEmailDrafts(), enabled: Boolean(wsId), refetchOnMount: "always" });
-  const { data: mailboxData } = useQuery({
-    queryKey: ["crm", wsId, "imap-settings"],
-    queryFn: () => api.listCRMIMAPSettings(),
-    enabled: Boolean(wsId),
-  });
   const { data: syncRunsData, dataUpdatedAt: syncRunsUpdatedAt } = useQuery({
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),
@@ -530,8 +531,6 @@ export function CRMEmailsPage() {
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
   });
-  const mailboxes = mailboxData?.settings ?? [];
-  const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
   const emailDrafts = draftsData?.drafts ?? [];
   const syncRuns = syncRunsData?.runs ?? [];
 
