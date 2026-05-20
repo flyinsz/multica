@@ -1768,14 +1768,12 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	accountIDRaw := strings.TrimSpace(r.URL.Query().Get("account_id"))
 	accountID, ok := optionalUUID(w, optionalStringFromQuery(r, "account_id"), "account_id")
 	if !ok {
 		return
 	}
-	accountIDFilter := ""
-	if accountID.Valid {
-		accountIDFilter = uuidToString(accountID)
-	}
+	accountIDFilter := accountIDRaw
 	folder := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("folder")))
 	if folder == "" {
 		folder = "inbox"
@@ -1887,7 +1885,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID, mailbox)
-	slog.Info("crm email threads listed", "workspace_id", uuidToString(workspaceID), "folder", folder, "filter", filter, "mailbox", mailbox, "messages", len(messages), "threads", len(threads), "total", len(messages))
+	slog.Info("crm email threads listed", "workspace_id", uuidToString(workspaceID), "account_id", accountIDRaw, "folder", folder, "filter", filter, "mailbox", mailbox, "messages", len(messages), "threads", len(threads), "total", len(messages))
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "threads": threads, "total": len(messages), "counts": counts})
 }
 
