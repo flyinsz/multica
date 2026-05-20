@@ -1198,7 +1198,14 @@ export function CRMEmailsPage() {
                 key={folder}
                 type="button"
                 className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-muted ${activeFolder === folder ? "bg-muted font-medium" : ""}`}
-                onClick={() => setActiveFolder(folder)}
+                onClick={() => {
+                  setActiveFolder(folder);
+                  setSearch("");
+                  setQuickFilter("all");
+                  setSelectedThreadIds([]);
+                  setSelectedDraftId(null);
+                  setComposeDraft(null);
+                }}
               >
                 <span className="flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{label}</span>
                 <Badge variant="secondary" className="tabular-nums">{displayFolderCounts[folder] ?? 0}</Badge>

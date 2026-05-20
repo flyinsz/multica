@@ -1892,12 +1892,12 @@ func (h *Handler) crmEmailFolderCounts(ctx context.Context, workspaceID pgtype.U
 		SELECT
 			COUNT(*) FILTER (WHERE m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])),
 			COUNT(*) FILTER (WHERE m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_read, t.is_read) = false AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])),
-			COUNT(*) FILTER (WHERE m.direction = 'outbound'),
+			COUNT(*) FILTER (WHERE m.direction = 'outbound' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('sent', 'sent messages', 'sent items')),
 			COUNT(*) FILTER (WHERE lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%'),
-			COUNT(*) FILTER (WHERE t.status = 'archived'),
+			COUNT(*) FILTER (WHERE t.status = 'archived' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('archive', 'archived')),
 			COUNT(*) FILTER (WHERE COALESCE(m.is_starred, t.is_starred) = true),
 			COUNT(*) FILTER (WHERE t.account_id IS NULL AND t.contact_id IS NULL),
-			COUNT(*) FILTER (WHERE t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true)
+			COUNT(*) FILTER (WHERE t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('trash', 'deleted messages', 'deleted items'))
 		FROM crm_email_message m
 		JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
 		WHERE m.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2) AND ($3 = '' OR t.mailbox = $3)
@@ -3042,7 +3042,7 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 			projectTitles = append(projectTitles, title)
 		}
 	}
-	rows, err = h.DB.Query(ctx, `SELECT DISTINCT COALESCE(i.identifier,''), i.title, i.status, i.priority FROM issue i LEFT JOIN crm_email_thread t ON t.issue_id=i.id AND t.workspace_id=i.workspace_id LEFT JOIN crm_email_thread_issue_link til ON til.issue_id=i.id LEFT JOIN crm_email_thread lt ON lt.id=til.thread_id AND lt.workspace_id=i.workspace_id LEFT JOIN project_resource pr ON pr.project_id=i.project_id AND pr.workspace_id=i.workspace_id AND pr.resource_type='crm_account' AND pr.resource_ref->>'account_id'=$2 WHERE i.workspace_id=$1 AND (t.account_id=$3 OR lt.account_id=$3 OR pr.id IS NOT NULL) ORDER BY i.title ASC LIMIT 5`, workspaceID, uuidToString(accountID), accountID)
+	rows, err = h.DB.Query(ctx, `SELECT DISTINCT COALESCE(NULLIF(i.number, 0)::text, ''), i.title, i.status, i.priority FROM issue i LEFT JOIN crm_email_thread t ON t.issue_id=i.id AND t.workspace_id=i.workspace_id LEFT JOIN crm_email_thread_issue_link til ON til.issue_id=i.id LEFT JOIN crm_email_thread lt ON lt.id=til.thread_id AND lt.workspace_id=i.workspace_id LEFT JOIN project_resource pr ON pr.project_id=i.project_id AND pr.workspace_id=i.workspace_id AND pr.resource_type='crm_account' AND pr.resource_ref->>'account_id'=$2 WHERE i.workspace_id=$1 AND (t.account_id=$3 OR lt.account_id=$3 OR pr.id IS NOT NULL) ORDER BY i.title ASC LIMIT 5`, workspaceID, uuidToString(accountID), accountID)
 	if err != nil {
 		return CRMAccountProfileResponse{}, err
 	}
