@@ -509,8 +509,8 @@ export function CRMEmailsPage() {
   const mailboxes = mailboxData?.settings ?? [];
   const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
   const emailListQuery = useQuery({
-    ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, selectedMailbox?.email ?? ""),
-    enabled: Boolean(wsId && (selectedMailbox?.email || mailboxes.length === 0)),
+    ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, ""),
+    enabled: Boolean(wsId),
     refetchInterval: false,
     refetchIntervalInBackground: false,
     staleTime: 60000,
