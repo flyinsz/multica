@@ -1824,7 +1824,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       m.created_at, m.updated_at
 			FROM crm_email_message m
 			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
-			WHERE m.workspace_id = $1
+			WHERE m.workspace_id::text = $1
 			  AND ($2 = '' OR t.account_id::text = $2)
 			  AND ($3 = '' OR t.mailbox = $3)
 			  AND (` + folderCondition + `)
@@ -1837,7 +1837,8 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		ORDER BY COALESCE(sent_at, received_at, created_at) DESC
 		LIMIT 100
 	`
-	rows, err := h.DB.Query(r.Context(), query, workspaceID, accountIDFilter, mailbox)
+	workspaceIDFilter := uuidToString(workspaceID)
+	rows, err := h.DB.Query(r.Context(), query, workspaceIDFilter, accountIDFilter, mailbox)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
