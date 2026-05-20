@@ -632,15 +632,15 @@ export function CRMEmailsPage() {
   }, [folderMessages, search, threadById]);
 
   const fallbackCounts = useMemo<CRMEmailListCounts>(() => ({
-    inbox: mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed).length,
-    inbox_unread: mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed && thread.is_read !== true).length,
-    sent: mailboxThreads.filter((thread) => thread.direction === "outbound" && !thread.is_trashed).length,
-    spam: mailboxMessages.filter((message) => message.folder?.toLowerCase().includes("spam") || message.folder?.toLowerCase().includes("junk")).length,
-    archived: mailboxThreads.filter((thread) => thread.status === "archived" && !thread.is_trashed).length,
-    starred: mailboxThreads.filter((thread) => thread.is_starred && !thread.is_trashed).length,
-    unlinked: mailboxThreads.filter((thread) => !thread.account_id && !thread.is_trashed).length,
-    trash: mailboxThreads.filter((thread) => thread.status === "trashed" || thread.is_trashed).length,
-  }), [mailboxMessages, mailboxThreads]);
+    inbox: activeFolder === "inbox" ? mailboxMessages.length : mailboxThreads.filter((thread) => thread.status !== "archived" && thread.direction !== "outbound" && !thread.is_trashed).length,
+    inbox_unread: folderMessages.filter((message) => message.is_read !== true).length,
+    sent: activeFolder === "sent" ? mailboxMessages.length : mailboxThreads.filter((thread) => thread.direction === "outbound" && !thread.is_trashed).length,
+    spam: activeFolder === "spam" ? mailboxMessages.length : mailboxMessages.filter((message) => message.folder?.toLowerCase().includes("spam") || message.folder?.toLowerCase().includes("junk")).length,
+    archived: activeFolder === "archived" ? mailboxMessages.length : mailboxThreads.filter((thread) => thread.status === "archived" && !thread.is_trashed).length,
+    starred: activeFolder === "starred" ? mailboxMessages.length : mailboxThreads.filter((thread) => thread.is_starred && !thread.is_trashed).length,
+    unlinked: activeFolder === "unlinked" ? mailboxMessages.length : mailboxThreads.filter((thread) => !thread.account_id && !thread.is_trashed).length,
+    trash: activeFolder === "trash" ? mailboxMessages.length : mailboxThreads.filter((thread) => thread.status === "trashed" || thread.is_trashed).length,
+  }), [activeFolder, folderMessages, mailboxMessages, mailboxThreads]);
   const folderCounts = { ...fallbackCounts, ...(serverCounts ?? {}) };
   const displayFolderCounts = { ...folderCounts, drafts: visibleMailboxDrafts.length };
 
