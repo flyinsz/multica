@@ -1748,7 +1748,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       m.direction, t.status, COALESCE(m.is_read, t.is_read) AS is_read,
 			       COALESCE(m.is_starred, t.is_starred) AS is_starred, COALESCE(m.is_trashed, t.is_trashed) AS is_trashed,
 			       m.from_email, m.from_name, m.to_emails, m.sent_at, m.received_at,
-			       COALESCE(m.attachments, '[]'::jsonb) AS attachments,
+			       COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(COALESCE(m.attachments, '[]'::jsonb)) AS elem), '[]'::jsonb) AS attachments,
 			       COUNT(*) OVER (PARTITION BY m.thread_id)::bigint AS thread_message_count,
 			       m.created_at, m.updated_at
 			FROM crm_email_message m
@@ -3129,8 +3129,8 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT id, workspace_id, thread_id, account_id, contact_id, external_message_id,
-		       in_reply_to, reference_ids, COALESCE(attachments, '[]'::jsonb), sent_append_warning,
-		       raw_size_bytes, COALESCE(raw_headers, '{}'::jsonb), from_email, from_name,
+		       in_reply_to, reference_ids, COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(COALESCE(attachments, '[]'::jsonb)) AS elem), '[]'::jsonb), sent_append_warning,
+		       raw_size_bytes, '{}'::jsonb, from_email, from_name,
 		       to_emails, cc_emails, bcc_emails, subject,
 		       sent_at, received_at, body_text, body_html, snippet, direction,
 		       created_at, updated_at
