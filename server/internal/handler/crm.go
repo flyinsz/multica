@@ -1883,6 +1883,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID, mailbox)
+	slog.Info("crm email threads listed", "workspace_id", uuidToString(workspaceID), "folder", folder, "filter", filter, "mailbox", mailbox, "messages", len(messages), "threads", len(threads), "total", len(messages))
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "threads": threads, "total": len(messages), "counts": counts})
 }
 

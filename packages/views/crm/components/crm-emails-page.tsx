@@ -643,6 +643,19 @@ export function CRMEmailsPage() {
   }), [activeFolder, folderMessages, mailboxMessages, mailboxThreads]);
   const folderCounts = { ...fallbackCounts, ...(serverCounts ?? {}) };
   const displayFolderCounts = { ...folderCounts, drafts: visibleMailboxDrafts.length };
+  const emailListDebug = {
+    activeFolder,
+    quickFilter,
+    search,
+    queryStatus: emailListQuery.status,
+    isFetching: emailListQuery.isFetching,
+    error: emailListQuery.error instanceof Error ? emailListQuery.error.message : emailListQuery.error ? String(emailListQuery.error) : "",
+    total: emailListData?.total ?? null,
+    messages: messageList.length,
+    threads: threads.length,
+    filteredMessages: filteredMessages.length,
+    counts: serverCounts ?? folderCounts,
+  };
 
   const quickCount = (predicate: (message: CRMEmailListItem) => boolean) => folderMessages.filter(predicate).length;
   const quickFilters: Array<[EmailQuickFilter, string, number]> = [
@@ -1281,6 +1294,9 @@ export function CRMEmailsPage() {
               <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
                 {t(($) => $.emails.empty_description)}
               </p>
+              <pre className="mx-auto mt-4 max-w-xl overflow-x-auto rounded-md border bg-muted/40 p-3 text-left text-xs text-muted-foreground">
+                {JSON.stringify(emailListDebug, null, 2)}
+              </pre>
             </section>
           ) : (
             <section className="min-h-0 flex-1 overflow-y-auto">
