@@ -1783,7 +1783,35 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		filter = "all"
 	}
 	mailbox := strings.TrimSpace(r.URL.Query().Get("mailbox"))
-	rows, err := h.DB.Query(r.Context(), `
+	folderCondition := "$3 = 'all'"
+	switch folder {
+	case "inbox":
+		folderCondition = "m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])"
+	case "sent":
+		folderCondition = "(m.direction = 'outbound' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('sent', 'sent messages', 'sent items'))"
+	case "spam":
+		folderCondition = "(lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%')"
+	case "archived":
+		folderCondition = "(t.status = 'archived' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('archive', 'archived'))"
+	case "starred":
+		folderCondition = "COALESCE(m.is_starred, t.is_starred) = true"
+	case "unlinked":
+		folderCondition = "t.account_id IS NULL AND t.contact_id IS NULL"
+	case "trash":
+		folderCondition = "(t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('trash', 'deleted messages', 'deleted items'))"
+	}
+	filterCondition := "TRUE"
+	switch filter {
+	case "unlinked":
+		filterCondition = "t.account_id IS NULL AND t.contact_id IS NULL"
+	case "linked":
+		filterCondition = "(t.account_id IS NOT NULL OR t.contact_id IS NOT NULL)"
+	case "unread":
+		filterCondition = "COALESCE(m.is_read, t.is_read) = false"
+	case "read":
+		filterCondition = "COALESCE(m.is_read, t.is_read) = true"
+	}
+	query := `
 		WITH message_rows AS (
 			SELECT m.id, m.workspace_id, m.thread_id, t.account_id, t.contact_id,
 			       m.subject, COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) AS snippet,
@@ -1799,23 +1827,8 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			WHERE m.workspace_id = $1
 			  AND ($2 = '' OR t.account_id::text = $2)
 			  AND ($5 = '' OR t.mailbox = $5)
-			  AND (
-				$3 = 'all'
-				OR ($3 = 'inbox' AND m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) = 'inbox')
-				OR ($3 = 'sent' AND (m.direction = 'outbound' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('sent', 'sent messages', 'sent items')))
-				OR ($3 = 'spam' AND (lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%'))
-				OR ($3 = 'archived' AND (t.status = 'archived' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('archive', 'archived')))
-				OR ($3 = 'starred' AND COALESCE(m.is_starred, t.is_starred) = true)
-				OR ($3 = 'unlinked' AND t.account_id IS NULL AND t.contact_id IS NULL)
-				OR ($3 = 'trash' AND (t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('trash', 'deleted messages', 'deleted items')))
-			  )
-			  AND (
-				$4 = 'all'
-				OR ($4 = 'unlinked' AND t.account_id IS NULL AND t.contact_id IS NULL)
-				OR ($4 = 'linked' AND (t.account_id IS NOT NULL OR t.contact_id IS NOT NULL))
-				OR ($4 = 'unread' AND COALESCE(m.is_read, t.is_read) = false)
-				OR ($4 = 'read' AND COALESCE(m.is_read, t.is_read) = true)
-			  )
+			  AND (` + folderCondition + `)
+			  AND (` + filterCondition + `)
 		)
 		SELECT id, workspace_id, thread_id, account_id, contact_id, subject, snippet, mailbox, folder,
 		       direction, status, is_read, is_starred, is_trashed, from_email, from_name, to_emails,
@@ -1823,7 +1836,8 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		FROM message_rows
 		ORDER BY COALESCE(sent_at, received_at, created_at) DESC
 		LIMIT 100
-	`, workspaceID, accountIDFilter, folder, filter, mailbox)
+	`
+	rows, err := h.DB.Query(r.Context(), query, workspaceID, accountIDFilter, folder, filter, mailbox)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
@@ -1885,7 +1899,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID, mailbox)
-	slog.Info("crm email threads listed", "workspace_id", uuidToString(workspaceID), "account_id", accountIDRaw, "folder", folder, "filter", filter, "mailbox", mailbox, "messages", len(messages), "threads", len(threads), "total", len(messages))
+	slog.Info("crm email threads listed", "workspace_id", uuidToString(workspaceID), "account_id", accountIDRaw, "folder", folder, "filter", filter, "mailbox", mailbox, "folder_condition", folderCondition, "filter_condition", filterCondition, "messages", len(messages), "threads", len(threads), "total", len(messages))
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "threads": threads, "total": len(messages), "counts": counts})
 }
 
