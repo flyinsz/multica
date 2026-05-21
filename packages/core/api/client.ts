@@ -1414,6 +1414,25 @@ export class ApiClient {
     return `/api/crm/email-messages/${messageId}/attachment/${attachmentIndex}`;
   }
 
+  async downloadCRMEmailAttachment(wsId: string, messageId: string, attachmentIndex: number): Promise<Blob> {
+    void wsId;
+    const path = this.getCRMEmailAttachmentUrl(wsId, messageId, attachmentIndex);
+    const rid = createRequestId();
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: {
+        "X-Request-ID": rid,
+        ...this.authHeaders(),
+      },
+      credentials: "include",
+    });
+    if (!res.ok) {
+      if (res.status === 401) this.handleUnauthorized();
+      const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
+      throw new ApiError(message, res.status, res.statusText, body);
+    }
+    return res.blob();
+  }
+
   async trashCRMEmailThread(threadId: string): Promise<void> {
     await this.fetch(`/api/crm/email-threads/${threadId}/trash`, { method: "POST" });
   }

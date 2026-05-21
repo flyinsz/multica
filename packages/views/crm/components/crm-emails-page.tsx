@@ -625,6 +625,22 @@ export function CRMEmailsPage() {
 
   const folderMessages = useMemo(() => mailboxMessages, [mailboxMessages]);
 
+  const handleAttachmentDownload = async (messageId: string, attachmentIndex: number, fileName: string) => {
+    try {
+      const blob = await api.downloadCRMEmailAttachment(wsId, messageId, attachmentIndex);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName || `attachment-${attachmentIndex + 1}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      window.alert(error?.message || "Failed to download attachment");
+    }
+  };
+
   const filteredMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return folderMessages;
@@ -1513,11 +1529,11 @@ export function CRMEmailsPage() {
                                 const attachmentSize = attachment.size_bytes ?? attachment.size ?? 0;
                                 return (
                                 <div key={`${message.id}-attachment-${index}`} className="rounded border bg-background px-3 py-2 text-xs">
-                                  <a
-                                    href={api.getCRMEmailAttachmentUrl(wsId, message.id, index)}
-                                    download={attachmentName}
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleAttachmentDownload(message.id, index, attachmentName)}
                                     className="font-medium text-primary hover:underline"
-                                  >{attachmentName}</a>
+                                  >{attachmentName}</button>
                                   <div className="mt-1 text-muted-foreground">{[attachment.content_type, attachment.disposition, attachmentSize ? `${attachmentSize} ${emailCopy.bytes}` : ""].filter(Boolean).join(" · ")}</div>
                                 </div>
                                 );
