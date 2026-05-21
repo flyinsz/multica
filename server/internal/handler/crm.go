@@ -2273,6 +2273,18 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 			return
 		}
 	}
+	if contactID.Valid && !accountID.Valid {
+		var inferredAccountID pgtype.UUID
+		if err := h.DB.QueryRow(r.Context(), `SELECT account_id FROM crm_contact WHERE id=$1 AND workspace_id=$2`, contactID, workspaceID).Scan(&inferredAccountID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "contact not found in this workspace")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load CRM contact account")
+			return
+		}
+		accountID = inferredAccountID
+	}
 	primaryIssueID := issueID
 	if len(issueIDs) > 0 {
 		primaryIssueID = issueIDs[0]
@@ -4053,7 +4065,7 @@ func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd, err := h.DB.Exec(r.Context(),
-		`UPDATE crm_email_thread SET is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		`UPDATE crm_email_thread SET status='open', is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
 		threadID, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to trash CRM email thread")
@@ -4063,6 +4075,13 @@ func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "CRM email thread not found")
 		return
 	}
+	_, _ = h.DB.Exec(r.Context(), `
+		UPDATE crm_email_message
+		SET is_trashed=true,
+		    folder='Trash',
+		    updated_at=now()
+		WHERE thread_id=$1 AND workspace_id=$2
+	`, threadID, workspaceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

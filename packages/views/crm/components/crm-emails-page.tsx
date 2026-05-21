@@ -509,6 +509,7 @@ export function CRMEmailsPage() {
   });
   const mailboxes = mailboxData?.settings ?? [];
   const selectedMailbox = mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? mailboxes[0] ?? null;
+  const emailThreadRootKey = crmKeys.all(wsId);
   const emailListQuery = useQuery({
     ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, ""),
     enabled: Boolean(wsId),
@@ -589,7 +590,7 @@ export function CRMEmailsPage() {
     const runKey = String(latest.id ?? latest.started_at ?? latest.completed_at ?? syncRunsUpdatedAt);
     if (lastCompletedSyncRunRef.current === runKey) return;
     lastCompletedSyncRunRef.current = runKey;
-    void queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+    void queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"], refetchType: "active" });
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"], refetchType: "active" });
   }, [queryClient, syncRuns, syncRunsUpdatedAt, wsId]);
@@ -624,7 +625,44 @@ export function CRMEmailsPage() {
     openDraftPreview(visibleMailboxDrafts[0]);
   }, [activeFolder, visibleMailboxDrafts, selectedDraftId]);
 
-  const folderMessages = useMemo(() => mailboxMessages, [mailboxMessages]);
+  const folderMessages = useMemo(() => {
+    if (activeFolder === "drafts") return [];
+    const isInboxFolder = (folder?: string | null) => {
+      const value = (folder || "INBOX").toLowerCase();
+      return !value.includes("spam") && !value.includes("junk") && !value.includes("trash") && !value.includes("deleted") && !value.includes("archive");
+    };
+    return mailboxMessages.filter((message) => {
+      const thread = threadById.get(message.thread_id);
+      const status = message.status || thread?.status || "open";
+      const isRead = message.is_read ?? thread?.is_read;
+      const isStarred = message.is_starred ?? thread?.is_starred;
+      const isTrashed = message.is_trashed ?? thread?.is_trashed;
+      const direction = message.direction || thread?.direction;
+      const folder = message.folder || "";
+      if (quickFilter === "unread" && isRead === true) return false;
+      if (quickFilter === "read" && isRead !== true) return false;
+      if (quickFilter === "linked" && !message.account_id && !message.contact_id && !thread?.account_id && !thread?.contact_id) return false;
+      if (quickFilter === "unlinked" && (message.account_id || message.contact_id || thread?.account_id || thread?.contact_id)) return false;
+      switch (activeFolder) {
+        case "inbox":
+          return direction === "inbound" && status === "open" && isTrashed !== true && isInboxFolder(folder);
+        case "sent":
+          return direction === "outbound" || ["sent", "sent messages", "sent items"].includes(folder.toLowerCase());
+        case "spam":
+          return folder.toLowerCase().includes("spam") || folder.toLowerCase().includes("junk") || folder.includes("垃圾");
+        case "archived":
+          return status === "archived" || ["archive", "archived"].includes(folder.toLowerCase());
+        case "starred":
+          return isStarred === true;
+        case "unlinked":
+          return !message.account_id && !message.contact_id && !thread?.account_id && !thread?.contact_id;
+        case "trash":
+          return status === "trashed" || isTrashed === true || ["trash", "deleted messages", "deleted items"].includes(folder.toLowerCase());
+        default:
+          return true;
+      }
+    });
+  }, [activeFolder, mailboxMessages, quickFilter, threadById]);
 
   const handleAttachmentDownload = async (messageId: string, attachmentIndex: number, fileName: string) => {
     try {
@@ -750,7 +788,7 @@ export function CRMEmailsPage() {
       setMailboxStatus(emailCopy.imported(result.imported, result.skipped));
       setPreviewMessages([]);
       setSelectedPreviewUIDs([]);
-      queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
     },
   });
 
@@ -770,7 +808,7 @@ export function CRMEmailsPage() {
       }
       const result = await api.importCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", uids });
       setMailboxStatus(emailCopy.savedImported(result.imported, result.skipped));
-      queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
       setSettingsOpen(false);
@@ -787,7 +825,7 @@ export function CRMEmailsPage() {
       setSelectedDraftId(null);
       setActiveFolder("sent");
       await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
     },
     onError: (error) => {
       setMailboxStatus(emailCopy.smtpSendFailed(mutationErrorMessage(error, emailCopy.unknownError)));
@@ -795,7 +833,7 @@ export function CRMEmailsPage() {
   });
 
   const updateCachedThread = (thread: CRMEmailThread) => {
-    queryClient.setQueriesData<any>({ queryKey: crmKeys.emailThreads(wsId) }, (current: any) => {
+    queryClient.setQueriesData<any>({ queryKey: emailThreadRootKey }, (current: any) => {
       if (Array.isArray(current)) return current.map((item) => item.id === thread.id ? { ...item, ...thread } : item);
       if (Array.isArray(current?.threads)) {
         const patchedMessages = Array.isArray(current.messages)
@@ -809,7 +847,7 @@ export function CRMEmailsPage() {
   };
 
   const patchCachedThread = (threadId: string, patch: Partial<CRMEmailThread>) => {
-    queryClient.setQueriesData<any>({ queryKey: crmKeys.emailThreads(wsId) }, (current: any) => {
+    queryClient.setQueriesData<any>({ queryKey: emailThreadRootKey }, (current: any) => {
       if (Array.isArray(current)) return current.map((item) => item.id === threadId ? { ...item, ...patch } : item);
       if (Array.isArray(current?.threads)) {
         const patchedThreads = current.threads.map((item: CRMEmailThread) => item.id === threadId ? { ...item, ...patch } : item);
@@ -828,23 +866,23 @@ export function CRMEmailsPage() {
   const updateThreadState = useMutation({
     mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean } }) => api.updateCRMEmailThreadState(threadId, data),
     onMutate: async ({ threadId, data }) => {
-      await queryClient.cancelQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
       patchCachedThread(threadId, data);
     },
     onSuccess: async (thread) => {
       updateCachedThread(thread);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     },
     onError: async (error) => {
       setMailboxStatus(emailCopy.updateFailed(mutationErrorMessage(error, emailCopy.unknownError)));
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     },
   });
 
   const trashThread = useMutation({
     mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(threadId),
     onMutate: async ({ threadId }) => {
-      await queryClient.cancelQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
       patchCachedThread(threadId, { is_trashed: true, status: "open" });
     },
     onSuccess: async (_result, { threadId }) => {
@@ -852,11 +890,11 @@ export function CRMEmailsPage() {
       patchCachedThread(threadId, { is_trashed: true, status: "open" });
       setActiveFolder("trash");
       setSelectedThreadIds([threadId]);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     },
     onError: async (error) => {
       setMailboxStatus(emailCopy.trashFailed(mutationErrorMessage(error, emailCopy.unknownError)));
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     },
   });
 
@@ -866,7 +904,7 @@ export function CRMEmailsPage() {
       setMailboxStatus(emailCopy.restored);
       setActiveFolder("inbox");
       setSelectedThreadIds([]);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
     },
     onError: (error) => setMailboxStatus(emailCopy.restoreFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
@@ -876,7 +914,7 @@ export function CRMEmailsPage() {
     onSuccess: async () => {
       setMailboxStatus(emailCopy.deletedForever);
       setSelectedThreadIds([]);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
     },
     onError: (error) => setMailboxStatus(emailCopy.deleteFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
@@ -884,7 +922,7 @@ export function CRMEmailsPage() {
   const moveThread = useMutation({
     mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(threadId, folder),
     onMutate: async ({ threadId, folder }) => {
-      await queryClient.cancelQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
       patchCachedThread(threadId, {
         status: folder === "archived" ? "archived" : "open",
         is_trashed: folder === "trash",
@@ -896,11 +934,11 @@ export function CRMEmailsPage() {
       updateCachedThread(thread);
       setActiveFolder(variables.folder as typeof activeFolder);
       setSelectedThreadIds([thread.id]);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     },
     onError: async (error) => {
       setMailboxStatus(emailCopy.moveFailed(mutationErrorMessage(error, emailCopy.unknownError)));
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey, refetchType: "active" });
     },
   });
 
@@ -908,7 +946,7 @@ export function CRMEmailsPage() {
     mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 500, range_days: importRangeDays }),
     onSuccess: async (result) => {
       setMailboxStatus(result.status === "running" ? "同步已开始，正在后台导入…" : emailCopy.imported(result.imported ?? 0, result.skipped ?? 0));
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
       await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
     },
     onError: (error) => setMailboxStatus(error instanceof Error ? error.message : "Sync failed"),
@@ -1087,7 +1125,7 @@ export function CRMEmailsPage() {
     onSuccess: async (thread) => {
       setAssociationDraft(null);
       setSelectedThreadIds((ids) => ids.slice(0, 1));
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThread(wsId, thread.id) });
       if (thread.account_id) await queryClient.invalidateQueries({ queryKey: crmKeys.contacts(wsId, thread.account_id) });
     },
@@ -1122,7 +1160,7 @@ export function CRMEmailsPage() {
     },
     onSuccess: async (thread) => {
       setEmailLinkDraft(null);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
       await queryClient.invalidateQueries({ queryKey: crmKeys.emailThread(wsId, thread.id) });
     },
   });
@@ -1148,7 +1186,7 @@ export function CRMEmailsPage() {
           issue_id: nextIssueIds[0] ?? null,
           issue_ids: nextIssueIds,
         });
-        await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+        await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
         await queryClient.invalidateQueries({ queryKey: issueKeys.all(wsId) });
       },
     });
