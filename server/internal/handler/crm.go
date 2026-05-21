@@ -3978,36 +3978,27 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid attachment index")
 		return
 	}
-	var attachmentsJSON []byte
+	var attachmentJSON []byte
 	if err := h.DB.QueryRow(r.Context(),
-		`SELECT attachments FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
-		messageID, workspaceID).Scan(&attachmentsJSON); err != nil {
+		`SELECT attachments -> $3 FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
+		messageID, workspaceID, index).Scan(&attachmentJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "CRM email message not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load CRM email message")
+		writeError(w, http.StatusInternalServerError, "failed to load CRM email attachment")
 		return
 	}
-	if len(attachmentsJSON) == 0 {
-		writeError(w, http.StatusNotFound, "no attachments on this message")
-		return
-	}
-	var attachments []crmEmailAttachment
-	if normalized := normalizeCRMEmailAttachments(attachmentsJSON); len(normalized) > 0 {
-		attachments = normalized
-	} else if err := json.Unmarshal(attachmentsJSON, &attachments); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to parse attachments")
-		return
-	}
-	for i := range attachments {
-		attachments[i] = normalizeCRMEmailAttachment(attachments[i], i)
-	}
-	if index >= len(attachments) {
+	if len(attachmentJSON) == 0 || string(attachmentJSON) == "null" {
 		writeError(w, http.StatusNotFound, "attachment index out of range")
 		return
 	}
-	att := attachments[index]
+	var att crmEmailAttachment
+	if err := json.Unmarshal(attachmentJSON, &att); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse attachment")
+		return
+	}
+	att = normalizeCRMEmailAttachment(att, index)
 	if strings.TrimSpace(att.Content) == "" {
 		writeError(w, http.StatusNotFound, "attachment content is not available for this message")
 		return

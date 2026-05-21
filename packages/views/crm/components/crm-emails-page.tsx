@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, MoreHorizontal, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
+import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -81,6 +81,7 @@ function safeEmailHTML(html: string) {
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
     .replace(/\son\w+\s*=\s*(["']).*?\1/gi, "")
     .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"')
+    .replace(/\ssrc\s*=\s*(["'])\s*cid:[^"']*\1/gi, ' data-blocked-src="cid-image"')
     .replace(/\ssrc\s*=\s*(["'])\s*https?:\/\/[^"']*\1/gi, ' data-blocked-src="external-image"')
     .replace(/\ssrcset\s*=\s*(["'])[\s\S]*?\1/gi, "");
 }
@@ -927,9 +928,6 @@ export function CRMEmailsPage() {
     if (!selectedMessage) return null;
     return threadById.get(selectedMessage.thread_id) ?? null;
   }, [activeFolder, filteredMessages, selectedThreadIds, threadById]);
-  const selectedThreadIdSet = useMemo(() => new Set(selectedThreadIds), [selectedThreadIds]);
-  const selectedThreads = useMemo(() => selectedThreadIds.map((id) => threadById.get(id)).filter(Boolean) as CRMEmailThread[], [selectedThreadIds, threadById]);
-
   const linkedAccountId = selectedThread?.account_id ?? "";
   const { data: contacts = [] } = useQuery({
     ...crmContactListOptions(wsId, linkedAccountId),
@@ -1132,40 +1130,6 @@ export function CRMEmailsPage() {
     setSelectedThreadIds([threadId]);
   };
 
-  const toggleThreadSelection = (threadId: string) => {
-    setSelectedDraftId(null);
-    setSelectedThreadIds((ids) => ids.includes(threadId) ? ids.filter((id) => id !== threadId) : [...ids, threadId]);
-  };
-
-  const runThreadBulkAction = async (action: "read" | "unread" | "archive" | "spam" | "trash" | "restore") => {
-    const ids = Array.from(new Set(selectedThreadIds));
-    if (!ids.length) return;
-    for (const threadId of ids) {
-      if (action === "read") await updateThreadState.mutateAsync({ threadId, data: { is_read: true } });
-      if (action === "unread") await updateThreadState.mutateAsync({ threadId, data: { is_read: false } });
-      if (action === "archive") await updateThreadState.mutateAsync({ threadId, data: { status: "archived" } });
-      if (action === "spam") await moveThread.mutateAsync({ threadId, folder: "spam" });
-      if (action === "trash") await trashThread.mutateAsync({ threadId });
-      if (action === "restore") await restoreThread.mutateAsync({ threadId });
-    }
-    setSelectedThreadIds([]);
-    await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
-  };
-
-  const openBulkAssociationDialog = () => {
-    const firstThread = selectedThreads[0];
-    if (!firstThread) return;
-    const ids = Array.from(new Set(selectedThreadIds));
-    const inferred = inferContactDraft(messages);
-    setAssociationDraft({
-      threadIds: ids,
-      accountId: firstThread.account_id ?? "",
-      contactId: firstThread.contact_id ?? "",
-      contactName: selectedContact?.name ?? inferred.contactName,
-      contactEmail: selectedContact?.email ?? inferred.contactEmail,
-    });
-  };
-
   return (
     <div className="flex h-full flex-col bg-muted/20">
       <PageHeader className="justify-between border-b bg-background px-5">
@@ -1251,19 +1215,6 @@ export function CRMEmailsPage() {
                 <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
                 <Input className="pl-8" placeholder={t(($) => $.emails.search_placeholder)} value={search} onChange={(event) => setSearch(event.target.value)} />
               </div>
-              <details className="relative shrink-0">
-                <summary className="list-none rounded-md border bg-background p-2 text-muted-foreground hover:text-foreground" title={emailCopy.bulkActions}><MoreHorizontal className="size-4" /></summary>
-                <div className="absolute right-0 z-30 mt-1 w-48 rounded-md border bg-popover p-1 text-xs shadow-md">
-                  <div className="px-2 py-1.5 text-muted-foreground">{emailCopy.selectedCount(selectedThreadIds.length)}</div>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("read")}>{t(($) => $.emails.mark_read)}</button>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("unread")}>{emailCopy.markUnread}</button>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("archive")}>{t(($) => $.emails.archive)}</button>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction("spam")}>{emailCopy.moveToSpam}</button>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => runThreadBulkAction(activeFolder === "trash" ? "restore" : "trash")}>{activeFolder === "trash" ? emailCopy.restore : emailCopy.trash}</button>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={openBulkAssociationDialog}>{emailCopy.associateSelected}</button>
-                  <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-muted disabled:opacity-50" disabled={!selectedThreadIds.length} onClick={() => setSelectedThreadIds([])}>{emailCopy.clearSelection}</button>
-                </div>
-              </details>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {quickFilters.map(([filter, label, count]) => (
@@ -1323,11 +1274,10 @@ export function CRMEmailsPage() {
                 const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
                   <div key={message.id} className={`flex w-full items-start gap-2 border-b px-3 py-3 text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`}>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={(event) => { if (event.ctrlKey || event.metaKey) { toggleThreadSelection(message.thread_id); return; } selectOnlyThread(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyThread(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
                       <div className="flex items-start justify-between gap-2">
                         <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
                         <div className="flex shrink-0 items-center gap-1">
-                          {selectedThreadIdSet.has(message.thread_id) ? <Badge variant="secondary">{emailCopy.select}</Badge> : null}
                           {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
                         </div>
                       </div>
