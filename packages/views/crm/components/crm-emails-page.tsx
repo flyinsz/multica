@@ -541,7 +541,7 @@ export function CRMEmailsPage() {
       const runs = query.state.data?.runs ?? [];
       const cutoff = Date.now() - 2 * 60 * 1000;
       const hasFreshRunning = runs.some((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
-      return hasFreshRunning ? 5000 : 30000;
+      return hasFreshRunning ? 2000 : 15000;
     },
     refetchIntervalInBackground: false,
   });
@@ -667,17 +667,28 @@ export function CRMEmailsPage() {
     });
   }, [activeFolder, mailboxMessages, quickFilter, threadById]);
 
-  const handleAttachmentDownload = async (messageId: string, attachmentIndex: number, fileName: string) => {
+  const saveAttachmentBlob = (blob: Blob, fileName: string, attachmentIndex: number) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName || `attachment-${attachmentIndex + 1}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleAttachmentDownload = async (messageId: string, attachmentIndex: number, fileName: string, attachment?: any) => {
     try {
+      if (attachment?.content && typeof attachment.content === "string") {
+        const binary = atob(attachment.content);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        saveAttachmentBlob(new Blob([bytes], { type: attachment.content_type || "application/octet-stream" }), fileName, attachmentIndex);
+        return;
+      }
       const blob = await api.downloadCRMEmailAttachment(wsId, messageId, attachmentIndex);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName || `attachment-${attachmentIndex + 1}`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      saveAttachmentBlob(blob, fileName, attachmentIndex);
     } catch (error: any) {
       window.alert(error?.message || "Failed to download attachment");
     }
@@ -949,7 +960,7 @@ export function CRMEmailsPage() {
   });
 
   const refreshMailbox = useMutation({
-    mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 500, range_days: importRangeDays }),
+    mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 100, range_days: Math.min(importRangeDays, 7) }),
     onSuccess: async (result) => {
       setMailboxStatus(result.status === "running" ? "同步已开始，正在后台导入…" : emailCopy.imported(result.imported ?? 0, result.skipped ?? 0));
       await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
@@ -963,7 +974,7 @@ export function CRMEmailsPage() {
     const timer = window.setInterval(() => {
       if (refreshMailbox.isPending) return;
       refreshMailbox.mutate();
-    }, 30000);
+    }, 20000);
     return () => window.clearInterval(timer);
   }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
 
@@ -1041,7 +1052,12 @@ export function CRMEmailsPage() {
     enabled: Boolean(selectedThread?.id),
   });
   const displayMessages = useMemo<CRMEmailMessage[]>(() => {
-    if (messages.length > 0) return messages;
+    if (messages.length > 0) {
+      const selectedIndex = selectedMessageId ? messages.findIndex((message) => message.id === selectedMessageId) : -1;
+      const selectedDetailMessage = selectedIndex >= 0 ? messages[selectedIndex] : null;
+      if (!selectedDetailMessage || selectedIndex === 0) return messages;
+      return [selectedDetailMessage, ...messages.slice(0, selectedIndex), ...messages.slice(selectedIndex + 1)];
+    }
     if (!selectedMessage) return [];
     return [{
       id: selectedMessage.id,
@@ -1068,7 +1084,7 @@ export function CRMEmailsPage() {
       created_at: selectedMessage.created_at,
       updated_at: selectedMessage.updated_at,
     }];
-  }, [messages, selectedMessage]);
+  }, [messages, selectedMessage, selectedMessageId]);
   const { data: associationSuggestions = [] } = useQuery({
     queryKey: [...crmKeys.emailThread(wsId, selectedThread?.id ?? ""), "association-suggestions"],
     queryFn: async () => (await api.listCRMEmailThreadAssociationSuggestions(selectedThread?.id ?? "")).suggestions,
@@ -1566,20 +1582,26 @@ export function CRMEmailsPage() {
                 ) : displayMessages.length === 0 ? (
                   <div className="rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">{t(($) => $.emails.no_messages)}</div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     {displayMessages.map((message) => (
-                      <article key={message.id} className="rounded-lg border bg-background p-3 text-sm shadow-xs">
-                        <div className="flex flex-wrap justify-between gap-2">
-                          <div className="font-medium">{message.from_name || message.from_email || t(($) => $.common.not_available)}</div>
-                          <div className="text-xs text-muted-foreground">{messageTime(message.sent_at || message.received_at)}</div>
-                        </div>
-                        <div className="mt-2 grid gap-1.5 text-xs text-muted-foreground sm:grid-cols-2">
+                      <article key={message.id} className={`rounded-xl border bg-background text-sm shadow-xs ${message.id === selectedMessage?.id ? "ring-2 ring-primary/20" : ""}`}>
+                        <div className="border-b p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-base font-semibold">{message.subject || selectedThread?.subject || t(($) => $.common.not_available)}</div>
+                              <div className="mt-1 text-sm text-muted-foreground">{message.from_name || message.from_email || t(($) => $.common.not_available)}</div>
+                            </div>
+                            <div className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{messageTime(message.sent_at || message.received_at)}</div>
+                          </div>
+                          <div className="mt-3 grid gap-2 text-xs text-muted-foreground lg:grid-cols-2">
                           <DetailRow label={emailCopy.from} value={[message.from_name, message.from_email].filter(Boolean).join(" <") + (message.from_name && message.from_email ? ">" : "")} />
                           <DetailRow label={emailCopy.to} value={message.to_emails.join(", ")} />
                           <DetailRow label={emailCopy.cc} value={message.cc_emails.join(", ")} />
-                          <DetailRow label={emailCopy.date} value={messageTime(message.sent_at || message.received_at)} />
+                            <DetailRow label={emailCopy.date} value={messageTime(message.sent_at || message.received_at)} />
+                          </div>
                         </div>
-                        <div className="mt-2 rounded-md border bg-muted/20 p-2.5">
+                        <div className="space-y-3 p-4">
+                        <div className="rounded-md border bg-muted/20 p-3">
                           <div className="mb-1.5 text-xs font-medium text-muted-foreground">{emailCopy.htmlBody}</div>
                           {emailHTMLBodyWithCID(message) ? (
                             <div className="leading-5 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(emailHTMLBodyWithCID(message)) }} />
@@ -1598,7 +1620,7 @@ export function CRMEmailsPage() {
                                 <div key={`${message.id}-attachment-${index}`} className="rounded border bg-background px-3 py-2 text-xs">
                                   <button
                                     type="button"
-                                    onClick={() => void handleAttachmentDownload(message.id, index, attachmentName)}
+                                    onClick={() => void handleAttachmentDownload(message.id, index, attachmentName, attachment)}
                                     className="font-medium text-primary hover:underline"
                                   >{attachmentName}</button>
                                   <div className="mt-1 text-muted-foreground">{[attachment.content_type, attachment.disposition, attachmentSize ? `${attachmentSize} ${emailCopy.bytes}` : ""].filter(Boolean).join(" · ")}</div>
@@ -1619,6 +1641,7 @@ export function CRMEmailsPage() {
                             <DetailRow label={emailCopy.contentDisposition} value={message.raw_headers?.["Content-Disposition"]?.join(", ") ?? message.raw_headers?.["content-disposition"]?.join(", ")} />
                           </div>
                         </details>
+                        </div>
                       </article>
                     ))}
                   </div>

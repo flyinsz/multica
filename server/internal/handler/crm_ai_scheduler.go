@@ -212,17 +212,35 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		limit = 10
 	}
 	rows, err := h.DB.Query(ctx, `
-		SELECT t.id, t.subject, COALESCE(a.name, ''), COALESCE(t.last_message_at, t.updated_at)
+		WITH latest AS (
+			SELECT DISTINCT ON (m.thread_id)
+				m.thread_id, m.id AS message_id, m.direction, m.subject, m.from_email, m.received_at, m.sent_at, m.created_at, m.is_read, m.is_trashed
+			FROM crm_email_message m
+			WHERE m.workspace_id=$1 AND COALESCE(m.is_trashed,false)=false
+			ORDER BY m.thread_id, COALESCE(m.received_at, m.sent_at, m.created_at) DESC
+		)
+		SELECT t.id, COALESCE(latest.subject, t.subject, ''), COALESCE(a.name, ''), COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at)
 		FROM crm_email_thread t
+		JOIN latest ON latest.thread_id=t.id
 		LEFT JOIN crm_account a ON a.id=t.account_id AND a.workspace_id=t.workspace_id
-		WHERE t.workspace_id=$1 AND t.status='open' AND t.direction IN ('inbound','mixed') AND COALESCE(t.is_read,false)=false AND COALESCE(t.is_trashed,false)=false
-		ORDER BY COALESCE(t.last_message_at, t.updated_at) DESC
+		WHERE t.workspace_id=$1
+		  AND COALESCE(t.is_trashed,false)=false
+		  AND COALESCE(latest.is_trashed,false)=false
+		  AND COALESCE(t.status,'open') <> 'archived'
+		  AND latest.direction='inbound'
+		  AND COALESCE(latest.is_read, t.is_read, false)=false
+		  AND NOT EXISTS (
+			SELECT 1 FROM issue i
+			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=t.id AND i.status NOT IN ('done','cancelled')
+		  )
+		ORDER BY COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at) DESC
 		LIMIT $2`, workspaceID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	created := 0
+	candidates := 0
 	for rows.Next() {
 		var threadID pgtype.UUID
 		var subject, accountName string
@@ -230,16 +248,18 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		if err := rows.Scan(&threadID, &subject, &accountName, &lastAt); err != nil {
 			continue
 		}
+		candidates++
 		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
-		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s", accountName, subject, uuidToString(threadID))
-		if _, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(threadID)); err == nil {
+		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新入站时间：%s", accountName, subject, uuidToString(threadID), timestampToString(lastAt))
+		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(threadID))
+		if err == nil && issueID.Valid {
 			created++
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"automation_key": "email_pending_reply", "created": created}, nil
+	return map[string]any{"automation_key": "email_pending_reply", "candidates": candidates, "created": created}, nil
 }
 
 func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int) (map[string]any, error) {
@@ -266,7 +286,8 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		}
 		title := stringsTrimForCRM(fmt.Sprintf("跟进客户：%s", name), 120)
 		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s", name, uuidToString(accountID), timestampToString(due))
-		if _, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID)); err == nil {
+		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID))
+		if err == nil && issueID.Valid {
 			created++
 		}
 	}

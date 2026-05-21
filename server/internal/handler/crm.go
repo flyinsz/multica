@@ -1966,6 +1966,15 @@ func emailDomain(value string) string {
 	return value
 }
 
+func isGenericCRMEmailDomain(domain string) bool {
+	switch strings.ToLower(strings.TrimSpace(domain)) {
+	case "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "icloud.com", "me.com", "qq.com", "163.com", "126.com", "yahoo.com", "proton.me", "protonmail.com":
+		return true
+	default:
+		return false
+	}
+}
+
 func addSuggestionReason(reasons []string, reason string) []string {
 	for _, existing := range reasons {
 		if existing == reason {
@@ -2803,12 +2812,32 @@ func (h *Handler) matchCRMEmailContact(ctx context.Context, workspaceID pgtype.U
 		return accountID, contactID, nil
 	}
 	if err := h.DB.QueryRow(ctx, `SELECT account_id, id FROM crm_contact WHERE workspace_id=$1 AND lower(email)=$2 ORDER BY is_primary DESC, updated_at DESC LIMIT 1`, workspaceID, email).Scan(&accountID, &contactID); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return pgtype.UUID{}, pgtype.UUID{}, err
+		}
+	} else {
+		return accountID, contactID, nil
+	}
+	domain := emailDomain(email)
+	if domain == "" || isGenericCRMEmailDomain(domain) {
+		return pgtype.UUID{}, pgtype.UUID{}, nil
+	}
+	if err := h.DB.QueryRow(ctx, `
+		SELECT a.id
+		FROM crm_account a
+		WHERE a.workspace_id=$1
+		  AND (
+			lower(regexp_replace(COALESCE(a.website,''), '^https?://(www\.)?', '')) LIKE $2
+			OR EXISTS (SELECT 1 FROM crm_contact c WHERE c.workspace_id=a.workspace_id AND c.account_id=a.id AND lower(split_part(c.email,'@',2))=$3)
+		  )
+		ORDER BY a.updated_at DESC
+		LIMIT 1`, workspaceID, "%"+domain+"%", domain).Scan(&accountID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.UUID{}, nil
 		}
 		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return accountID, contactID, nil
+	return accountID, pgtype.UUID{}, nil
 }
 
 func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, folder string, messages []crmIMAPFetchedMessage) (int, int, error) {
