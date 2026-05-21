@@ -843,12 +843,21 @@ export function CRMEmailsPage() {
 
   const trashThread = useMutation({
     mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(threadId),
-    onSuccess: async () => {
-      setMailboxStatus(emailCopy.movedToTrash);
-      setSelectedThreadIds([]);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+    onMutate: async ({ threadId }) => {
+      await queryClient.cancelQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      patchCachedThread(threadId, { is_trashed: true, status: "open" });
     },
-    onError: (error) => setMailboxStatus(emailCopy.trashFailed(mutationErrorMessage(error, emailCopy.unknownError))),
+    onSuccess: async (_result, { threadId }) => {
+      setMailboxStatus(emailCopy.movedToTrash);
+      patchCachedThread(threadId, { is_trashed: true, status: "open" });
+      setActiveFolder("trash");
+      setSelectedThreadIds([threadId]);
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+    },
+    onError: async (error) => {
+      setMailboxStatus(emailCopy.trashFailed(mutationErrorMessage(error, emailCopy.unknownError)));
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+    },
   });
 
   const restoreThread = useMutation({
@@ -874,14 +883,25 @@ export function CRMEmailsPage() {
 
   const moveThread = useMutation({
     mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(threadId, folder),
+    onMutate: async ({ threadId, folder }) => {
+      await queryClient.cancelQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      patchCachedThread(threadId, {
+        status: folder === "archived" ? "archived" : "open",
+        is_trashed: folder === "trash",
+        ...(folder === "starred" ? { is_starred: true } : {}),
+      });
+    },
     onSuccess: async (thread, variables) => {
       setMailboxStatus(emailCopy.movedTo(folderLabelMap[variables.folder] ?? variables.folder));
       updateCachedThread(thread);
       setActiveFolder(variables.folder as typeof activeFolder);
       setSelectedThreadIds([thread.id]);
-      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId) });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
     },
-    onError: (error) => setMailboxStatus(emailCopy.moveFailed(mutationErrorMessage(error, emailCopy.unknownError))),
+    onError: async (error) => {
+      setMailboxStatus(emailCopy.moveFailed(mutationErrorMessage(error, emailCopy.unknownError)));
+      await queryClient.invalidateQueries({ queryKey: crmKeys.emailThreads(wsId), refetchType: "active" });
+    },
   });
 
   const refreshMailbox = useMutation({
@@ -921,13 +941,24 @@ export function CRMEmailsPage() {
     },
   });
 
-  const selectedThread = useMemo<CRMEmailThread | null>(() => {
+  const selectedMessage = useMemo<CRMEmailListItem | null>(() => {
     if (activeFolder === "drafts") return null;
     const primaryThreadId = selectedThreadIds[0] ?? "";
-    const selectedMessage = filteredMessages.find((message) => message.thread_id === primaryThreadId) ?? filteredMessages[0] ?? null;
+    return filteredMessages.find((message) => message.thread_id === primaryThreadId) ?? filteredMessages[0] ?? null;
+  }, [activeFolder, filteredMessages, selectedThreadIds]);
+
+  const selectedThread = useMemo<CRMEmailThread | null>(() => {
     if (!selectedMessage) return null;
-    return threadById.get(selectedMessage.thread_id) ?? null;
-  }, [activeFolder, filteredMessages, selectedThreadIds, threadById]);
+    const thread = threadById.get(selectedMessage.thread_id);
+    if (!thread) return null;
+    return {
+      ...thread,
+      is_read: selectedMessage.is_read,
+      is_starred: selectedMessage.is_starred ?? thread.is_starred,
+      is_trashed: selectedMessage.is_trashed ?? thread.is_trashed,
+      status: selectedMessage.status || thread.status,
+    };
+  }, [selectedMessage, threadById]);
   const linkedAccountId = selectedThread?.account_id ?? "";
   const { data: contacts = [] } = useQuery({
     ...crmContactListOptions(wsId, linkedAccountId),
