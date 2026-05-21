@@ -490,6 +490,7 @@ export function CRMEmailsPage() {
   const [selectedPreviewUIDs, setSelectedPreviewUIDs] = useState<string[]>([]);
   const [importRangeDays, setImportRangeDays] = useState(30);
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
@@ -513,11 +514,11 @@ export function CRMEmailsPage() {
   const emailListQuery = useQuery({
     ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, ""),
     enabled: Boolean(wsId),
-    refetchInterval: false,
+    refetchInterval: activeFolder === "drafts" ? false : 30000,
     refetchIntervalInBackground: false,
-    staleTime: 60000,
+    staleTime: 10000,
     placeholderData: keepPreviousData,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
   const emailListData = emailListQuery.data;
   const threads = emailListData?.threads ?? [];
@@ -567,12 +568,14 @@ export function CRMEmailsPage() {
 
   const openDraftPreview = (draft: any) => {
     setSelectedThreadIds([]);
+    setSelectedMessageId(null);
     setSelectedDraftId(draft.id ?? null);
     setComposeDraft(null);
   };
 
   const openDraftInComposer = (draft: any) => {
     setSelectedThreadIds([]);
+    setSelectedMessageId(null);
     setSelectedDraftId(draft.id ?? null);
     setComposeDraft(draftToCompose(draft));
   };
@@ -904,6 +907,7 @@ export function CRMEmailsPage() {
       setMailboxStatus(emailCopy.restored);
       setActiveFolder("inbox");
       setSelectedThreadIds([]);
+      setSelectedMessageId(null);
       await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
     },
     onError: (error) => setMailboxStatus(emailCopy.restoreFailed(mutationErrorMessage(error, emailCopy.unknownError))),
@@ -914,6 +918,7 @@ export function CRMEmailsPage() {
     onSuccess: async () => {
       setMailboxStatus(emailCopy.deletedForever);
       setSelectedThreadIds([]);
+      setSelectedMessageId(null);
       await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
     },
     onError: (error) => setMailboxStatus(emailCopy.deleteFailed(mutationErrorMessage(error, emailCopy.unknownError))),
@@ -952,6 +957,15 @@ export function CRMEmailsPage() {
     onError: (error) => setMailboxStatus(error instanceof Error ? error.message : "Sync failed"),
   });
 
+  useEffect(() => {
+    if (!wsId || activeFolder === "drafts" || !selectedMailbox?.id) return;
+    const timer = window.setInterval(() => {
+      if (refreshMailbox.isPending) return;
+      refreshMailbox.mutate();
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
+
   const saveEmailDraft = useMutation({
     mutationFn: async () => {
       if (!composeDraft) throw new Error(emailCopy.noDraft);
@@ -981,9 +995,11 @@ export function CRMEmailsPage() {
 
   const selectedMessage = useMemo<CRMEmailListItem | null>(() => {
     if (activeFolder === "drafts") return null;
-    const primaryThreadId = selectedThreadIds[0] ?? "";
-    return filteredMessages.find((message) => message.thread_id === primaryThreadId) ?? filteredMessages[0] ?? null;
-  }, [activeFolder, filteredMessages, selectedThreadIds]);
+    return filteredMessages.find((message) => message.id === selectedMessageId)
+      ?? filteredMessages.find((message) => message.thread_id === (selectedThreadIds[0] ?? ""))
+      ?? filteredMessages[0]
+      ?? null;
+  }, [activeFolder, filteredMessages, selectedMessageId, selectedThreadIds]);
 
   const selectedThread = useMemo<CRMEmailThread | null>(() => {
     if (!selectedMessage) return null;
@@ -1194,9 +1210,10 @@ export function CRMEmailsPage() {
 
   const draftContacts = associationDraft?.accountId ? draftAccountContacts : [];
 
-  const selectOnlyThread = (threadId: string) => {
+  const selectOnlyMessage = (message: CRMEmailListItem) => {
     setSelectedDraftId(null);
-    setSelectedThreadIds([threadId]);
+    setSelectedMessageId(message.id);
+    setSelectedThreadIds([message.thread_id]);
   };
 
   return (
@@ -1265,6 +1282,7 @@ export function CRMEmailsPage() {
                   setSearch("");
                   setQuickFilter("all");
                   setSelectedThreadIds([]);
+                  setSelectedMessageId(null);
                   setSelectedDraftId(null);
                   setComposeDraft(null);
                 }}
@@ -1338,12 +1356,12 @@ export function CRMEmailsPage() {
             <section className="min-h-0 flex-1 overflow-y-auto">
               {filteredMessages.map((message) => {
                 const thread = threadById.get(message.thread_id);
-                const active = selectedThread?.id === message.thread_id;
+                const active = selectedMessage?.id === message.id;
                 const isUnread = message.is_read !== true;
                 const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
                   <div key={message.id} className={`flex w-full items-start gap-2 border-b px-3 py-3 text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`}>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyThread(message.thread_id); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyMessage(message); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
                       <div className="flex items-start justify-between gap-2">
                         <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
                         <div className="flex shrink-0 items-center gap-1">
