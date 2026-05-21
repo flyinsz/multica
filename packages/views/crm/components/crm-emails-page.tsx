@@ -9,7 +9,7 @@ import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
 import { useModalStore } from "@multica/core/modals";
 import { crmAccountListOptions, crmContactListOptions, crmEmailMessageListOptions, crmEmailThreadListOptions, crmKeys } from "@multica/core/crm/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { CRMAccount, CRMContact, CRMEmailListCounts, CRMEmailListItem, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPPreviewMessage, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
+import type { CRMAccount, CRMContact, CRMEmailListCounts, CRMEmailListItem, CRMEmailMessage, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPPreviewMessage, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { normalizeLocale } from "../geo";
@@ -514,9 +514,9 @@ export function CRMEmailsPage() {
   const emailListQuery = useQuery({
     ...crmEmailThreadListOptions(wsId, "", activeFolder === "drafts" ? "inbox" : activeFolder, quickFilter, ""),
     enabled: Boolean(wsId),
-    refetchInterval: activeFolder === "drafts" ? false : 30000,
+    refetchInterval: activeFolder === "drafts" ? false : 15000,
     refetchIntervalInBackground: false,
-    staleTime: 10000,
+    staleTime: 5000,
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: true,
   });
@@ -963,7 +963,7 @@ export function CRMEmailsPage() {
     const timer = window.setInterval(() => {
       if (refreshMailbox.isPending) return;
       refreshMailbox.mutate();
-    }, 60000);
+    }, 30000);
     return () => window.clearInterval(timer);
   }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
 
@@ -1040,6 +1040,35 @@ export function CRMEmailsPage() {
     ...crmEmailMessageListOptions(wsId, selectedThread?.id ?? ""),
     enabled: Boolean(selectedThread?.id),
   });
+  const displayMessages = useMemo<CRMEmailMessage[]>(() => {
+    if (messages.length > 0) return messages;
+    if (!selectedMessage) return [];
+    return [{
+      id: selectedMessage.id,
+      workspace_id: selectedMessage.workspace_id,
+      thread_id: selectedMessage.thread_id,
+      from_name: selectedMessage.from_name ?? "",
+      from_email: selectedMessage.from_email ?? "",
+      to_emails: selectedMessage.to_emails ?? [],
+      cc_emails: [],
+      bcc_emails: [],
+      subject: selectedMessage.subject ?? "",
+      sent_at: selectedMessage.sent_at ?? null,
+      received_at: selectedMessage.received_at ?? null,
+      body_text: selectedMessage.snippet ?? "",
+      body_html: "",
+      snippet: selectedMessage.snippet ?? "",
+      attachments: selectedMessage.attachments ?? [],
+      external_message_id: "",
+      in_reply_to: "",
+      reference_ids: [],
+      raw_size_bytes: 0,
+      raw_headers: {},
+      direction: selectedMessage.direction,
+      created_at: selectedMessage.created_at,
+      updated_at: selectedMessage.updated_at,
+    }];
+  }, [messages, selectedMessage]);
   const { data: associationSuggestions = [] } = useQuery({
     queryKey: [...crmKeys.emailThread(wsId, selectedThread?.id ?? ""), "association-suggestions"],
     queryFn: async () => (await api.listCRMEmailThreadAssociationSuggestions(selectedThread?.id ?? "")).suggestions,
@@ -1534,11 +1563,11 @@ export function CRMEmailsPage() {
                     <Skeleton className="h-24 w-full" />
                     <Skeleton className="h-24 w-full" />
                   </div>
-                ) : messages.length === 0 ? (
+                ) : displayMessages.length === 0 ? (
                   <div className="rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">{t(($) => $.emails.no_messages)}</div>
                 ) : (
                   <div className="space-y-2">
-                    {messages.map((message) => (
+                    {displayMessages.map((message) => (
                       <article key={message.id} className="rounded-lg border bg-background p-3 text-sm shadow-xs">
                         <div className="flex flex-wrap justify-between gap-2">
                           <div className="font-medium">{message.from_name || message.from_email || t(($) => $.common.not_available)}</div>

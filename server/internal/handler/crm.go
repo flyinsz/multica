@@ -2331,6 +2331,14 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 		return
 	}
 	thread.IssueIDs = issueIDs
+	if _, err := h.DB.Exec(r.Context(), `
+		UPDATE crm_email_message
+		SET account_id = $3, contact_id = $4, updated_at = now()
+		WHERE thread_id = $1 AND workspace_id = $2
+	`, threadID, workspaceID, accountID, contactID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update CRM email message association")
+		return
+	}
 	if _, err := h.DB.Exec(r.Context(), `DELETE FROM crm_email_thread_issue_link WHERE thread_id = $1`, threadID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email issue links")
 		return
