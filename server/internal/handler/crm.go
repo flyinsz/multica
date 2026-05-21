@@ -475,6 +475,7 @@ type UpdateCRMEmailThreadStateRequest struct {
 	Status    *string `json:"status"`
 	IsRead    *bool   `json:"is_read"`
 	IsStarred *bool   `json:"is_starred"`
+	MessageID *string `json:"message_id"`
 }
 
 type CRMEmailThreadAssociationSuggestion struct {
@@ -2177,11 +2178,47 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid email thread status")
 		return
 	}
+	var messageID pgtype.UUID
+	if req.MessageID != nil && strings.TrimSpace(*req.MessageID) != "" {
+		parsedMessageID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.MessageID), "message id")
+		if !ok {
+			return
+		}
+		messageID = parsedMessageID
+		cmd, err := h.DB.Exec(r.Context(), `
+			UPDATE crm_email_message
+			SET is_read = COALESCE($4, is_read),
+			    is_starred = COALESCE($5, is_starred),
+			    folder = CASE WHEN $6='archived' THEN 'Archive' WHEN $6='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
+			    is_trashed = CASE WHEN $6='open' THEN false ELSE is_trashed END,
+			    updated_at = now()
+			WHERE id = $1 AND thread_id = $2 AND workspace_id = $3
+		`, messageID, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update CRM email message")
+			return
+		}
+		if cmd.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "CRM email message not found")
+			return
+		}
+	} else {
+		_, _ = h.DB.Exec(r.Context(), `
+			UPDATE crm_email_message
+			SET is_read = COALESCE($3, is_read),
+			    is_starred = COALESCE($4, is_starred),
+			    folder = CASE WHEN $5='archived' THEN 'Archive' WHEN $5='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
+			    is_trashed = CASE WHEN $5='open' THEN false ELSE is_trashed END,
+			    updated_at = now()
+			WHERE thread_id = $1 AND workspace_id = $2
+		`, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
+	}
+
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
 		UPDATE crm_email_thread
 		SET status = COALESCE($3, status),
-		    is_read = COALESCE($4, is_read),
-		    is_starred = COALESCE($5, is_starred),
+		    is_read = COALESCE((SELECT bool_and(m.is_read) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read),
+		    is_starred = COALESCE($4, is_starred),
 		    updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject,
@@ -2189,7 +2226,7 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		          (SELECT COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC LIMIT 1) AS last_snippet,
 		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed
-	`, threadID, workspaceID, req.Status, req.IsRead, req.IsStarred))
+	`, threadID, workspaceID, req.Status, req.IsStarred))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "CRM email thread not found")
@@ -2198,15 +2235,6 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email thread")
 		return
 	}
-	_, _ = h.DB.Exec(r.Context(), `
-		UPDATE crm_email_message
-		SET is_read = COALESCE($3, is_read),
-		    is_starred = COALESCE($4, is_starred),
-		    folder = CASE WHEN $5='archived' THEN 'Archive' WHEN $5='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
-		    is_trashed = CASE WHEN $5='open' THEN false ELSE is_trashed END,
-		    updated_at = now()
-		WHERE thread_id = $1 AND workspace_id = $2
-	`, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
 	h.trySyncCRMEmailThreadFlags(r.Context(), workspaceID, threadID, req.IsRead, req.IsStarred)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))

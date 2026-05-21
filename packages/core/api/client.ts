@@ -1402,7 +1402,7 @@ export class ApiClient {
     });
   }
 
-  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean }): Promise<CRMEmailThread> {
+  async updateCRMEmailThreadState(threadId: string, data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean; message_id?: string | null }): Promise<CRMEmailThread> {
     return this.fetch(`/api/crm/email-threads/${threadId}/state`, {
       method: "PATCH",
       body: JSON.stringify(data),

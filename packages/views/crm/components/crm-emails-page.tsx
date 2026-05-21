@@ -839,23 +839,23 @@ export function CRMEmailsPage() {
     queryClient.setQueriesData<any>({ queryKey: emailThreadRootKey }, (current: any) => {
       if (Array.isArray(current)) return current.map((item) => item.id === thread.id ? { ...item, ...thread } : item);
       if (Array.isArray(current?.threads)) {
-        const patchedMessages = Array.isArray(current.messages)
-          ? current.messages.map((item: CRMEmailListItem) => item.thread_id === thread.id ? { ...item, ...thread } : item)
-          : current.messages;
-        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === thread.id ? { ...item, ...thread } : item), messages: patchedMessages };
+        return { ...current, threads: current.threads.map((item: CRMEmailThread) => item.id === thread.id ? { ...item, ...thread } : item) };
       }
       return current;
     });
     queryClient.setQueryData(crmKeys.emailThread(wsId, thread.id), thread);
   };
 
-  const patchCachedThread = (threadId: string, patch: Partial<CRMEmailThread>) => {
+  const patchCachedThread = (threadId: string, patch: Partial<CRMEmailThread>, messageId?: string | null) => {
     queryClient.setQueriesData<any>({ queryKey: emailThreadRootKey }, (current: any) => {
       if (Array.isArray(current)) return current.map((item) => item.id === threadId ? { ...item, ...patch } : item);
       if (Array.isArray(current?.threads)) {
         const patchedThreads = current.threads.map((item: CRMEmailThread) => item.id === threadId ? { ...item, ...patch } : item);
         const patchedMessages = Array.isArray(current.messages)
-          ? current.messages.map((item: CRMEmailListItem) => item.thread_id === threadId ? { ...item, ...patch } : item)
+          ? current.messages.map((item: CRMEmailListItem) => {
+            const shouldPatchMessage = messageId ? item.id === messageId : item.thread_id === threadId;
+            return shouldPatchMessage ? { ...item, ...patch } : item;
+          })
           : current.messages;
         return { ...current, threads: patchedThreads, messages: patchedMessages };
       }
@@ -867,10 +867,11 @@ export function CRMEmailsPage() {
   };
 
   const updateThreadState = useMutation({
-    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean } }) => api.updateCRMEmailThreadState(threadId, data),
+    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean; message_id?: string | null } }) => api.updateCRMEmailThreadState(threadId, data),
     onMutate: async ({ threadId, data }) => {
       await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
-      patchCachedThread(threadId, data);
+      const { message_id: messageId, ...threadPatch } = data;
+      patchCachedThread(threadId, threadPatch, messageId);
     },
     onSuccess: async (thread) => {
       updateCachedThread(thread);
@@ -1361,7 +1362,7 @@ export function CRMEmailsPage() {
                 const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
                   <div key={message.id} className={`flex w-full items-start gap-2 border-b px-3 py-3 text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`}>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyMessage(message); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true } }); }}>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyMessage(message); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true, message_id: message.id } }); }}>
                       <div className="flex items-start justify-between gap-2">
                         <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
                         <div className="flex shrink-0 items-center gap-1">
@@ -1466,7 +1467,7 @@ export function CRMEmailsPage() {
                   </Button>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2">
-                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: selectedThread.is_read !== true } })}>{selectedThread.is_read === true ? <Mail className="mr-1 size-3" /> : <MailOpen className="mr-1 size-3" />}{selectedThread.is_read === true ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
+                  <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_read: selectedThread.is_read !== true, message_id: selectedMessage?.id ?? null } })}>{selectedThread.is_read === true ? <Mail className="mr-1 size-3" /> : <MailOpen className="mr-1 size-3" />}{selectedThread.is_read === true ? "标记未读" : t(($) => $.emails.mark_read)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { status: selectedThread.status === "archived" ? "open" : "archived" } })}><Archive className="mr-1 size-3" />{selectedThread.status === "archived" ? emailCopy.unarchive : t(($) => $.emails.archive)}</Button>
                   <Button variant="outline" size="sm" disabled={updateThreadState.isPending} onClick={() => updateThreadState.mutate({ threadId: selectedThread.id, data: { is_starred: !selectedThread.is_starred } })}><Star className="mr-1 size-3" />{selectedThread.is_starred ? emailCopy.unstar : t(($) => $.emails.star)}</Button>
                   <Button variant="outline" size="sm" disabled={!mailboxes.length} onClick={() => openComposeDraft("reply")}><Send className="mr-1 size-3" />{emailCopy.reply}</Button>
