@@ -3980,7 +3980,7 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 	}
 	var attachmentJSON []byte
 	if err := h.DB.QueryRow(r.Context(),
-		`SELECT attachments -> $3 FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
+		`SELECT attachments -> ($3::int) FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
 		messageID, workspaceID, index).Scan(&attachmentJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "CRM email message not found")
