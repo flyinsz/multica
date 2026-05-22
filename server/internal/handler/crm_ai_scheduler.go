@@ -106,6 +106,13 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 
 	h := &Handler{DB: s.db}
 	result := map[string]any{"automation_key": item.AutomationKey, "checked_at": time.Now().UTC().Format(time.RFC3339)}
+	approvedSent, notifiedSent := h.runCRMApprovedDraftStateAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun)
+	if approvedSent > 0 {
+		result["approved_done_drafts_sent"] = approvedSent
+	}
+	if notifiedSent > 0 {
+		result["sent_draft_done_notifications"] = notifiedSent
+	}
 	var err error
 	switch item.AutomationKey {
 	case "email_pending_reply":
@@ -385,6 +392,80 @@ func (h *Handler) addCRMInternalIssueComment(ctx context.Context, workspaceID, i
 	}
 	_, err = h.DB.Exec(ctx, `INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type) VALUES ($1,$2,$3,$4,$5,'system')`, issueID, workspaceID, authorType, authorID, content)
 	return err
+}
+
+func (h *Handler) runCRMApprovedDraftStateAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int) (int, int) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := h.DB.Query(ctx, `
+		SELECT d.issue_id
+		FROM crm_email_draft d
+		JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id
+		WHERE d.workspace_id=$1
+		  AND d.issue_id IS NOT NULL
+		  AND d.status IN ('pending_approval','draft','failed')
+		  AND d.sent_at IS NULL
+		  AND i.status='done'
+		ORDER BY d.updated_at ASC
+		LIMIT $2`, workspaceID, limit)
+	if err != nil {
+		slog.Warn("CRM approved draft query failed", "workspace_id", uuidToString(workspaceID), "error", err)
+		return 0, 0
+	}
+	defer rows.Close()
+	approvedSent := 0
+	for rows.Next() {
+		var issueID pgtype.UUID
+		if err := rows.Scan(&issueID); err != nil || !issueID.Valid {
+			continue
+		}
+		if _, err := h.sendFirstPendingCRMEmailDraftForIssue(ctx, workspaceID, issueID); err != nil {
+			_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "Issue 已标记为 done，但自动发送绑定草稿失败："+err.Error())
+			continue
+		}
+		approvedSent++
+	}
+
+	notifiedSent := h.commentManuallySentDraftsNeedingDone(ctx, workspaceID, limit)
+	return approvedSent, notifiedSent
+}
+
+func (h *Handler) commentManuallySentDraftsNeedingDone(ctx context.Context, workspaceID pgtype.UUID, limit int) int {
+	rows, err := h.DB.Query(ctx, `
+		SELECT d.id, d.issue_id
+		FROM crm_email_draft d
+		JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id
+		WHERE d.workspace_id=$1
+		  AND d.issue_id IS NOT NULL
+		  AND d.status='sent'
+		  AND d.sent_at IS NOT NULL
+		  AND i.status <> 'done'
+		  AND NOT EXISTS (
+			SELECT 1 FROM comment c
+			WHERE c.issue_id=d.issue_id
+			  AND c.workspace_id=d.workspace_id
+			  AND c.content LIKE '%' || d.id::text || '%'
+			  AND c.content LIKE '%请负责人%done%'
+		  )
+		ORDER BY d.sent_at ASC
+		LIMIT $2`, workspaceID, limit)
+	if err != nil {
+		slog.Warn("CRM manually sent draft notification query failed", "workspace_id", uuidToString(workspaceID), "error", err)
+		return 0
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var draftID, issueID pgtype.UUID
+		if err := rows.Scan(&draftID, &issueID); err != nil || !draftID.Valid || !issueID.Valid {
+			continue
+		}
+		if err := h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("绑定邮件草稿已手动修改并发送。\n\n草稿 ID：%s\n\n请负责人确认客户跟进已完成后，将此 Issue 状态改为 done。", uuidToString(draftID))); err == nil {
+			count++
+		}
+	}
+	return count
 }
 
 func (h *Handler) markCRMEmailDraftIssueSent(ctx context.Context, workspaceID, issueID, draftID pgtype.UUID, note string) error {

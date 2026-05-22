@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -288,10 +287,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		"issue_status":        issue.Status,
 	})
 
-	if authorType == "member" && isCRMEmailDraftApprovalComment(comment.Content) {
-		go h.handleCRMEmailDraftApprovalComment(context.Background(), issue.WorkspaceID, issue.ID)
-	}
-
 	// If the issue is assigned to an agent with on_comment trigger, enqueue a new task.
 	// Skip when the comment comes from the assigned agent itself to avoid loops.
 	// Also skip when the comment @mentions others but not the assignee agent —
@@ -316,35 +311,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	h.enqueueMentionedAgentTasks(r.Context(), issue, comment, parentComment, authorType, authorID)
 
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func isCRMEmailDraftApprovalComment(content string) bool {
-	text := strings.ToLower(strings.TrimSpace(content))
-	if text == "" {
-		return false
-	}
-	positive := []string{"确认通过", "审核通过", "批准发送", "同意发送", "可以发送", "approve", "approved", "send draft"}
-	for _, token := range positive {
-		if strings.Contains(text, token) {
-			negative := []string{"不要发送", "别发送", "不发送", "拒绝", "驳回", "not approve", "do not send", "don't send"}
-			for _, bad := range negative {
-				if strings.Contains(text, bad) {
-					return false
-				}
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func (h *Handler) handleCRMEmailDraftApprovalComment(ctx context.Context, workspaceID, issueID pgtype.UUID) {
-	draftID, err := h.sendFirstPendingCRMEmailDraftForIssue(ctx, workspaceID, issueID)
-	if err != nil {
-		_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "检测到审核通过评论，但自动发送绑定草稿失败："+err.Error())
-		return
-	}
-	slog.Info("CRM email draft sent from issue approval comment", "issue_id", uuidToString(issueID), "draft_id", uuidToString(draftID))
 }
 
 // commentMentionsOthersButNotAssignee returns true if the comment @mentions

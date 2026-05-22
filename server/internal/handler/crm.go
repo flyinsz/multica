@@ -3161,7 +3161,7 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
 	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
 	if issueID.Valid {
-		_ = h.markCRMEmailDraftIssueSent(r.Context(), workspaceID, issueID, draftID, "邮件草稿已人工编辑并发送。系统已按现有 Multica 状态复用规则将 Issue 标记为 done。")
+		_ = h.addCRMInternalIssueComment(r.Context(), workspaceID, issueID, "绑定邮件草稿已手动修改并发送。\n\n草稿 ID："+uuidToString(draftID)+"\n\n请负责人确认客户跟进已完成后，将此 Issue 状态改为 done。")
 	}
 	if accountID.Valid && shouldAutoRefreshCRMAccountProfile(r.Context(), h.DB, workspaceID) {
 		if _, err := h.regenerateCRMAccountProfile(r.Context(), workspaceID, accountID); err != nil {
