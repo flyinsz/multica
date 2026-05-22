@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -227,7 +228,14 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 			WHERE m.workspace_id=$1 AND COALESCE(m.is_trashed,false)=false
 			ORDER BY m.thread_id, COALESCE(m.received_at, m.sent_at, m.created_at) DESC
 		)
-		SELECT t.id, COALESCE(latest.subject, t.subject, ''), COALESCE(a.name, ''), COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at)
+		SELECT t.id,
+		       COALESCE(latest.message_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		       t.account_id,
+		       t.contact_id,
+		       COALESCE(a.name, ''),
+		       a.owner_member_id,
+		       COALESCE(latest.subject, t.subject, ''),
+		       COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at)
 		FROM crm_email_thread t
 		JOIN latest ON latest.thread_id=t.id
 		LEFT JOIN crm_account a ON a.id=t.account_id AND a.workspace_id=t.workspace_id
@@ -251,23 +259,35 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	created := 0
 	candidates := 0
 	for rows.Next() {
-		var threadID pgtype.UUID
+		var threadID, messageID, accountID, contactID, ownerMemberID pgtype.UUID
 		var subject, accountName string
 		var lastAt pgtype.Timestamptz
-		if err := rows.Scan(&threadID, &subject, &accountName, &lastAt); err != nil {
+		if err := rows.Scan(&threadID, &messageID, &accountID, &contactID, &accountName, &ownerMemberID, &subject, &lastAt); err != nil {
 			continue
 		}
 		candidates++
 		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
-		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新入站时间：%s", accountName, subject, uuidToString(threadID), timestampToString(lastAt))
-		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(threadID))
+		messageLink := h.crmAppURL("/crm/emails?message=" + uuidToString(messageID) + "&thread=" + uuidToString(threadID))
+		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n原邮件：%s\n最新入站时间：%s", accountName, subject, uuidToString(threadID), messageLink, timestampToString(lastAt))
+		assigneeType := ""
+		assigneeID := pgtype.UUID{}
+		if ownerMemberID.Valid {
+			assigneeType = "member"
+			assigneeID = ownerMemberID
+		}
+		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(threadID), assigneeType, assigneeID)
 		if err != nil {
 			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
 			continue
 		}
 		if issueID.Valid {
 			created++
-			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, issueID, threadID, subject, accountName); err != nil {
+			if accountID.Valid || contactID.Valid {
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET issue_id=$3, account_id=COALESCE(account_id,$4), contact_id=COALESCE(contact_id,$5), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, issueID, accountID, contactID)
+			} else {
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET issue_id=$3, updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, issueID)
+			}
+			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, issueID, threadID, messageID, subject, accountName); err != nil {
 				slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(threadID), "error", err)
 				_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "待回复邮件 Issue 已创建，但自动生成回复草稿失败："+err.Error())
 			}
@@ -303,7 +323,15 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		}
 		title := stringsTrimForCRM(fmt.Sprintf("跟进客户：%s", name), 120)
 		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s", name, uuidToString(accountID), timestampToString(due))
-		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID))
+		assigneeType := ""
+		assigneeID := pgtype.UUID{}
+		var ownerMemberID pgtype.UUID
+		_ = h.DB.QueryRow(ctx, `SELECT owner_member_id FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
+		if ownerMemberID.Valid {
+			assigneeType = "member"
+			assigneeID = ownerMemberID
+		}
+		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), assigneeType, assigneeID)
 		if err == nil && issueID.Valid {
 			created++
 			_ = h.createCRMAIFollowupDraft(ctx, workspaceID, issueID, accountID, name, timestampToString(due))
@@ -323,7 +351,7 @@ func stringsTrimForCRM(value string, limit int) string {
 	return string(r[:limit])
 }
 
-func (h *Handler) createCRMAIPendingReplyDraft(ctx context.Context, workspaceID, issueID, threadID pgtype.UUID, subject, accountName string) error {
+func (h *Handler) createCRMAIPendingReplyDraft(ctx context.Context, workspaceID, issueID, threadID, messageID pgtype.UUID, subject, accountName string) error {
 	var mailboxID, accountID, contactID pgtype.UUID
 	var fromEmail, bodyText, bodyHTML, inReplyTo string
 	var refs []string
@@ -336,13 +364,15 @@ func (h *Handler) createCRMAIPendingReplyDraft(ctx context.Context, workspaceID,
 		ORDER BY COALESCE(m.received_at, m.created_at) DESC LIMIT 1`, workspaceID, threadID).Scan(&mailboxID, &accountID, &contactID, &fromEmail, &bodyText, &bodyHTML, &inReplyTo, &refs); err != nil {
 		return err
 	}
-	reason := fmt.Sprintf("草稿思路：这是待回复邮件巡检生成的回复草稿。依据最新入站邮件、线程主题和客户上下文生成，目标是先确认已收到并推进下一步。客户：%s。风险：AI 草稿需人工审核事实、价格、交期和附件后再发送。", accountName)
+	reason := fmt.Sprintf("草稿思路：依据最新入站邮件内容、当前邮件线程、已绑定客户资料和历史往来生成。客户：%s。回复策略：先确认已收到客户问题，再承诺核对细节并推进下一步；如果客户历史资料里显示更重视品质、交期、价格或售后，负责人审核时应把对应承诺补强。风险：AI 草稿需人工核对事实、订单历史、价格、交期、品质承诺和附件后再发送。", accountName)
 	draftBody := fmt.Sprintf("您好，\n\n感谢您的来信。我们已收到关于“%s”的信息，会尽快确认细节并回复您。\n\nBest regards", subject)
 	var draftID pgtype.UUID
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, subject, body_text, body_html, in_reply_to, reference_ids, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_approval',true,$13) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, issueID, []string{fromEmail}, "Re: "+subject, draftBody, cleanOptionalText(&bodyHTML), cleanOptionalText(&inReplyTo), refs, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err
 	}
-	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核邮件草稿。\n\n草稿链接：/crm/emails?draft=%s\n\n%s\n\n原邮件摘要：%s", uuidToString(draftID), reason, stringsTrimForCRM(bodyText, 600)))
+	draftURL := h.crmAppURL("/crm/emails?draft=" + uuidToString(draftID))
+	messageURL := h.crmAppURL("/crm/emails?message=" + uuidToString(messageID) + "&thread=" + uuidToString(threadID))
+	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核邮件草稿。\n\n草稿链接：[%s](%s)\n\n原邮件链接：[%s](%s)\n\n%s\n\n原邮件摘要：%s", draftURL, draftURL, messageURL, messageURL, reason, stringsTrimForCRM(bodyText, 600)))
 }
 
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {
@@ -360,10 +390,11 @@ func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, iss
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, account_id, contact_id, issue_id, to_emails, subject, body_text, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending_approval',true,$9) RETURNING id`, workspaceID, mailboxID, accountID, contactID, issueID, []string{email}, "Follow up: "+accountName, body, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err
 	}
-	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿链接：/crm/emails?draft=%s\n\n%s", uuidToString(draftID), reason))
+	draftURL := h.crmAppURL("/crm/emails?draft=" + uuidToString(draftID))
+	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
 }
 
-func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype.UUID, title, body, originID string) (pgtype.UUID, error) {
+func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype.UUID, title, body, originID string, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
 	originUUID, err := parseUUIDStringToPgtype(originID)
 	if err != nil {
@@ -374,12 +405,12 @@ func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype
 		return issueID, err
 	}
 	err = h.DB.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, description, status, priority, creator_type, creator_id, origin_type, origin_id, number)
-		SELECT $1, $2, $3, 'in_review', 'medium', $5, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
+		INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, origin_type, origin_id, number)
+		SELECT $1, $2, $3, 'in_review', 'medium', NULLIF($7,''), $8, $5, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
 		WHERE NOT EXISTS (
 			SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
 		)
-		RETURNING id`, workspaceID, title, body, originUUID, creatorType, creatorID).Scan(&issueID)
+		RETURNING id`, workspaceID, title, body, originUUID, creatorType, creatorID, assigneeType, assigneeID).Scan(&issueID)
 	if err != nil && err == pgx.ErrNoRows {
 		return pgtype.UUID{}, nil
 	}
@@ -405,6 +436,20 @@ func (h *Handler) addCRMInternalIssueComment(ctx context.Context, workspaceID, i
 	}
 	_, err = h.DB.Exec(ctx, `INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type) VALUES ($1,$2,$3,$4,$5,'system')`, issueID, workspaceID, authorType, authorID, content)
 	return err
+}
+
+func (h *Handler) crmAppURL(path string) string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/")
+	if base == "" {
+		base = strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/")
+	}
+	if base == "" {
+		base = "http://localhost:3000"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
 }
 
 func (h *Handler) runCRMApprovedDraftStateAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int) (int, int) {

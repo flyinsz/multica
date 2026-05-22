@@ -2775,36 +2775,36 @@ func normalizeCRMEmailThreadSubject(subject string) string {
 	}
 }
 
-func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, pgtype.UUID, error) {
+func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
 	subject = cleanStringForDB(subject)
 	message.FromEmail = cleanStringForDB(message.FromEmail)
 	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
-	var threadID, accountID pgtype.UUID
+	var threadID, accountID, contactID pgtype.UUID
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
-		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, t.account_id FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID); err == nil {
-			return threadID, accountID, nil
+		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, COALESCE(m.account_id,t.account_id), COALESCE(m.contact_id,t.contact_id) FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID, &contactID); err == nil {
+			return threadID, accountID, contactID, nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, pgtype.UUID{}, err
+			return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 		}
 	}
 	threadKey := cfg.ID + ":subject-from:" + normalizeCRMEmailThreadSubject(subject) + ":" + strings.ToLower(strings.TrimSpace(message.FromEmail))
-	if err := h.DB.QueryRow(ctx, `SELECT id, account_id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID); err == nil {
-		return threadID, accountID, nil
+	if err := h.DB.QueryRow(ctx, `SELECT id, account_id, contact_id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID, &contactID); err == nil {
+		return threadID, accountID, contactID, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return pgtype.UUID{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	accountID, contactID, err := h.matchCRMEmailContact(ctx, workspaceID, message.FromEmail)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	lastAt := pgtype.Timestamptz{}
 	if !message.Date.IsZero() {
 		lastAt = pgtype.Timestamptz{Time: message.Date, Valid: true}
 	}
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, external_thread_id, mailbox, direction, status, last_message_at) VALUES ($1,$2,$3,$4,$5,$6,'inbound','open',$7) RETURNING id`, workspaceID, accountID, contactID, subject, threadKey, cfg.Email, lastAt).Scan(&threadID); err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return threadID, accountID, nil
+	return threadID, accountID, contactID, nil
 }
 
 func (h *Handler) matchCRMEmailContact(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.UUID, pgtype.UUID, error) {
@@ -2866,7 +2866,7 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		if isCRMIMAPSentFolder(folder) {
 			direction = "outbound"
 		}
-		threadID, accountID, err := h.resolveCRMEmailThreadForImport(ctx, workspaceID, cfg, message, subject)
+		threadID, accountID, contactID, err := h.resolveCRMEmailThreadForImport(ctx, workspaceID, cfg, message, subject)
 		if err != nil {
 			return imported, skipped, err
 		}
@@ -2883,11 +2883,11 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		canonicalFolder := canonicalCRMEmailFolder(folder)
 		isRead := strings.EqualFold(canonicalFolder, "Sent")
 		sourceMetadataJSON, _ := json.Marshal(map[string]any{"provider": "imap", "mailbox_id": cfg.ID, "folder": canonicalFolder, "source_folder": folder, "uid": message.UID})
-		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction, folder, is_read, source_metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction, canonicalFolder, isRead, sourceMetadataJSON)
+		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction, folder, is_read, source_metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, workspaceID, threadID, accountID, contactID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction, canonicalFolder, isRead, sourceMetadataJSON)
 		if execErr != nil {
 			return imported, skipped, execErr
 		}
-		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET last_message_at=COALESCE($3,last_message_at,now()), direction=CASE WHEN $4='outbound' THEN 'outbound' WHEN direction='outbound' THEN 'mixed' ELSE direction END, updated_at=now() WHERE id=$1 AND workspace_id=$2`, threadID, workspaceID, receivedAt, direction)
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$5), contact_id=COALESCE(contact_id,$6), last_message_at=COALESCE($3,last_message_at,now()), direction=CASE WHEN $4='outbound' THEN 'outbound' WHEN direction='outbound' THEN 'mixed' ELSE direction END, updated_at=now() WHERE id=$1 AND workspace_id=$2`, threadID, workspaceID, receivedAt, direction, accountID, contactID)
 		if accountID.Valid {
 			if shouldAutoRefreshCRMAccountProfile(ctx, h.DB, workspaceID) {
 				if _, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID); err != nil {
