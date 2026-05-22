@@ -233,7 +233,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		       t.account_id,
 		       t.contact_id,
 		       COALESCE(a.name, ''),
-		       a.owner_member_id,
+		       COALESCE(a.owner_member_id, (SELECT id FROM member WHERE workspace_id=$1 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, created_at ASC LIMIT 1)),
 		       COALESCE(latest.subject, t.subject, ''),
 		       COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at)
 		FROM crm_email_thread t
@@ -326,7 +326,7 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		assigneeType := ""
 		assigneeID := pgtype.UUID{}
 		var ownerMemberID pgtype.UUID
-		_ = h.DB.QueryRow(ctx, `SELECT owner_member_id FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
+		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(owner_member_id, (SELECT id FROM member WHERE workspace_id=$1 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, created_at ASC LIMIT 1)) FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
 		if ownerMemberID.Valid {
 			assigneeType = "member"
 			assigneeID = ownerMemberID
