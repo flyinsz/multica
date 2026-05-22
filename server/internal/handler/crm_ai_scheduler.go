@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -221,7 +222,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	rows, err := h.DB.Query(ctx, `
 		WITH latest AS (
 			SELECT DISTINCT ON (m.thread_id)
-				m.thread_id, m.id AS message_id, m.direction, m.subject, m.from_email, m.received_at, m.sent_at, m.created_at, m.is_read, m.is_trashed
+				m.thread_id, m.id AS message_id, m.direction, m.subject, m.from_email, m.received_at, m.sent_at, m.created_at, m.is_read, m.is_trashed, m.folder
 			FROM crm_email_message m
 			WHERE m.workspace_id=$1 AND COALESCE(m.is_trashed,false)=false
 			ORDER BY m.thread_id, COALESCE(m.received_at, m.sent_at, m.created_at) DESC
@@ -235,7 +236,8 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		  AND COALESCE(latest.is_trashed,false)=false
 		  AND COALESCE(t.status,'open') <> 'archived'
 		  AND latest.direction='inbound'
-		  AND COALESCE(latest.is_read, t.is_read, false)=false
+		  AND lower(COALESCE(NULLIF(latest.folder,''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])
+		  AND lower(COALESCE(latest.from_email,'')) NOT LIKE ALL(ARRAY['no-reply@%', 'noreply@%', 'postmaster@%', 'mailer-daemon@%'])
 		  AND NOT EXISTS (
 			SELECT 1 FROM issue i
 			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=t.id AND i.status NOT IN ('done','cancelled')
@@ -259,9 +261,16 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
 		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新入站时间：%s", accountName, subject, uuidToString(threadID), timestampToString(lastAt))
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(threadID))
-		if err == nil && issueID.Valid {
+		if err != nil {
+			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
+			continue
+		}
+		if issueID.Valid {
 			created++
-			_ = h.createCRMAIPendingReplyDraft(ctx, workspaceID, issueID, threadID, subject, accountName)
+			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, issueID, threadID, subject, accountName); err != nil {
+				slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(threadID), "error", err)
+				_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "待回复邮件 Issue 已创建，但自动生成回复草稿失败："+err.Error())
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -339,7 +348,7 @@ func (h *Handler) createCRMAIPendingReplyDraft(ctx context.Context, workspaceID,
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {
 	var mailboxID, contactID pgtype.UUID
 	var email, contactName string
-	if err := h.DB.QueryRow(ctx, `SELECT id FROM crm_imap_setting WHERE workspace_id=$1 AND enabled=true ORDER BY updated_at DESC LIMIT 1`, workspaceID).Scan(&mailboxID); err != nil {
+	if err := h.DB.QueryRow(ctx, `SELECT id FROM crm_imap_setting WHERE workspace_id=$1 AND sync_enabled=true ORDER BY updated_at DESC LIMIT 1`, workspaceID).Scan(&mailboxID); err != nil {
 		return err
 	}
 	if err := h.DB.QueryRow(ctx, `SELECT id, COALESCE(name,''), COALESCE(email,'') FROM crm_contact WHERE workspace_id=$1 AND account_id=$2 AND COALESCE(email,'')<>'' ORDER BY is_primary DESC, updated_at DESC LIMIT 1`, workspaceID, accountID).Scan(&contactID, &contactName, &email); err != nil {
@@ -360,13 +369,17 @@ func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype
 	if err != nil {
 		return issueID, err
 	}
+	creatorType, creatorID, err := h.crmIssueCommentAuthor(ctx, workspaceID)
+	if err != nil {
+		return issueID, err
+	}
 	err = h.DB.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, description, status, priority, origin_type, origin_id)
-		SELECT $1, $2, $3, 'in_review', 'medium', 'crm_ai', $4
+		INSERT INTO issue (workspace_id, title, description, status, priority, creator_type, creator_id, origin_type, origin_id, number)
+		SELECT $1, $2, $3, 'in_review', 'medium', $5, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
 		WHERE NOT EXISTS (
 			SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
 		)
-		RETURNING id`, workspaceID, title, body, originUUID).Scan(&issueID)
+		RETURNING id`, workspaceID, title, body, originUUID, creatorType, creatorID).Scan(&issueID)
 	if err != nil && err == pgx.ErrNoRows {
 		return pgtype.UUID{}, nil
 	}
@@ -427,8 +440,12 @@ func (h *Handler) runCRMApprovedDraftStateAutomation(ctx context.Context, worksp
 		approvedSent++
 	}
 
+	externalConfirmed, externalSuspected, draftMissing := h.detectExternalSentCRMEmailDrafts(ctx, workspaceID, limit)
 	notifiedSent := h.commentManuallySentDraftsNeedingDone(ctx, workspaceID, limit)
-	return approvedSent, notifiedSent
+	if externalConfirmed > 0 || externalSuspected > 0 || draftMissing > 0 {
+		slog.Info("CRM external draft send detection completed", "workspace_id", uuidToString(workspaceID), "confirmed", externalConfirmed, "suspected", externalSuspected, "missing", draftMissing)
+	}
+	return approvedSent + externalConfirmed, notifiedSent + externalSuspected + draftMissing
 }
 
 func (h *Handler) commentManuallySentDraftsNeedingDone(ctx context.Context, workspaceID pgtype.UUID, limit int) int {
@@ -466,6 +483,150 @@ func (h *Handler) commentManuallySentDraftsNeedingDone(ctx context.Context, work
 		}
 	}
 	return count
+}
+
+func (h *Handler) detectExternalSentCRMEmailDrafts(ctx context.Context, workspaceID pgtype.UUID, limit int) (int, int, int) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := h.DB.Query(ctx, `
+		SELECT d.id, d.issue_id, d.thread_id, d.mailbox_id, lower(d.subject), lower(array_to_string(d.to_emails, ',')), COALESCE(d.in_reply_to,''), d.reference_ids, d.updated_at, COALESCE(d.external_draft_uid,''), COALESCE(d.external_draft_mailbox,'')
+		FROM crm_email_draft d
+		JOIN issue i ON i.id=d.issue_id AND i.workspace_id=d.workspace_id
+		WHERE d.workspace_id=$1
+		  AND d.issue_id IS NOT NULL
+		  AND d.thread_id IS NOT NULL
+		  AND d.status IN ('pending_approval','draft','failed')
+		  AND d.sent_at IS NULL
+		  AND i.status <> 'done'
+		ORDER BY d.updated_at ASC
+		LIMIT $2`, workspaceID, limit)
+	if err != nil {
+		slog.Warn("CRM external draft detection query failed", "workspace_id", uuidToString(workspaceID), "error", err)
+		return 0, 0, 0
+	}
+	defer rows.Close()
+	confirmed, suspected, missing := 0, 0, 0
+	for rows.Next() {
+		var draftID, issueID, threadID, mailboxID pgtype.UUID
+		var subjectLower, toLower, inReplyTo, externalDraftUID, externalDraftMailbox string
+		var refs []string
+		var updatedAt pgtype.Timestamptz
+		if err := rows.Scan(&draftID, &issueID, &threadID, &mailboxID, &subjectLower, &toLower, &inReplyTo, &refs, &updatedAt, &externalDraftUID, &externalDraftMailbox); err != nil {
+			continue
+		}
+		_ = mailboxID
+		var sentID pgtype.UUID
+		var sentAt pgtype.Timestamptz
+		var sentSubject, sentTo, sentInReplyTo string
+		var sentRefs []string
+		matchErr := h.DB.QueryRow(ctx, `
+			SELECT m.id, COALESCE(m.sent_at,m.received_at,m.created_at), lower(COALESCE(m.subject,'')), lower(array_to_string(m.to_emails,',')), COALESCE(m.in_reply_to,''), m.reference_ids
+			FROM crm_email_message m
+			WHERE m.workspace_id=$1
+			  AND m.thread_id=$2
+			  AND (m.direction='outbound' OR lower(COALESCE(NULLIF(m.folder,''), NULLIF(m.source_metadata->>'folder',''))) IN ('sent','sent messages','sent items'))
+			  AND COALESCE(m.sent_at,m.received_at,m.created_at) >= COALESCE($3::timestamptz, now() - interval '30 days') - interval '10 minutes'
+			ORDER BY COALESCE(m.sent_at,m.received_at,m.created_at) DESC
+			LIMIT 1`, workspaceID, threadID, updatedAt).Scan(&sentID, &sentAt, &sentSubject, &sentTo, &sentInReplyTo, &sentRefs)
+		if matchErr == nil && sentID.Valid {
+			score := 0
+			reasons := []string{}
+			if inReplyTo != "" && sentInReplyTo == inReplyTo {
+				score += 50
+				reasons = append(reasons, "in_reply_to matched")
+			}
+			if referencesOverlap(refs, sentRefs) {
+				score += 50
+				reasons = append(reasons, "references matched")
+			}
+			if toLower != "" && sentTo != "" && emailListOverlaps(toLower, sentTo) {
+				score += 20
+				reasons = append(reasons, "recipient matched")
+			}
+			if normalizeCRMSubject(subjectLower) != "" && normalizeCRMSubject(subjectLower) == normalizeCRMSubject(sentSubject) {
+				score += 15
+				reasons = append(reasons, "subject matched")
+			}
+			if sentAt.Valid && updatedAt.Valid && sentAt.Time.After(updatedAt.Time.Add(-10*time.Minute)) {
+				score += 10
+				reasons = append(reasons, "sent time after draft update")
+			}
+			if score >= 70 {
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sent', sent_at=$3, sent_detection_status='external_sent_confirmed', sent_detection_confidence=$4, sent_detection_reason=$5, external_sent_uid=$6, external_sent_mailbox='Sent', sent_detected_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2 AND sent_at IS NULL`, draftID, workspaceID, sentAt, score, strings.Join(reasons, "; "), uuidToString(sentID))
+				_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("系统在 Sent 文件夹中高置信匹配到绑定草稿已从外部邮箱发送。\n\n草稿 ID：%s\nSent 邮件 ID：%s\n置信度：%d\n依据：%s\n\n请负责人确认客户跟进已完成后，将此 Issue 状态改为 done。", uuidToString(draftID), uuidToString(sentID), score, strings.Join(reasons, "；")))
+				confirmed++
+			} else if score >= 50 {
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET sent_detection_status='external_sent_suspected', sent_detection_confidence=$3, sent_detection_reason=$4, external_sent_uid=$5, external_sent_mailbox='Sent', sent_detected_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, score, strings.Join(reasons, "; "), uuidToString(sentID))
+				_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("系统在 Sent 文件夹中发现疑似已外部发送的邮件，但置信度不足以自动确认。\n\n草稿 ID：%s\n疑似 Sent 邮件 ID：%s\n置信度：%d\n依据：%s\n\n请负责人检查邮箱 Sent 文件夹，并确认是否将此 Issue 改为 done。", uuidToString(draftID), uuidToString(sentID), score, strings.Join(reasons, "；")))
+				suspected++
+			}
+			continue
+		}
+		if strings.TrimSpace(externalDraftUID) == "" || strings.TrimSpace(externalDraftMailbox) == "" {
+			continue
+		}
+		var draftStillExists bool
+		_ = h.DB.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM crm_email_message m
+			WHERE m.workspace_id=$1 AND m.thread_id=$2
+			  AND lower(COALESCE(NULLIF(m.folder,''), NULLIF(m.source_metadata->>'folder',''))) IN ('drafts','draft','草稿箱')
+			  AND lower(COALESCE(m.subject,''))=$3
+		)`, workspaceID, threadID, subjectLower).Scan(&draftStillExists)
+		if !draftStillExists {
+			cmd, _ := h.DB.Exec(ctx, `UPDATE crm_email_draft SET sent_detection_status='draft_missing_unconfirmed', sent_detection_confidence=0, sent_detection_reason='draft not found in Drafts and no confident Sent match', sent_detected_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2 AND COALESCE(sent_detection_status,'') <> 'draft_missing_unconfirmed'`, draftID, workspaceID)
+			if cmd.RowsAffected() > 0 {
+				_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("绑定草稿已不在邮箱 Drafts 文件夹中，但系统未能确认是否已发送。\n\n草稿 ID：%s\n\n请负责人检查邮箱 Sent 文件夹或客户回复，并确认是否将此 Issue 改为 done。", uuidToString(draftID)))
+				missing++
+			}
+		}
+	}
+	return confirmed, suspected, missing
+}
+
+func normalizeCRMSubject(value string) string {
+	v := strings.TrimSpace(strings.ToLower(value))
+	for {
+		old := v
+		v = strings.TrimSpace(strings.TrimPrefix(v, "re:"))
+		v = strings.TrimSpace(strings.TrimPrefix(v, "fw:"))
+		v = strings.TrimSpace(strings.TrimPrefix(v, "fwd:"))
+		if v == old {
+			return v
+		}
+	}
+}
+
+func referencesOverlap(a, b []string) bool {
+	seen := map[string]bool{}
+	for _, value := range a {
+		v := strings.TrimSpace(strings.ToLower(value))
+		if v != "" {
+			seen[v] = true
+		}
+	}
+	for _, value := range b {
+		if seen[strings.TrimSpace(strings.ToLower(value))] {
+			return true
+		}
+	}
+	return false
+}
+
+func emailListOverlaps(a, b string) bool {
+	seen := map[string]bool{}
+	for _, part := range strings.Split(a, ",") {
+		v := strings.TrimSpace(part)
+		if v != "" {
+			seen[v] = true
+		}
+	}
+	for _, part := range strings.Split(b, ",") {
+		if seen[strings.TrimSpace(part)] {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) markCRMEmailDraftIssueSent(ctx context.Context, workspaceID, issueID, draftID pgtype.UUID, note string) error {
