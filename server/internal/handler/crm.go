@@ -3050,6 +3050,66 @@ func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": uuidToString(draftID)})
 }
 
+func (h *Handler) sendFirstPendingCRMEmailDraftForIssue(ctx context.Context, workspaceID, issueID pgtype.UUID) (pgtype.UUID, error) {
+	var draftID, mailboxID, threadID, accountID, contactID pgtype.UUID
+	var payload crmEmailSendPayload
+	var attachmentsJSON []byte
+	if err := h.DB.QueryRow(ctx, `UPDATE crm_email_draft SET status='sending', updated_at=now() WHERE id=(SELECT id FROM crm_email_draft WHERE workspace_id=$1 AND issue_id=$2 AND status IN ('pending_approval','draft','failed') AND sent_at IS NULL ORDER BY updated_at DESC LIMIT 1) RETURNING id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled`, workspaceID, issueID).Scan(&draftID, &mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
+		return draftID, err
+	}
+	if len(attachmentsJSON) > 0 {
+		_ = json.Unmarshal(attachmentsJSON, &payload.Attachments)
+	}
+	var cfg crmIMAPMailboxConfig
+	var id pgtype.UUID
+	var secretRef, ownerType, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef pgtype.Text
+	var ownerID pgtype.UUID
+	var smtpPort pgtype.Int4
+	query := `SELECT id, label, email, host, port, tls_mode, username, secret_ref, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref FROM crm_imap_setting WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if mailboxID.Valid {
+		query += ` AND id=$2`
+		args = append(args, mailboxID)
+	}
+	query += ` ORDER BY updated_at DESC LIMIT 1`
+	if err := h.DB.QueryRow(ctx, query, args...).Scan(&id, &cfg.Label, &cfg.Email, &cfg.Host, &cfg.Port, &cfg.TLSMode, &cfg.Username, &secretRef, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef); err != nil {
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
+		return draftID, err
+	}
+	cfg.UUID = id
+	cfg.ID = uuidToString(id)
+	cfg.SecretRef = crmTextValue(secretRef)
+	cfg.OwnerType = crmTextValue(ownerType)
+	cfg.OwnerID = uuidToString(ownerID)
+	cfg.SMTPHost = crmTextValue(smtpHost)
+	if smtpPort.Valid {
+		cfg.SMTPPort = smtpPort.Int32
+	}
+	cfg.SMTPTLSMode = crmTextValue(smtpTLSMode)
+	cfg.SMTPUsername = crmTextValue(smtpUsername)
+	cfg.SMTPSecretRef = crmTextValue(smtpSecretRef)
+	messageID, rawMessage, sentAt, err := sendCRMEmailProvider(cfg, payload)
+	if err != nil {
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
+		return draftID, err
+	}
+	appendWarning := ""
+	if payload.AppendToSent && len(rawMessage) > 0 {
+		if err := appendCRMIMAPSentMessage(cfg, rawMessage, sentAt); err != nil {
+			appendWarning = "Sent folder append failed: " + sanitizeCRMSendError(err).Error()
+		}
+	}
+	if !threadID.Valid {
+		if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, cleanStringForDB(cfg.Email)).Scan(&threadID); err != nil {
+			_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
+			return draftID, err
+		}
+	}
+	_, _ = h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
+	_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$4, sent_append_warning=$5, error_message=NULL, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, sentAt, cleanOptionalText(&appendWarning))
+	return draftID, h.markCRMEmailDraftIssueSent(ctx, workspaceID, issueID, draftID, "Issue 评论确认通过，系统已自动发送绑定草稿邮件，并将 Issue 标记为 done。")
+}
+
 func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {
