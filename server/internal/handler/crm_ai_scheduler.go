@@ -250,7 +250,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		  AND latest.message_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM issue i
-			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id AND i.status NOT IN ('done','cancelled')
+			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id
 		  )
 		ORDER BY COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at) DESC
 		LIMIT $2`, workspaceID, limit)
@@ -432,7 +432,7 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number)
 			SELECT $1, $2, $3, 'todo', 'medium', 'agent', $6, 'agent', $5, $7, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
 			WHERE NOT EXISTS (
-				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
+				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4
 			)
 			RETURNING id
 		), linked AS (
