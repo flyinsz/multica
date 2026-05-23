@@ -2312,7 +2312,7 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	if contactID.Valid && !accountID.Valid {
+	if contactID.Valid {
 		var inferredAccountID pgtype.UUID
 		if err := h.DB.QueryRow(r.Context(), `SELECT account_id FROM crm_contact WHERE id=$1 AND workspace_id=$2`, contactID, workspaceID).Scan(&inferredAccountID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -2322,7 +2322,9 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 			writeError(w, http.StatusInternalServerError, "failed to load CRM contact account")
 			return
 		}
-		accountID = inferredAccountID
+		if inferredAccountID.Valid {
+			accountID = inferredAccountID
+		}
 	}
 	primaryIssueID := issueID
 	if len(issueIDs) > 0 {

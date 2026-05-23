@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"os"
@@ -45,6 +46,9 @@ func NewEmailService() *EmailService {
 // SendInvitationEmail does.
 func (s *EmailService) SendVerificationCode(to, code string) error {
 	if s.client == nil {
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
+			return errors.New("email delivery is not configured")
+		}
 		fmt.Printf("[DEV] Verification code for %s: %s\n", to, code)
 		return nil
 	}

@@ -78,6 +78,7 @@ type AccountFormState = {
   source: CRMAccountSource;
   rating: CRMAccountRating;
   priority: CRMAccountPriority;
+  ownerMemberID: string;
   website: string;
   countryCode: string;
   regionCode: string;
@@ -208,6 +209,7 @@ function accountToForm(account: CRMAccount): AccountFormState {
     source: account.source ?? "manual",
     rating: account.rating,
     priority: account.priority,
+    ownerMemberID: account.owner_member_id ?? "",
     website: account.website ?? "",
     countryCode: country?.code ?? account.country_code ?? account.country ?? "",
     regionCode: account.region ?? "",
@@ -288,7 +290,7 @@ function FieldRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-function AccountForm({ form, setForm, t, locale, suggestedTags = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[] }) {
+function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[]; members?: Array<{ id: string; user_id: string; name: string; email: string }> }) {
   const { regions, cities, regionsLoading, citiesLoading } = useLocationSelection(form.countryCode, form.regionCode, locale);
   const countries = useMemo(() => localizedSort(COUNTRY_OPTIONS, locale), [locale]);
   const subIndustries = subIndustryOptions(form.industry);
@@ -309,6 +311,10 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [] }: { form: A
         <option value="prospect">{t(($) => $.statuses.prospect)}</option>
         <option value="inactive">{t(($) => $.statuses.inactive)}</option>
         <option value="archived">{t(($) => $.statuses.archived)}</option>
+      </select>
+      <select aria-label="客户所有人" className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerMemberID} onChange={(e) => setForm({ ...form, ownerMemberID: e.target.value })}>
+        <option value="">客户所有人</option>
+        {members.map((member) => <option key={member.id} value={member.user_id}>{member.name || member.email}</option>)}
       </select>
       <select aria-label={t(($) => $.customers.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value, regionCode: "", cityCode: "" })}>
         <option value="">{t(($) => $.customers.country)}</option>
@@ -449,6 +455,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId));
   const emailThreads = emailThreadData?.threads ?? [];
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
 
   const [accountForm, setAccountForm] = useState<AccountFormState | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState | null>(null);
@@ -519,6 +526,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
         source: accountForm.source,
         rating: accountForm.rating,
         priority: accountForm.priority,
+        owner_member_id: accountForm.ownerMemberID || null,
         annual_revenue: accountForm.annualRevenue || null,
         employee_count: accountForm.employeeCount || null,
         tags: splitTags(accountForm.tags),
@@ -909,7 +917,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
       <Dialog open={accountForm !== null} onOpenChange={(open) => !open && setAccountForm(null)}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader><DialogTitle>{t(($) => $.customers.edit_customer)}</DialogTitle><DialogDescription>{account.name}</DialogDescription></DialogHeader>
-          {accountForm && <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={tagSuggestions(account)} />}
+          {accountForm && <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={tagSuggestions(account)} members={members} />}
           {updateAccount.isError && <p className="text-xs text-destructive">{t(($) => $.customers.create_error)}</p>}
           <DialogFooter><Button variant="outline" onClick={() => setAccountForm(null)}>{t(($) => $.actions.cancel)}</Button><Button disabled={!accountForm?.name.trim() || updateAccount.isPending} onClick={() => updateAccount.mutate()}>{t(($) => $.actions.save)}</Button></DialogFooter>
         </DialogContent>
