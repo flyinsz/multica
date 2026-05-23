@@ -243,6 +243,9 @@ export function CRMEmailsPage() {
   const navigation = useNavigation();
   const paths = useWorkspacePaths();
   const { t, i18n } = useT("crm");
+  const initialDraftId = navigation.searchParams.get("draft");
+  const initialThreadId = navigation.searchParams.get("thread");
+  const initialMessageId = navigation.searchParams.get("message");
   const locale = normalizeLocale(i18n.language);
   const emailCopy = locale === "zh-Hans" ? {
     compose: "写邮件",
@@ -480,7 +483,7 @@ export function CRMEmailsPage() {
   };
 
   const [search, setSearch] = useState("");
-  const [activeFolder, setActiveFolder] = useState<EmailFolderKey>("inbox");
+  const [activeFolder, setActiveFolder] = useState<EmailFolderKey>(initialDraftId ? "drafts" : "inbox");
   const [quickFilter, setQuickFilter] = useState<EmailQuickFilter>("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
@@ -489,13 +492,13 @@ export function CRMEmailsPage() {
   const [previewMessages, setPreviewMessages] = useState<CRMIMAPPreviewMessage[]>([]);
   const [selectedPreviewUIDs, setSelectedPreviewUIDs] = useState<string[]>([]);
   const [importRangeDays, setImportRangeDays] = useState(30);
-  const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>([]);
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>(initialThreadId ? [initialThreadId] : []);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(initialMessageId);
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
-  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(initialDraftId);
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -603,9 +606,10 @@ export function CRMEmailsPage() {
   const mailboxMessages = useMemo(() => messageList, [messageList]);
 
   const mailboxDrafts = useMemo(() => {
+    if (initialDraftId) return emailDrafts;
     if (!selectedMailbox?.id) return emailDrafts;
     return emailDrafts.filter((draft: any) => (draft.mailbox_id ?? "") === selectedMailbox.id);
-  }, [emailDrafts, selectedMailbox?.id]);
+  }, [emailDrafts, initialDraftId, selectedMailbox?.id]);
 
   const visibleMailboxDrafts = useMemo(
     () => mailboxDrafts.filter((draft: any) => draft.status !== "discarded"),

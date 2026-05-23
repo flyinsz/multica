@@ -269,7 +269,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		}
 		candidates++
 		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
-		messageLink := h.crmAppURL("/crm/emails?message=" + uuidToString(messageID) + "&thread=" + uuidToString(threadID))
+		messageLink := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(messageID)+"&thread="+uuidToString(threadID))
 		reviewerLine := "审核人：客户负责人。若客户没有负责人，请交由 imchow 审核；客户负责人对特定内容不确定，或存在需要更高层评估的风险时，也请交由 imchow 审核。"
 		if !ownerMemberID.Valid {
 			reviewerLine = "审核人：客户没有负责人，请交由 imchow 审核。"
@@ -279,7 +279,11 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		if err != nil {
 			slog.Warn("CRM pending reply parent issue lookup failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
 		}
-		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID)
+		projectID, err := h.ensureCRMAccountProject(ctx, workspaceID, accountID, accountName)
+		if err != nil {
+			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(accountID), "error", err)
+		}
+		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID, projectID)
 		if err != nil {
 			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
 			continue
@@ -372,8 +376,8 @@ func (h *Handler) createCRMAIPendingReplyDraft(ctx context.Context, workspaceID,
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, subject, body_text, body_html, in_reply_to, reference_ids, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_approval',true,$13) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, issueID, []string{fromEmail}, "Re: "+subject, draftBody, cleanOptionalText(&bodyHTML), cleanOptionalText(&inReplyTo), refs, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err
 	}
-	draftURL := h.crmAppURL("/crm/emails?draft=" + uuidToString(draftID))
-	messageURL := h.crmAppURL("/crm/emails?message=" + uuidToString(messageID) + "&thread=" + uuidToString(threadID))
+	draftURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?draft="+uuidToString(draftID))
+	messageURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(messageID)+"&thread="+uuidToString(threadID))
 	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核邮件草稿。\n\n草稿链接：[%s](%s)\n\n原邮件链接：[%s](%s)\n\n%s\n\n原邮件摘要：%s", draftURL, draftURL, messageURL, messageURL, reason, stringsTrimForCRM(bodyText, 600)))
 }
 
@@ -392,7 +396,7 @@ func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, iss
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, account_id, contact_id, issue_id, to_emails, subject, body_text, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending_approval',true,$9) RETURNING id`, workspaceID, mailboxID, accountID, contactID, issueID, []string{email}, "Follow up: "+accountName, body, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err
 	}
-	draftURL := h.crmAppURL("/crm/emails?draft=" + uuidToString(draftID))
+	draftURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?draft="+uuidToString(draftID))
 	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
 }
 
@@ -417,7 +421,37 @@ func (h *Handler) crmAgentByName(ctx context.Context, workspaceID pgtype.UUID, n
 	return agentID, err
 }
 
-func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID pgtype.UUID) (pgtype.UUID, error) {
+func (h *Handler) ensureCRMAccountProject(ctx context.Context, workspaceID, accountID pgtype.UUID, accountName string) (pgtype.UUID, error) {
+	var projectID pgtype.UUID
+	if !accountID.Valid || strings.TrimSpace(accountName) == "" {
+		return projectID, nil
+	}
+	projectTitle := "CRM:" + strings.TrimSpace(accountName)
+	err := h.DB.QueryRow(ctx, `
+		WITH existing AS (
+			SELECT id FROM project WHERE workspace_id=$1 AND lower(title)=lower($2) LIMIT 1
+		), inserted AS (
+			INSERT INTO project (workspace_id, title, description, icon, status, priority)
+			SELECT $1, $2, $3, 'building-2', 'in_progress', 'medium'
+			WHERE NOT EXISTS (SELECT 1 FROM existing)
+			ON CONFLICT DO NOTHING
+			RETURNING id
+		), selected AS (
+			SELECT id FROM inserted UNION ALL SELECT id FROM existing LIMIT 1
+		), resource_link AS (
+			INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, position)
+			SELECT id, $1, 'crm_account', jsonb_build_object('account_id', $4::uuid), $5, COALESCE((SELECT MAX(position)+1 FROM project_resource WHERE project_id=id), 0)
+			FROM selected
+			ON CONFLICT DO NOTHING
+		)
+		SELECT id FROM selected`, workspaceID, projectTitle, "CRM 客户专属项目："+accountName, accountID, accountName).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, nil
+	}
+	return projectID, err
+}
+
+func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
 	creatorID, err := h.crmAgentByName(ctx, workspaceID, "CRM-Assistant")
 	if err != nil {
@@ -429,8 +463,8 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	}
 	err = h.DB.QueryRow(ctx, `
 		WITH inserted AS (
-			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number)
-			SELECT $1, $2, $3, 'todo', 'medium', 'agent', $6, 'agent', $5, $7, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
+			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
+			SELECT $1, $2, $3, 'todo', 'medium', 'agent', $6, 'agent', $5, $7, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $9
 			WHERE NOT EXISTS (
 				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4
 			)
@@ -444,7 +478,7 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 			SET issue_id=COALESCE(NULLIF($7, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
 			WHERE workspace_id=$1 AND id=$8 AND EXISTS (SELECT 1 FROM inserted)
 		)
-		SELECT id FROM inserted`, workspaceID, title, body, messageID, creatorID, assigneeID, parentIssueID, threadID).Scan(&issueID)
+		SELECT id FROM inserted`, workspaceID, title, body, messageID, creatorID, assigneeID, parentIssueID, threadID, projectID).Scan(&issueID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, nil
 	}
@@ -493,6 +527,17 @@ func (h *Handler) addCRMInternalIssueComment(ctx context.Context, workspaceID, i
 	}
 	_, err = h.DB.Exec(ctx, `INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type) VALUES ($1,$2,$3,$4,$5,'system')`, issueID, workspaceID, authorType, authorID, content)
 	return err
+}
+
+func (h *Handler) crmWorkspaceAppURL(ctx context.Context, workspaceID pgtype.UUID, path string) string {
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	var slug string
+	if err := h.DB.QueryRow(ctx, `SELECT slug FROM workspace WHERE id=$1`, workspaceID).Scan(&slug); err == nil && strings.TrimSpace(slug) != "" {
+		return h.crmAppURL("/" + strings.Trim(strings.TrimSpace(slug), "/") + path)
+	}
+	return h.crmAppURL(path)
 }
 
 func (h *Handler) crmAppURL(path string) string {
