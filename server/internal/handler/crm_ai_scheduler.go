@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -233,7 +234,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		       t.account_id,
 		       t.contact_id,
 		       COALESCE(a.name, ''),
-		       COALESCE((SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1), (SELECT id FROM member WHERE workspace_id=$1 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, created_at ASC LIMIT 1)),
+		       (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1),
 		       COALESCE(latest.subject, t.subject, ''),
 		       COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at)
 		FROM crm_email_thread t
@@ -246,9 +247,10 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		  AND latest.direction='inbound'
 		  AND lower(COALESCE(NULLIF(latest.folder,''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])
 		  AND lower(COALESCE(latest.from_email,'')) NOT LIKE ALL(ARRAY['no-reply@%', 'noreply@%', 'postmaster@%', 'mailer-daemon@%'])
+		  AND latest.message_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM issue i
-			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=t.id AND i.status NOT IN ('done','cancelled')
+			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id AND i.status NOT IN ('done','cancelled')
 		  )
 		ORDER BY COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at) DESC
 		LIMIT $2`, workspaceID, limit)
@@ -273,13 +275,11 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 			reviewerLine = "审核人：客户没有负责人，请交由 imchow 审核。"
 		}
 		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n原邮件：%s\n最新入站时间：%s\n处理要求：Issue 负责人拟订回复草稿，并将草稿回复到评论中。%s\n流转说明：Issue 状态流转交由 Multica 自动化流程处理，不需要人工修改核心流转。", accountName, subject, uuidToString(threadID), messageLink, timestampToString(lastAt), reviewerLine)
-		assigneeType := ""
-		assigneeID := pgtype.UUID{}
-		if ownerMemberID.Valid {
-			assigneeType = "member"
-			assigneeID = ownerMemberID
+		parentIssueID, err := h.findCRMEmailThreadParentIssue(ctx, workspaceID, threadID)
+		if err != nil {
+			slog.Warn("CRM pending reply parent issue lookup failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
 		}
-		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(threadID), assigneeType, assigneeID)
+		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID)
 		if err != nil {
 			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
 			continue
@@ -287,9 +287,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		if issueID.Valid {
 			created++
 			if accountID.Valid || contactID.Valid {
-				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET issue_id=$3, account_id=COALESCE(account_id,$4), contact_id=COALESCE(contact_id,$5), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, issueID, accountID, contactID)
-			} else {
-				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET issue_id=$3, updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, issueID)
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$3), contact_id=COALESCE(contact_id,$4), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, accountID, contactID)
 			}
 			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, issueID, threadID, messageID, subject, accountName); err != nil {
 				slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(threadID), "error", err)
@@ -398,6 +396,61 @@ func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, iss
 	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
 }
 
+func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID, threadID pgtype.UUID) (pgtype.UUID, error) {
+	var issueID pgtype.UUID
+	err := h.DB.QueryRow(ctx, `
+		SELECT i.id
+		FROM crm_email_thread_issue_link l
+		JOIN issue i ON i.id=l.issue_id AND i.workspace_id=$1
+		WHERE l.thread_id=$2 AND i.origin_type='crm_ai' AND i.parent_issue_id IS NULL
+		ORDER BY i.created_at ASC
+		LIMIT 1`, workspaceID, threadID).Scan(&issueID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, nil
+	}
+	return issueID, err
+}
+
+func (h *Handler) crmAgentByName(ctx context.Context, workspaceID pgtype.UUID, name string) (pgtype.UUID, error) {
+	var agentID pgtype.UUID
+	err := h.DB.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 AND lower(name)=lower($2) AND archived_at IS NULL LIMIT 1`, workspaceID, name).Scan(&agentID)
+	return agentID, err
+}
+
+func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID pgtype.UUID) (pgtype.UUID, error) {
+	var issueID pgtype.UUID
+	creatorID, err := h.crmAgentByName(ctx, workspaceID, "CRM-Assistant")
+	if err != nil {
+		return issueID, err
+	}
+	assigneeID, err := h.crmAgentByName(ctx, workspaceID, "Jarvis")
+	if err != nil {
+		return issueID, err
+	}
+	err = h.DB.QueryRow(ctx, `
+		WITH inserted AS (
+			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number)
+			SELECT $1, $2, $3, 'todo', 'medium', 'agent', $6, 'agent', $5, $7, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
+			WHERE NOT EXISTS (
+				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
+			)
+			RETURNING id
+		), linked AS (
+			INSERT INTO crm_email_thread_issue_link (thread_id, issue_id)
+			SELECT $8, id FROM inserted
+			ON CONFLICT DO NOTHING
+		), thread_update AS (
+			UPDATE crm_email_thread
+			SET issue_id=COALESCE(NULLIF($7, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
+			WHERE workspace_id=$1 AND id=$8 AND EXISTS (SELECT 1 FROM inserted)
+		)
+		SELECT id FROM inserted`, workspaceID, title, body, messageID, creatorID, assigneeID, parentIssueID, threadID).Scan(&issueID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, nil
+	}
+	return issueID, err
+}
+
 func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype.UUID, title, body, originID string, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
 	originUUID, err := parseUUIDStringToPgtype(originID)
@@ -415,7 +468,7 @@ func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype
 			SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
 		)
 		RETURNING id`, workspaceID, title, body, originUUID, creatorType, creatorID, assigneeType, assigneeID).Scan(&issueID)
-	if err != nil && err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, nil
 	}
 	return issueID, err

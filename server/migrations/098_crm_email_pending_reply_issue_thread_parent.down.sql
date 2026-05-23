@@ -1,0 +1,1 @@
+-- No-op: historical CRM pending-reply issue ownership/parent backfill is not safely reversible.
