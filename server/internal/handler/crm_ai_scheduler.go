@@ -268,7 +268,11 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		candidates++
 		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
 		messageLink := h.crmAppURL("/crm/emails?message=" + uuidToString(messageID) + "&thread=" + uuidToString(threadID))
-		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n原邮件：%s\n最新入站时间：%s", accountName, subject, uuidToString(threadID), messageLink, timestampToString(lastAt))
+		reviewerLine := "审核人：客户负责人。若客户没有负责人，请交由 imchow 审核；客户负责人对特定内容不确定，或存在需要更高层评估的风险时，也请交由 imchow 审核。"
+		if !ownerMemberID.Valid {
+			reviewerLine = "审核人：客户没有负责人，请交由 imchow 审核。"
+		}
+		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n原邮件：%s\n最新入站时间：%s\n处理要求：Issue 负责人拟订回复草稿，并将草稿回复到评论中。%s\n流转说明：Issue 状态流转交由 Multica 自动化流程处理，不需要人工修改核心流转。", accountName, subject, uuidToString(threadID), messageLink, timestampToString(lastAt), reviewerLine)
 		assigneeType := ""
 		assigneeID := pgtype.UUID{}
 		if ownerMemberID.Valid {
