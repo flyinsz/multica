@@ -28,7 +28,7 @@ import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 
 type EmailFolderKey = "inbox" | "sent" | "drafts" | "spam" | "archived" | "starred" | "unlinked" | "trash";
-type EmailQuickFilter = "all" | "unread" | "read" | "linked" | "unlinked";
+type EmailQuickFilter = "all" | "unread" | "linked" | "unlinked";
 
 type AssociationDraft = {
   threadIds?: string[];
@@ -650,7 +650,6 @@ export function CRMEmailsPage() {
       const direction = message.direction || thread?.direction;
       const folder = message.folder || "";
       if (quickFilter === "unread" && isRead === true) return false;
-      if (quickFilter === "read" && isRead !== true) return false;
       if (quickFilter === "linked" && !message.account_id && !message.contact_id && !thread?.account_id && !thread?.contact_id) return false;
       if (quickFilter === "unlinked" && (message.account_id || message.contact_id || thread?.account_id || thread?.contact_id)) return false;
       switch (activeFolder) {
@@ -737,7 +736,6 @@ export function CRMEmailsPage() {
   const quickFilters: Array<[EmailQuickFilter, string, number]> = [
     ["all", "全部", folderMessages.length],
     ["unread", "未读", folderCounts.inbox_unread ?? 0],
-    ["read", "已读", quickCount((message) => message.is_read === true)],
     ["linked", "已关联", quickCount((message) => Boolean(message.account_id))],
     ["unlinked", "未关联", folderCounts.unlinked ?? 0],
   ];

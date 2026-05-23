@@ -582,7 +582,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const refreshProfile = useMutation({
     mutationFn: () => api.refreshCRMAccountProfile(accountId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId) });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId), refetchType: "active" });
     },
   });
 
@@ -794,7 +794,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={refreshProfile.isPending} onClick={() => refreshProfile.mutate()}>
-                    {t(($) => $.profile.refresh)}
+                    {refreshProfile.isPending ? "画像刷新中…" : t(($) => $.profile.refresh)}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setProfileForm(profileToForm(profile))}>
                     <Pencil className="mr-1 size-4" /> {profile ? t(($) => $.profile.edit) : t(($) => $.profile.add)}

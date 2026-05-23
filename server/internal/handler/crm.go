@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -819,6 +821,63 @@ func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess st
 		steps = append(steps, "基于已确认需求推进报价、样品或下一次跟进")
 	}
 	return strings.Join(steps, "；")
+}
+
+func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountName, fallbackSummary, projectSource, issueSource, emailEvidence, noteEvidence, notes string) (map[string]any, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("CRM_PROFILE_LLM_BASE_URL")), "/")
+	apiKey := strings.TrimSpace(os.Getenv("CRM_PROFILE_LLM_API_KEY"))
+	model := strings.TrimSpace(os.Getenv("CRM_PROFILE_LLM_MODEL"))
+	if baseURL == "" || apiKey == "" || model == "" {
+		return nil, nil
+	}
+	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 不知道才写待确认；4) 每个字段写可执行、具体内容。\n\n" +
+		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
+	payload := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": "You generate strict JSON CRM customer profiles."},
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.2,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New("CRM profile LLM HTTP status: " + resp.Status)
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if len(out.Choices) == 0 {
+		return nil, errors.New("CRM profile LLM returned no choices")
+	}
+	content := strings.TrimSpace(out.Choices[0].Message.Content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	content = strings.TrimSpace(content)
+	var profile map[string]any
+	if err := json.Unmarshal([]byte(content), &profile); err != nil {
+		return nil, err
+	}
+	return profile, nil
 }
 
 type UpsertCRMAccountProfileRequest struct {
@@ -1875,7 +1934,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			FROM crm_email_message m
 			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
 			WHERE m.workspace_id::text = $1
-			  AND ($2 = '' OR t.account_id::text = $2 OR m.account_id::text = $2)
+			  AND ($2 = '' OR t.account_id::text = $2 OR m.account_id::text = $2 OR EXISTS (SELECT 1 FROM crm_contact c WHERE c.workspace_id = m.workspace_id AND c.account_id::text = $2 AND lower(COALESCE(c.email, '')) <> '' AND (lower(m.from_email) = lower(c.email) OR EXISTS (SELECT 1 FROM unnest(m.to_emails) AS x(email) WHERE lower(x.email) = lower(c.email)) OR EXISTS (SELECT 1 FROM unnest(m.cc_emails) AS x(email) WHERE lower(x.email) = lower(c.email)))))
 			  AND ($3 = '' OR t.mailbox = $3)
 			  AND (` + folderCondition + `)
 			  AND (` + filterCondition + `)
@@ -3334,6 +3393,15 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 		"priority_hint":  priority,
 		"status_hint":    status,
 		"auto_generated": true,
+	}
+	if llmProfile, err := h.generateCRMAccountProfileWithLLM(ctx, name, summary, projectSource, issueSource, emailEvidence, noteEvidence, crmTextValue(notes)); err == nil && len(llmProfile) > 0 {
+		for key, value := range llmProfile {
+			profile[key] = value
+		}
+		profile["auto_generated"] = true
+		profile["generated_by"] = "llm"
+	} else if err != nil {
+		slog.Warn("CRM account profile LLM generation failed; using deterministic fallback", "account_id", uuidToString(accountID), "error", err)
 	}
 	profileJSON, _ := json.Marshal(profile)
 	var id pgtype.UUID
