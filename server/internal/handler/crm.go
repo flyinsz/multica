@@ -774,6 +774,53 @@ func trimCRMProfileSnippet(s string, limit int) string {
 	return strings.TrimSpace(s[:limit])
 }
 
+func profileValueFromEvidence(emailSnippets, noteSnippets []string, label, fallback string) string {
+	items := append([]string{}, emailSnippets...)
+	items = append(items, noteSnippets...)
+	matches := make([]string, 0, 3)
+	for _, item := range items {
+		clean := trimCRMProfileSnippet(strings.Join(strings.Fields(item), " "), 180)
+		if clean == "" {
+			continue
+		}
+		matches = append(matches, clean)
+		if len(matches) >= 3 {
+			break
+		}
+	}
+	if len(matches) == 0 {
+		return "待确认：" + fallback
+	}
+	return label + "：" + strings.Join(matches, "；")
+}
+
+func summarizeCRMProfileEvidence(emailSnippets, noteSnippets []string) string {
+	items := append([]string{}, emailSnippets...)
+	items = append(items, noteSnippets...)
+	trimmed := trimCRMProfileList(items, 3, 160)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	return "往来记录摘要：" + strings.Join(trimmed, "；")
+}
+
+func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess string) string {
+	steps := []string{}
+	if strings.HasPrefix(mainProducts, "待确认") {
+		steps = append(steps, "确认客户关注/采购产品")
+	}
+	if strings.HasPrefix(procurementNeeds, "待确认") {
+		steps = append(steps, "补齐数量、目标价、交期、认证和物流要求")
+	}
+	if strings.HasPrefix(decisionProcess, "待确认") {
+		steps = append(steps, "确认决策人和采购流程")
+	}
+	if len(steps) == 0 {
+		steps = append(steps, "基于已确认需求推进报价、样品或下一次跟进")
+	}
+	return strings.Join(steps, "；")
+}
+
 type UpsertCRMAccountProfileRequest struct {
 	Summary     *string         `json:"summary"`
 	ProfileJSON json.RawMessage `json:"profile_json"`
@@ -1828,7 +1875,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			FROM crm_email_message m
 			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
 			WHERE m.workspace_id::text = $1
-			  AND ($2 = '' OR t.account_id::text = $2)
+			  AND ($2 = '' OR t.account_id::text = $2 OR m.account_id::text = $2)
 			  AND ($3 = '' OR t.mailbox = $3)
 			  AND (` + folderCondition + `)
 			  AND (` + filterCondition + `)
@@ -2907,7 +2954,8 @@ func (h *Handler) ListCRMEmailDrafts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.DB.Query(r.Context(), `SELECT id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, ai_generated, created_at, updated_at FROM crm_email_draft WHERE workspace_id=$1 ORDER BY updated_at DESC LIMIT 100`, workspaceID)
+	draftIDFilter := strings.TrimSpace(r.URL.Query().Get("draft_id"))
+	rows, err := h.DB.Query(r.Context(), `SELECT id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, ai_generated, created_at, updated_at FROM crm_email_draft WHERE workspace_id=$1 ORDER BY CASE WHEN $2 <> '' AND id::text = $2 THEN 0 ELSE 1 END, updated_at DESC LIMIT 100`, workspaceID, draftIDFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email drafts")
 		return
@@ -3255,20 +3303,26 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	noteEvidence := strings.Join(trimCRMProfileList(noteSnippets, 5, 160), "\n")
 	businessModel := strings.TrimSpace(strings.Join([]string{industryValue, crmTextValue(website)}, " "))
 	if businessModel == "" {
-		businessModel = "待确认：当前客户基础资料中没有明确业务模式。"
+		businessModel = profileValueFromEvidence(emailSnippets, noteSnippets, "业务模式", "当前客户基础资料中没有明确业务模式。")
 	}
+	profileEvidenceSummary := summarizeCRMProfileEvidence(emailSnippets, noteSnippets)
+	mainProducts := profileValueFromEvidence(emailSnippets, noteSnippets, "主营/关注产品", "请从后续邮件、报价、样品和订单中提炼客户主营/采购产品。")
+	procurementNeeds := profileValueFromEvidence(emailSnippets, noteSnippets, "采购需求", "重点补齐需求产品、数量、目标价格、交期、认证要求、物流方式和采购频率。")
+	painPoints := profileValueFromEvidence(emailSnippets, noteSnippets, "痛点/关注点", "当前往来未明确质量、价格、交期、付款、认证、沟通或售后痛点。")
+	decisionProcess := profileValueFromEvidence(emailSnippets, noteSnippets, "决策链", "需识别询价人、技术确认人、采购负责人、财务/老板审批人和采购周期。")
+	communicationPreference := profileValueFromEvidence(emailSnippets, noteSnippets, "沟通偏好", "根据回复速度、常用邮箱/WhatsApp/电话、语言和时区继续观察。")
 	profile := map[string]any{
-		"customer_summary":         summary,
+		"customer_summary":         strings.TrimSpace(strings.Join([]string{summary, profileEvidenceSummary}, "\n")),
 		"business_model":           businessModel,
-		"main_products":            "待确认：请从后续邮件、报价、样品和订单中提炼客户主营/采购产品，未确认前不要把原文直接当产品结论。",
-		"procurement_needs":        "待确认：重点补齐需求产品、数量、目标价格、交期、认证要求、物流方式和采购频率。",
-		"pain_points":              "待确认：仅记录客户明确表达的质量、价格、交期、付款、认证、沟通或售后痛点；当前自动资料不足，不能直接下结论。",
-		"decision_process":         "待确认：需识别询价人、技术确认人、采购负责人、财务/老板审批人和采购周期。",
-		"communication_preference": "待确认：根据回复速度、常用邮箱/WhatsApp/电话、语言和时区继续观察；当前不要用单封邮件推断偏好。",
-		"recent_progress":          strings.TrimSpace(strings.Join([]string{projectSource, issueSource}, "\n")),
-		"risk_notes":               strings.TrimSpace(strings.Join([]string{crmTextValue(notes), "自动画像只沉淀已确认结论；邮件原文放在 evidence，不再混入画像结论。"}, "\n")),
-		"cooperation_history":      strings.TrimSpace(strings.Join([]string{projectSource, issueSource}, "\n")),
-		"next_step_suggestions":    "下一步：确认客户需求产品、数量、目标价、交期、决策人和下次跟进时间；缺少明确证据时先提问，不要臆测。",
+		"main_products":            mainProducts,
+		"procurement_needs":        procurementNeeds,
+		"pain_points":              painPoints,
+		"decision_process":         decisionProcess,
+		"communication_preference": communicationPreference,
+		"recent_progress":          strings.TrimSpace(strings.Join([]string{projectSource, issueSource, profileEvidenceSummary}, "\n")),
+		"risk_notes":               strings.TrimSpace(strings.Join([]string{crmTextValue(notes), "自动画像优先沉淀可从往来记录佐证的结论；原始片段仍保留在 evidence。"}, "\n")),
+		"cooperation_history":      strings.TrimSpace(strings.Join([]string{projectSource, issueSource, profileEvidenceSummary}, "\n")),
+		"next_step_suggestions":    buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess),
 		"evidence": map[string]any{
 			"recent_email_snippets": emailEvidence,
 			"recent_note_snippets":  noteEvidence,

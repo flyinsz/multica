@@ -535,7 +535,7 @@ export function CRMEmailsPage() {
   });
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId && settingsOpen) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId && settingsOpen) });
-  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts"], queryFn: () => api.listCRMEmailDrafts(), enabled: Boolean(wsId && activeFolder === "drafts"), refetchOnMount: "always" });
+  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts", initialDraftId ?? ""], queryFn: () => api.listCRMEmailDrafts(initialDraftId), enabled: Boolean(wsId && activeFolder === "drafts"), refetchOnMount: "always" });
   const { data: syncRunsData, dataUpdatedAt: syncRunsUpdatedAt } = useQuery({
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),

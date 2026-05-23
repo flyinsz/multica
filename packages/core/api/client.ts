@@ -1351,8 +1351,9 @@ export class ApiClient {
     return this.fetch(`/api/crm/accounts/${accountId}/profile/suggestions/${suggestionId}/apply`, { method: "POST" });
   }
 
-  async listCRMEmailDrafts(): Promise<{ drafts: any[]; total: number }> {
-    return this.fetch("/api/crm/email-drafts");
+  async listCRMEmailDrafts(draftId?: string | null): Promise<{ drafts: any[]; total: number }> {
+    const query = draftId ? `?draft_id=${encodeURIComponent(draftId)}` : "";
+    return this.fetch(`/api/crm/email-drafts${query}`);
   }
 
   async createCRMEmailDraft(data: Record<string, unknown>): Promise<{ ok: boolean; id: string }> {
