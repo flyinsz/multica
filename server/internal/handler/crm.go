@@ -765,6 +765,15 @@ func trimCRMProfileList(items []string, limit, snippetLimit int) []string {
 	return out
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func trimCRMProfileSnippet(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -824,9 +833,9 @@ func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess st
 }
 
 func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountName, fallbackSummary, projectSource, issueSource, emailEvidence, noteEvidence, notes string) (map[string]any, error) {
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("CRM_PROFILE_LLM_BASE_URL")), "/")
-	apiKey := strings.TrimSpace(os.Getenv("CRM_PROFILE_LLM_API_KEY"))
-	model := strings.TrimSpace(os.Getenv("CRM_PROFILE_LLM_MODEL"))
+	baseURL := strings.TrimRight(strings.TrimSpace(firstNonEmpty(os.Getenv("HERMES_MODEL_BASE_URL"), os.Getenv("CRM_PROFILE_LLM_BASE_URL"))), "/")
+	apiKey := strings.TrimSpace(firstNonEmpty(os.Getenv("HERMES_MODEL_API_KEY"), os.Getenv("CRM_PROFILE_LLM_API_KEY")))
+	model := strings.TrimSpace(firstNonEmpty(os.Getenv("HERMES_MODEL"), os.Getenv("CRM_PROFILE_LLM_MODEL")))
 	if baseURL == "" || apiKey == "" || model == "" {
 		return nil, nil
 	}
@@ -2889,19 +2898,19 @@ func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceI
 	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
 	var threadID, accountID, contactID pgtype.UUID
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
-		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, COALESCE(m.account_id,t.account_id), COALESCE(m.contact_id,t.contact_id) FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID, &contactID); err == nil {
+		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, COALESCE(m.account_id,t.account_id,c.account_id), COALESCE(m.contact_id,t.contact_id) FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id LEFT JOIN crm_contact c ON c.id=COALESCE(m.contact_id,t.contact_id) AND c.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID, &contactID); err == nil {
 			return threadID, accountID, contactID, nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 		}
 	}
 	threadKey := cfg.ID + ":subject-from:" + normalizeCRMEmailThreadSubject(subject) + ":" + strings.ToLower(strings.TrimSpace(message.FromEmail))
-	if err := h.DB.QueryRow(ctx, `SELECT id, account_id, contact_id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID, &contactID); err == nil {
+	if err := h.DB.QueryRow(ctx, `SELECT t.id, COALESCE(t.account_id,c.account_id), t.contact_id FROM crm_email_thread t LEFT JOIN crm_contact c ON c.id=t.contact_id AND c.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND t.external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID, &contactID); err == nil {
 		return threadID, accountID, contactID, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	accountID, contactID, err := h.matchCRMEmailContact(ctx, workspaceID, message.FromEmail)
+	accountID, contactID, err := h.matchCRMEmailParties(ctx, workspaceID, message)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
@@ -2913,6 +2922,28 @@ func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceI
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	return threadID, accountID, contactID, nil
+}
+
+func (h *Handler) matchCRMEmailParties(ctx context.Context, workspaceID pgtype.UUID, message crmIMAPFetchedMessage) (pgtype.UUID, pgtype.UUID, error) {
+	emails := []string{message.FromEmail}
+	emails = append(emails, message.ToEmails...)
+	emails = append(emails, message.CcEmails...)
+	seen := map[string]bool{}
+	for _, email := range emails {
+		email = strings.ToLower(strings.TrimSpace(email))
+		if email == "" || seen[email] {
+			continue
+		}
+		seen[email] = true
+		accountID, contactID, err := h.matchCRMEmailContact(ctx, workspaceID, email)
+		if err != nil {
+			return pgtype.UUID{}, pgtype.UUID{}, err
+		}
+		if accountID.Valid || contactID.Valid {
+			return accountID, contactID, nil
+		}
+	}
+	return pgtype.UUID{}, pgtype.UUID{}, nil
 }
 
 func (h *Handler) matchCRMEmailContact(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.UUID, pgtype.UUID, error) {

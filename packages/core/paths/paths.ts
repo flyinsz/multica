@@ -22,7 +22,7 @@ function workspaceScoped(slug: string) {
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
     projects: () => `${ws}/projects`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
-    crm: () => `${ws}/crm`,
+    crm: () => `${ws}/crm/dashboard`,
     crmCustomers: () => `${ws}/crm/customers`,
     crmCustomerDetail: (id: string) => `${ws}/crm/customers/${encode(id)}`,
     crmEmails: () => `${ws}/crm/emails`,

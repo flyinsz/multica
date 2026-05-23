@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { CRMDashboardPage } from "@multica/views/crm/components";
-
-export default function Page() {
-  return <CRMDashboardPage />;
+export default async function Page({ params }: { params: Promise<{ workspaceSlug: string }> }) {
+  const { workspaceSlug } = await params;
+  redirect(`/${workspaceSlug}/crm/dashboard`);
 }
