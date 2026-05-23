@@ -3249,28 +3249,37 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	if summary == "" {
 		summary = "CRM customer profile"
 	}
-	if len(communicationSnippets) > 0 {
-		summary += "。最近往来：" + communicationSnippets[0]
-	}
 	projectSource := strings.Join(trimCRMProfileList(projectTitles, 5, 120), "\n")
 	issueSource := strings.Join(trimCRMProfileList(issueTitles, 5, 160), "\n")
+	emailEvidence := strings.Join(trimCRMProfileList(emailSnippets, 5, 160), "\n")
+	noteEvidence := strings.Join(trimCRMProfileList(noteSnippets, 5, 160), "\n")
+	businessModel := strings.TrimSpace(strings.Join([]string{industryValue, crmTextValue(website)}, " "))
+	if businessModel == "" {
+		businessModel = "待确认：当前客户基础资料中没有明确业务模式。"
+	}
 	profile := map[string]any{
 		"customer_summary":         summary,
-		"business_model":           strings.TrimSpace(strings.Join([]string{industryValue, crmTextValue(website)}, " ")),
-		"main_products":            "根据客户基础信息、往来记录、关联项目和 Issue 持续更新；请在后续沟通中补充具体产品。",
-		"procurement_needs":        "结合最近往来、邮件、项目和 Issue 跟进需求、数量、交期、目标价格和决策人。",
-		"pain_points":              strings.Join(communicationSnippets, "\n"),
-		"decision_process":         "根据联系人、项目、Issue 和历史往来持续归纳；优先确认决策链路和采购周期。",
-		"communication_preference": "参考最近往来渠道、邮件回复习惯和项目协作记录安排跟进。",
-		"recent_progress":          strings.TrimSpace(strings.Join([]string{strings.Join(communicationSnippets, "\n"), projectSource, issueSource}, "\n")),
-		"risk_notes":               strings.TrimSpace(strings.Join([]string{crmTextValue(notes), "自动画像由客户信息、往来记录、邮件、关联项目和 Issue 生成；新增往来或邮件后自动刷新。"}, "\n")),
-		"cooperation_history":      strings.TrimSpace(strings.Join([]string{strings.Join(communicationSnippets, "\n"), projectSource}, "\n")),
-		"next_step_suggestions":    "围绕最近邮件/往来确认采购需求、决策人、目标价格、交期和下一次跟进时间。",
-		"tags":                     []string{status, rating, priority},
-		"rating_hint":              rating,
-		"priority_hint":            priority,
-		"status_hint":              status,
-		"auto_generated":           true,
+		"business_model":           businessModel,
+		"main_products":            "待确认：请从后续邮件、报价、样品和订单中提炼客户主营/采购产品，未确认前不要把原文直接当产品结论。",
+		"procurement_needs":        "待确认：重点补齐需求产品、数量、目标价格、交期、认证要求、物流方式和采购频率。",
+		"pain_points":              "待确认：仅记录客户明确表达的质量、价格、交期、付款、认证、沟通或售后痛点；当前自动资料不足，不能直接下结论。",
+		"decision_process":         "待确认：需识别询价人、技术确认人、采购负责人、财务/老板审批人和采购周期。",
+		"communication_preference": "待确认：根据回复速度、常用邮箱/WhatsApp/电话、语言和时区继续观察；当前不要用单封邮件推断偏好。",
+		"recent_progress":          strings.TrimSpace(strings.Join([]string{projectSource, issueSource}, "\n")),
+		"risk_notes":               strings.TrimSpace(strings.Join([]string{crmTextValue(notes), "自动画像只沉淀已确认结论；邮件原文放在 evidence，不再混入画像结论。"}, "\n")),
+		"cooperation_history":      strings.TrimSpace(strings.Join([]string{projectSource, issueSource}, "\n")),
+		"next_step_suggestions":    "下一步：确认客户需求产品、数量、目标价、交期、决策人和下次跟进时间；缺少明确证据时先提问，不要臆测。",
+		"evidence": map[string]any{
+			"recent_email_snippets": emailEvidence,
+			"recent_note_snippets":  noteEvidence,
+			"projects":              projectSource,
+			"issues":                issueSource,
+		},
+		"tags":           []string{status, rating, priority},
+		"rating_hint":    rating,
+		"priority_hint":  priority,
+		"status_hint":    status,
+		"auto_generated": true,
 	}
 	profileJSON, _ := json.Marshal(profile)
 	var id pgtype.UUID

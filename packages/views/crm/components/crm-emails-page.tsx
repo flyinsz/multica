@@ -628,9 +628,12 @@ export function CRMEmailsPage() {
       setSelectedDraftId(null);
       return;
     }
-    if (selectedDraftId && visibleMailboxDrafts.some((draft: any) => draft.id === selectedDraftId)) return;
+    if (selectedDraftId) {
+      if (visibleMailboxDrafts.some((draft: any) => draft.id === selectedDraftId)) return;
+      if (initialDraftId === selectedDraftId) return;
+    }
     openDraftPreview(visibleMailboxDrafts[0]);
-  }, [activeFolder, visibleMailboxDrafts, selectedDraftId]);
+  }, [activeFolder, visibleMailboxDrafts, selectedDraftId, initialDraftId]);
 
   const folderMessages = useMemo(() => {
     if (activeFolder === "drafts") return [];
