@@ -1937,7 +1937,7 @@ func (h *Handler) scanCRMEmailMessage(row pgx.Row) (crmEmailMessageRow, error) {
 
 func (h *Handler) getCRMEmailThread(w http.ResponseWriter, r *http.Request, threadID pgtype.UUID, workspaceID pgtype.UUID) (crmEmailThreadRow, bool) {
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
-		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
+		SELECT t.id, t.workspace_id, COALESCE(t.account_id, c.account_id) AS account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
 		       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
 		        FROM crm_email_message m2
@@ -1946,9 +1946,10 @@ func (h *Handler) getCRMEmailThread(w http.ResponseWriter, r *http.Request, thre
 		        LIMIT 1) AS last_snippet,
 		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
 		FROM crm_email_thread t
+		LEFT JOIN crm_contact c ON c.id = t.contact_id AND c.workspace_id = t.workspace_id
 		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
 		WHERE t.id = $1 AND t.workspace_id = $2
-		GROUP BY t.id
+		GROUP BY t.id, c.account_id
 	`, threadID, workspaceID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2071,7 +2072,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	threads := []CRMEmailThreadResponse{}
 	if len(threadIDValues) > 0 {
 		threadRows, err := h.DB.Query(r.Context(), `
-			SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
+			SELECT t.id, t.workspace_id, COALESCE(t.account_id, c.account_id) AS account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 			       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
 			       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
 			        FROM crm_email_message m2
@@ -2081,10 +2082,11 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       t.created_at, t.updated_at, COUNT(DISTINCT m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed,
 			       COALESCE(array_agg(DISTINCT l.issue_id::text) FILTER (WHERE l.issue_id IS NOT NULL), ARRAY[]::text[]) AS issue_ids
 			FROM crm_email_thread t
+			LEFT JOIN crm_contact c ON c.id = t.contact_id AND c.workspace_id = t.workspace_id
 			LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
 			LEFT JOIN crm_email_thread_issue_link l ON l.thread_id = t.id
 			WHERE t.workspace_id = $1 AND t.id = ANY($2::uuid[])
-			GROUP BY t.id
+			GROUP BY t.id, c.account_id
 		`, workspaceID, threadIDValues)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list CRM email threads")
@@ -2141,11 +2143,55 @@ func (h *Handler) GetCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := h.autoLinkCRMEmailThreadByContact(r.Context(), workspaceID, threadID); err != nil {
+		slog.Warn("auto-link CRM email thread failed", "error", err, "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID))
+	}
 	thread, ok := h.getCRMEmailThread(w, r, threadID, workspaceID)
 	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
+}
+
+func (h *Handler) autoLinkCRMEmailThreadByContact(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID) error {
+	const bestMatch = `
+		SELECT c.account_id, c.id
+		FROM crm_email_message m
+		JOIN crm_contact c ON c.workspace_id = m.workspace_id
+		WHERE m.workspace_id = $1
+		  AND m.thread_id = $2
+		  AND c.account_id IS NOT NULL
+		  AND lower(trim(COALESCE(c.email, ''))) <> ''
+		  AND (
+			lower(trim(COALESCE(m.from_email, ''))) = lower(trim(c.email))
+			OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.to_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
+			OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.cc_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
+		  )
+		GROUP BY c.account_id, c.id, c.is_primary, c.updated_at
+		ORDER BY count(*) DESC, c.is_primary DESC NULLS LAST, c.updated_at DESC NULLS LAST
+		LIMIT 1
+	`
+	var accountID pgtype.UUID
+	var contactID pgtype.UUID
+	if err := h.DB.QueryRow(ctx, bestMatch, workspaceID, threadID).Scan(&accountID, &contactID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if _, err := h.DB.Exec(ctx, `
+		UPDATE crm_email_thread
+		SET account_id = COALESCE(account_id, $3), contact_id = COALESCE(contact_id, $4), updated_at = now()
+		WHERE workspace_id = $1 AND id = $2 AND (account_id IS NULL OR contact_id IS NULL)
+	`, workspaceID, threadID, accountID, contactID); err != nil {
+		return err
+	}
+	_, err := h.DB.Exec(ctx, `
+		UPDATE crm_email_message
+		SET account_id = COALESCE(account_id, $3), contact_id = COALESCE(contact_id, $4), updated_at = now()
+		WHERE workspace_id = $1 AND thread_id = $2 AND (account_id IS NULL OR contact_id IS NULL)
+	`, workspaceID, threadID, accountID, contactID)
+	return err
 }
 
 func emailDomain(value string) string {
