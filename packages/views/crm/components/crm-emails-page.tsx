@@ -531,7 +531,7 @@ export function CRMEmailsPage() {
   const isEmailRefreshing = emailListQuery.isFetching && !isInitialEmailLoading;
   const { data: accounts = [] } = useQuery({
     ...crmAccountListOptions(wsId, { sort: "name" }),
-    enabled: Boolean(wsId && (associationDraft || composeRecipientPickerOpen || settingsOpen)),
+    enabled: Boolean(wsId),
   });
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId && settingsOpen) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId && settingsOpen) });
