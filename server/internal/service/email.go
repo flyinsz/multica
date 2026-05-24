@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -66,7 +68,9 @@ func (s *EmailService) SendVerificationCode(to, code string) error {
 			</div>`, code),
 	}
 
-	_, err := s.client.Emails.Send(params)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := s.client.Emails.SendWithContext(ctx, params)
 	return err
 }
 

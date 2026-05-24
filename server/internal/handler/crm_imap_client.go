@@ -405,8 +405,9 @@ func parseCRMIMAPBodyParts(header mail.Header, body io.Reader) (string, string, 
 			attachments = append(attachments, nestedAttachments...)
 			continue
 		}
-		if strings.HasPrefix(disposition, "attachment") || contentID != "" {
-			fileName := filenameFromPartHeader(part.Header, contentID)
+		fileName := filenameFromPartHeader(part.Header, contentID)
+		hasFileName := fileName != "attachment" && fileName != contentID
+		if strings.HasPrefix(disposition, "attachment") || hasFileName || (contentID != "" && !strings.HasPrefix(strings.ToLower(partMediaType), "text/")) {
 			attachments = append(attachments, crmEmailAttachment{
 				FileName:    fileName,
 				LegacyName:  fileName,

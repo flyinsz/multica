@@ -283,6 +283,18 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		if err != nil {
 			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(accountID), "error", err)
 		}
+		if parentIssueID.Valid {
+			created++
+			comment := fmt.Sprintf("同一邮件线程收到新的入站邮件，请把新内容合并进当前未处理的回复草稿。\n\n邮件主题：%s\n原邮件：%s\n最新入站时间：%s", subject, messageLink, timestampToString(lastAt))
+			if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, comment); err != nil {
+				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(threadID), "error", err)
+			}
+			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, parentIssueID, threadID, messageID, subject, accountName); err != nil {
+				slog.Warn("CRM pending reply merge draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(threadID), "error", err)
+				_ = h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, "同线程新邮件已收到，但自动生成合并回复草稿失败："+err.Error())
+			}
+			continue
+		}
 		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID, projectID)
 		if err != nil {
 			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
@@ -406,7 +418,7 @@ func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID
 		SELECT i.id
 		FROM crm_email_thread_issue_link l
 		JOIN issue i ON i.id=l.issue_id AND i.workspace_id=$1
-		WHERE l.thread_id=$2 AND i.origin_type='crm_ai' AND i.parent_issue_id IS NULL
+		WHERE l.thread_id=$2 AND i.origin_type='crm_ai' AND i.parent_issue_id IS NULL AND i.status <> 'cancelled'
 		ORDER BY i.created_at ASC
 		LIMIT 1`, workspaceID, threadID).Scan(&issueID)
 	if errors.Is(err, pgx.ErrNoRows) {
