@@ -1967,6 +1967,9 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := h.autoLinkCRMEmailWorkspaceByContact(r.Context(), workspaceID); err != nil {
+		slog.Warn("auto-link CRM email workspace failed", "error", err, "workspace_id", uuidToString(workspaceID))
+	}
 	accountIDRaw := strings.TrimSpace(r.URL.Query().Get("account_id"))
 	accountID, ok := optionalUUID(w, optionalStringFromQuery(r, "account_id"), "account_id")
 	if !ok {
@@ -2191,6 +2194,45 @@ func (h *Handler) autoLinkCRMEmailThreadByContact(ctx context.Context, workspace
 		SET account_id = COALESCE(account_id, $3), contact_id = COALESCE(contact_id, $4), updated_at = now()
 		WHERE workspace_id = $1 AND thread_id = $2 AND (account_id IS NULL OR contact_id IS NULL)
 	`, workspaceID, threadID, accountID, contactID)
+	return err
+}
+
+func (h *Handler) autoLinkCRMEmailWorkspaceByContact(ctx context.Context, workspaceID pgtype.UUID) error {
+	const matchCTE = `
+		WITH best AS (
+			SELECT DISTINCT ON (m.thread_id)
+				m.thread_id, c.account_id, c.id AS contact_id
+			FROM crm_email_message m
+			JOIN crm_contact c ON c.workspace_id = m.workspace_id
+			WHERE m.workspace_id = $1
+			  AND c.account_id IS NOT NULL
+			  AND lower(trim(COALESCE(c.email, ''))) <> ''
+			  AND (
+				lower(trim(COALESCE(m.from_email, ''))) = lower(trim(c.email))
+				OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.to_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
+				OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.cc_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
+			  )
+			ORDER BY m.thread_id, c.is_primary DESC NULLS LAST, c.updated_at DESC NULLS LAST
+		)
+	`
+	if _, err := h.DB.Exec(ctx, matchCTE+`
+		UPDATE crm_email_thread t
+		SET account_id = COALESCE(t.account_id, b.account_id),
+			contact_id = COALESCE(t.contact_id, b.contact_id),
+			updated_at = now()
+		FROM best b
+		WHERE t.workspace_id = $1 AND t.id = b.thread_id AND (t.account_id IS NULL OR t.contact_id IS NULL)
+	`, workspaceID); err != nil {
+		return err
+	}
+	_, err := h.DB.Exec(ctx, matchCTE+`
+		UPDATE crm_email_message m
+		SET account_id = COALESCE(m.account_id, b.account_id),
+			contact_id = COALESCE(m.contact_id, b.contact_id),
+			updated_at = now()
+		FROM best b
+		WHERE m.workspace_id = $1 AND m.thread_id = b.thread_id AND (m.account_id IS NULL OR m.contact_id IS NULL)
+	`, workspaceID)
 	return err
 }
 
