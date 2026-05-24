@@ -2011,7 +2011,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	}
 	query := `
 		WITH message_rows AS (
-			SELECT m.id, m.workspace_id, m.thread_id, COALESCE(m.account_id, t.account_id, c.account_id), COALESCE(m.contact_id, t.contact_id),
+			SELECT m.id, m.workspace_id, m.thread_id, COALESCE(m.account_id, t.account_id, c.account_id) AS account_id, COALESCE(m.contact_id, t.contact_id) AS contact_id,
 			       m.subject, COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) AS snippet,
 			       t.mailbox, COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX') AS folder,
 			       m.direction, t.status, COALESCE(m.is_read, t.is_read) AS is_read,
