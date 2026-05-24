@@ -853,6 +853,46 @@ func summarizeCRMProfileEvidence(emailSnippets, noteSnippets []string) string {
 	return "往来记录摘要：" + strings.Join(trimmed, "；")
 }
 
+func cleanCRMProfileValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "——"
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '；' || r == ';' || r == '\n' || r == '\r'
+	})
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		part = strings.Trim(part, "，,。.:：-— ")
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "——") || isVagueCRMProfileFragment(part) {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if len(kept) == 0 {
+		return "——"
+	}
+	return strings.Join(kept, "；")
+}
+
+func isVagueCRMProfileFragment(part string) bool {
+	part = strings.TrimSpace(part)
+	return strings.HasPrefix(part, "具体") && len([]rune(part)) <= 12
+}
+
+func cleanCRMProfile(profile map[string]any) map[string]any {
+	for _, key := range []string{"customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions"} {
+		if value, ok := profile[key].(string); ok {
+			profile[key] = cleanCRMProfileValue(value)
+		}
+	}
+	return profile
+}
+
 func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess string) string {
 	steps := []string{}
 	if mainProducts == "——" {
@@ -878,7 +918,7 @@ func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountN
 	if baseURL == "" || apiKey == "" || model == "" {
 		return nil, nil
 	}
-	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 每个已明确字段写可执行、具体内容。\n\n" +
+	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容。\n\n" +
 		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
 	payload := map[string]any{
 		"model": model,
@@ -926,7 +966,7 @@ func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountN
 		return nil, err
 	}
 	profile["generated_by"] = source
-	return profile, nil
+	return cleanCRMProfile(profile), nil
 }
 
 type UpsertCRMAccountProfileRequest struct {
@@ -3474,6 +3514,7 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	} else if err != nil {
 		slog.Warn("CRM account profile LLM generation failed; using deterministic fallback", "account_id", uuidToString(accountID), "error", err)
 	}
+	profile = cleanCRMProfile(profile)
 	profileJSON, _ := json.Marshal(profile)
 	var id pgtype.UUID
 	var rawProfile []byte
