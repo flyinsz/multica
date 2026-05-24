@@ -274,7 +274,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		if !ownerMemberID.Valid {
 			reviewerLine = "审核人：客户没有负责人，请交由 imchow 审核。"
 		}
-		body := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n客户：%s\n邮件主题：%s\n邮件线程：%s\n原邮件：%s\n最新入站时间：%s\n处理要求：Issue 负责人拟订回复草稿，并将草稿回复到评论中。%s\n流转说明：Issue 状态流转交由 Multica 自动化流程处理，不需要人工修改核心流转。", accountName, subject, uuidToString(threadID), messageLink, timestampToString(lastAt), reviewerLine)
+		body := h.buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID, accountName, subject, messageLink, timestampToString(lastAt), reviewerLine)
 		parentIssueID, err := h.findCRMEmailThreadParentIssue(ctx, workspaceID, threadID)
 		if err != nil {
 			slog.Warn("CRM pending reply parent issue lookup failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
@@ -285,13 +285,9 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		}
 		if parentIssueID.Valid {
 			created++
-			comment := fmt.Sprintf("同一邮件线程收到新的入站邮件，请把新内容合并进当前未处理的回复草稿。\n\n邮件主题：%s\n原邮件：%s\n最新入站时间：%s", subject, messageLink, timestampToString(lastAt))
+			comment := h.buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID, subject, messageLink, timestampToString(lastAt), reviewerLine)
 			if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, comment); err != nil {
 				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(threadID), "error", err)
-			}
-			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, parentIssueID, threadID, messageID, subject, accountName); err != nil {
-				slog.Warn("CRM pending reply merge draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(threadID), "error", err)
-				_ = h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, "同线程新邮件已收到，但自动生成合并回复草稿失败："+err.Error())
 			}
 			continue
 		}
@@ -304,10 +300,6 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 			created++
 			if accountID.Valid || contactID.Valid {
 				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$3), contact_id=COALESCE(contact_id,$4), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, accountID, contactID)
-			}
-			if err := h.createCRMAIPendingReplyDraft(ctx, workspaceID, issueID, threadID, messageID, subject, accountName); err != nil {
-				slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(threadID), "error", err)
-				_ = h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "待回复邮件 Issue 已创建，但自动生成回复草稿失败："+err.Error())
 			}
 		}
 	}
@@ -369,28 +361,15 @@ func stringsTrimForCRM(value string, limit int) string {
 	return string(r[:limit])
 }
 
-func (h *Handler) createCRMAIPendingReplyDraft(ctx context.Context, workspaceID, issueID, threadID, messageID pgtype.UUID, subject, accountName string) error {
-	var mailboxID, accountID, contactID pgtype.UUID
-	var fromEmail, bodyText, bodyHTML, inReplyTo string
-	var refs []string
-	if err := h.DB.QueryRow(ctx, `
-		SELECT s.id, m.account_id, m.contact_id, COALESCE(m.from_email,''), COALESCE(m.body_text,''), COALESCE(m.body_html,''), COALESCE(m.external_message_id,''), m.reference_ids
-		FROM crm_email_message m
-		JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id
-		LEFT JOIN crm_imap_setting s ON s.workspace_id=m.workspace_id AND lower(s.email)=lower(t.mailbox)
-		WHERE m.workspace_id=$1 AND m.thread_id=$2 AND m.direction='inbound'
-		ORDER BY COALESCE(m.received_at, m.created_at) DESC LIMIT 1`, workspaceID, threadID).Scan(&mailboxID, &accountID, &contactID, &fromEmail, &bodyText, &bodyHTML, &inReplyTo, &refs); err != nil {
-		return err
+func (h *Handler) buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID pgtype.UUID, accountName, subject, messageLink, latestAt, reviewerLine string) string {
+	if strings.TrimSpace(accountName) == "" {
+		accountName = "未绑定客户"
 	}
-	reason := fmt.Sprintf("草稿思路：依据最新入站邮件内容、当前邮件线程、已绑定客户资料和历史往来生成。客户：%s。回复策略：先确认已收到客户问题，再承诺核对细节并推进下一步；如果客户历史资料里显示更重视品质、交期、价格或售后，负责人审核时应把对应承诺补强。风险：AI 草稿需人工核对事实、订单历史、价格、交期、品质承诺和附件后再发送。", accountName)
-	draftBody := fmt.Sprintf("您好，\n\n感谢您的来信。我们已收到关于“%s”的信息，会尽快确认细节并回复您。\n\nBest regards", subject)
-	var draftID pgtype.UUID
-	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, subject, body_text, body_html, in_reply_to, reference_ids, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending_approval',true,$13) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, issueID, []string{fromEmail}, "Re: "+subject, draftBody, cleanOptionalText(&bodyHTML), cleanOptionalText(&inReplyTo), refs, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
-		return err
-	}
-	draftURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?draft="+uuidToString(draftID))
-	messageURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(messageID)+"&thread="+uuidToString(threadID))
-	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核邮件草稿。\n\n草稿链接：[%s](%s)\n\n原邮件链接：[%s](%s)\n\n%s\n\n原邮件摘要：%s", draftURL, draftURL, messageURL, messageURL, reason, stringsTrimForCRM(bodyText, 600)))
+	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. 请由 Multica Issue 流程自动生成待审核邮件草稿，不要依赖巡检程序写死模板。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，并在开头引用或概括原邮件关键问题，再给出回复。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 若客户已有负责人，由客户负责人审核；若没有负责人，交由 imchow 审核。\n%s\n\n流转说明：Issue 状态流转交由 Multica 自动化流程处理，不需要人工修改核心流转。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+}
+
+func (h *Handler) buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID pgtype.UUID, subject, messageLink, latestAt, reviewerLine string) string {
+	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复草稿。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要把历史往来/profile 摘要展开写进 Issue。草稿必须中文撰写，并在开头引用或概括原邮件关键问题后再回复。%s", subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
 }
 
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {
@@ -465,36 +444,44 @@ func (h *Handler) ensureCRMAccountProject(ctx context.Context, workspaceID, acco
 
 func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
-	creatorID, err := h.crmAgentByName(ctx, workspaceID, "CRM-Assistant")
+	creatorType, creatorID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "CRM-Assistant")
 	if err != nil {
 		return issueID, err
 	}
-	assigneeID, err := h.crmAgentByName(ctx, workspaceID, "Jarvis")
+	assigneeType, assigneeID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "Jarvis")
 	if err != nil {
 		return issueID, err
 	}
 	err = h.DB.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
-			SELECT $1, $2, $3, 'todo', 'medium', 'agent', $6, 'agent', $5, $7, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $9
+			SELECT $1, $2, $3, 'todo', 'medium', $6, $7, $8, $9, $10, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $12
 			WHERE NOT EXISTS (
 				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4
 			)
 			RETURNING id
 		), linked AS (
 			INSERT INTO crm_email_thread_issue_link (thread_id, issue_id)
-			SELECT $8, id FROM inserted
+			SELECT $11, id FROM inserted
 			ON CONFLICT DO NOTHING
 		), thread_update AS (
 			UPDATE crm_email_thread
-			SET issue_id=COALESCE(NULLIF($7, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
-			WHERE workspace_id=$1 AND id=$8 AND EXISTS (SELECT 1 FROM inserted)
+			SET issue_id=COALESCE(NULLIF($10, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
+			WHERE workspace_id=$1 AND id=$11 AND EXISTS (SELECT 1 FROM inserted)
 		)
-		SELECT id FROM inserted`, workspaceID, title, body, messageID, creatorID, assigneeID, parentIssueID, threadID, projectID).Scan(&issueID)
+		SELECT id FROM inserted`, workspaceID, title, body, messageID, creatorType, assigneeType, assigneeID, creatorType, creatorID, parentIssueID, threadID, projectID).Scan(&issueID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, nil
 	}
 	return issueID, err
+}
+
+func (h *Handler) crmIssueActorByAgentNameOrFallback(ctx context.Context, workspaceID pgtype.UUID, name string) (string, pgtype.UUID, error) {
+	agentID, err := h.crmAgentByName(ctx, workspaceID, name)
+	if err == nil && agentID.Valid {
+		return "agent", agentID, nil
+	}
+	return h.crmIssueCommentAuthor(ctx, workspaceID)
 }
 
 func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype.UUID, title, body, originID string, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {
