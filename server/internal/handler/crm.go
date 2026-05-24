@@ -774,6 +774,44 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func (h *Handler) resolveCRMProfileAgentLLMConfig(ctx context.Context) (string, string, string, string) {
+	var model pgtype.Text
+	var runtimeConfig, customEnv []byte
+	if err := h.DB.QueryRow(ctx, `
+		SELECT a.model, a.runtime_config, a.custom_env
+		FROM agent a
+		JOIN agent_runtime r ON r.id = a.runtime_id
+		WHERE lower(a.name) = 'jarvis'
+		  AND r.provider = 'hermes'
+		ORDER BY CASE WHEN r.status = 'online' THEN 0 ELSE 1 END, a.updated_at DESC
+		LIMIT 1
+	`).Scan(&model, &runtimeConfig, &customEnv); err == nil {
+		config := map[string]any{}
+		_ = json.Unmarshal(runtimeConfig, &config)
+		env := map[string]any{}
+		_ = json.Unmarshal(customEnv, &env)
+		baseURL := firstNonEmpty(stringValue(config["base_url"]), stringValue(config["baseURL"]), stringValue(env["HERMES_MODEL_BASE_URL"]), os.Getenv("HERMES_MODEL_BASE_URL"))
+		apiKey := firstNonEmpty(stringValue(config["api_key"]), stringValue(config["apiKey"]), stringValue(env["HERMES_MODEL_API_KEY"]), os.Getenv("HERMES_MODEL_API_KEY"))
+		modelName := firstNonEmpty(textValue(model), stringValue(config["model"]), stringValue(env["HERMES_MODEL"]), os.Getenv("HERMES_MODEL"))
+		if baseURL != "" && apiKey != "" && modelName != "" {
+			return baseURL, apiKey, modelName, "agent:Jarvis"
+		}
+	}
+	return firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_BASE_URL"), os.Getenv("HERMES_MODEL_BASE_URL")), firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_API_KEY"), os.Getenv("HERMES_MODEL_API_KEY")), firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_MODEL"), os.Getenv("HERMES_MODEL")), "env:fallback"
+}
+
+func stringValue(value any) string {
+	s, _ := value.(string)
+	return strings.TrimSpace(s)
+}
+
+func textValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return strings.TrimSpace(value.String)
+}
+
 func trimCRMProfileSnippet(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -800,7 +838,7 @@ func profileValueFromEvidence(emailSnippets, noteSnippets []string, label, fallb
 		}
 	}
 	if len(matches) == 0 {
-		return "待确认：" + fallback
+		return "——"
 	}
 	return label + "：" + strings.Join(matches, "；")
 }
@@ -817,13 +855,13 @@ func summarizeCRMProfileEvidence(emailSnippets, noteSnippets []string) string {
 
 func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess string) string {
 	steps := []string{}
-	if strings.HasPrefix(mainProducts, "待确认") {
+	if mainProducts == "——" {
 		steps = append(steps, "确认客户关注/采购产品")
 	}
-	if strings.HasPrefix(procurementNeeds, "待确认") {
+	if procurementNeeds == "——" {
 		steps = append(steps, "补齐数量、目标价、交期、认证和物流要求")
 	}
-	if strings.HasPrefix(decisionProcess, "待确认") {
+	if decisionProcess == "——" {
 		steps = append(steps, "确认决策人和采购流程")
 	}
 	if len(steps) == 0 {
@@ -833,13 +871,14 @@ func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess st
 }
 
 func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountName, fallbackSummary, projectSource, issueSource, emailEvidence, noteEvidence, notes string) (map[string]any, error) {
-	baseURL := strings.TrimRight(strings.TrimSpace(firstNonEmpty(os.Getenv("HERMES_MODEL_BASE_URL"), os.Getenv("CRM_PROFILE_LLM_BASE_URL"))), "/")
-	apiKey := strings.TrimSpace(firstNonEmpty(os.Getenv("HERMES_MODEL_API_KEY"), os.Getenv("CRM_PROFILE_LLM_API_KEY")))
-	model := strings.TrimSpace(firstNonEmpty(os.Getenv("HERMES_MODEL"), os.Getenv("CRM_PROFILE_LLM_MODEL")))
+	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	apiKey = strings.TrimSpace(apiKey)
+	model = strings.TrimSpace(model)
 	if baseURL == "" || apiKey == "" || model == "" {
 		return nil, nil
 	}
-	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 不知道才写待确认；4) 每个字段写可执行、具体内容。\n\n" +
+	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 每个已明确字段写可执行、具体内容。\n\n" +
 		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
 	payload := map[string]any{
 		"model": model,
@@ -886,6 +925,7 @@ func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountN
 	if err := json.Unmarshal([]byte(content), &profile); err != nil {
 		return nil, err
 	}
+	profile["generated_by"] = source
 	return profile, nil
 }
 
