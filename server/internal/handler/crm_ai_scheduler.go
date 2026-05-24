@@ -54,6 +54,13 @@ type crmAISettingRow struct {
 	Config          json.RawMessage
 }
 
+type crmAIIssueActorConfig struct {
+	CreatorType      string `json:"issue_creator_type"`
+	CreatorID        string `json:"issue_creator_id"`
+	TodoAssigneeType string `json:"issue_todo_assignee_type"`
+	TodoAssigneeID   string `json:"issue_todo_assignee_id"`
+}
+
 func (s *CRMAIAutoScheduler) runOnce(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
@@ -119,9 +126,9 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 	var err error
 	switch item.AutomationKey {
 	case "email_pending_reply":
-		result, err = h.runCRMPendingReplyAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun)
+		result, err = h.runCRMPendingReplyAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun, item.Config)
 	case "due_followup":
-		result, err = h.runCRMDueFollowupAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun)
+		result, err = h.runCRMDueFollowupAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun, item.Config)
 	case "profile_new_activity_refresh":
 		result, err = h.runCRMRecentActivityProfileRefresh(ctx, item.WorkspaceID, item.MaxItemsPerRun)
 	case "profile_daily_refresh":
@@ -217,9 +224,13 @@ func (h *Handler) refreshProfilesFromRows(ctx context.Context, workspaceID pgtyp
 	return map[string]any{"automation_key": key, "refreshed": refreshed, "failed": failed}, nil
 }
 
-func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int) (map[string]any, error) {
+func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 10
+	}
+	issueActors, err := h.crmAIIssueActors(ctx, workspaceID, config)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := h.DB.Query(ctx, `
 		WITH latest AS (
@@ -288,7 +299,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 			}
 			continue
 		}
-		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID, projectID)
+		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID, projectID, issueActors)
 		if err != nil {
 			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
 			continue
@@ -306,9 +317,13 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	return map[string]any{"automation_key": "email_pending_reply", "candidates": candidates, "created": created}, nil
 }
 
-func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int) (map[string]any, error) {
+func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
+	}
+	issueActors, err := h.crmAIIssueActors(ctx, workspaceID, config)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := h.DB.Query(ctx, `
 		SELECT id, name, next_follow_up_at
@@ -332,13 +347,8 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		var ownerMemberID pgtype.UUID
 		_ = h.DB.QueryRow(ctx, `SELECT (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
 		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, ownerMemberID)
-		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\n处理要求：\n1. Issue 初始负责人必须为 Multica agent Jarvis，由 Jarvis 负责生成客户跟进邮件草稿。\n2. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n3. %s\n4. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), reviewerLine)
-		assigneeType, assigneeID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "Jarvis")
-		if err != nil {
-			slog.Warn("CRM due followup Jarvis lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(accountID), "error", err)
-			continue
-		}
-		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), assigneeType, assigneeID)
+		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n3. %s\n4. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), reviewerLine)
+		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), issueActors)
 		if err == nil && issueID.Valid {
 			created++
 			_ = h.createCRMAIFollowupDraft(ctx, workspaceID, issueID, accountID, name, timestampToString(due))
@@ -380,7 +390,7 @@ func (h *Handler) buildCRMPendingReplyIssueBody(threadID, messageID, accountID, 
 	if strings.TrimSpace(accountName) == "" {
 		accountName = "未绑定客户"
 	}
-	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. Issue 初始负责人必须为 Multica agent Jarvis，由 Jarvis 负责生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：todo 阶段由 Jarvis 接手；进入审核阶段时显性转交给上述客户所有人。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：todo 阶段由配置负责人接手；进入审核阶段时显性转交给上述客户所有人。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
 }
 
 func (h *Handler) buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID pgtype.UUID, subject, messageLink, latestAt, reviewerLine string) string {
@@ -457,17 +467,11 @@ func (h *Handler) ensureCRMAccountProject(ctx context.Context, workspaceID, acco
 	return projectID, err
 }
 
-func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID) (pgtype.UUID, error) {
+func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID, actors crmAIIssueActorConfig) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
-	creatorType, creatorID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "CRM-Assistant")
-	if err != nil {
-		return issueID, err
-	}
-	assigneeType, assigneeID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "Jarvis")
-	if err != nil {
-		return issueID, err
-	}
-	err = h.DB.QueryRow(ctx, `
+	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
+	assigneeType, assigneeID := actors.TodoAssigneeType, mustParsePgUUID(actors.TodoAssigneeID)
+	err := h.DB.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
 			SELECT $1, $2, $3, 'todo', 'medium', $6, $7, $8, $9, $10, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $12
@@ -491,6 +495,54 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	return issueID, err
 }
 
+func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID, config json.RawMessage) (crmAIIssueActorConfig, error) {
+	var cfg crmAIIssueActorConfig
+	_ = json.Unmarshal(config, &cfg)
+	if cfg.CreatorType == "" || cfg.CreatorID == "" {
+		actorType, actorID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "CRM-Assistant")
+		if err != nil {
+			return cfg, err
+		}
+		cfg.CreatorType = actorType
+		cfg.CreatorID = uuidToString(actorID)
+	}
+	if cfg.TodoAssigneeType == "" || cfg.TodoAssigneeID == "" {
+		actorType, actorID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "Jarvis")
+		if err != nil {
+			return cfg, err
+		}
+		cfg.TodoAssigneeType = actorType
+		cfg.TodoAssigneeID = uuidToString(actorID)
+	}
+	if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.CreatorType, cfg.CreatorID); err != nil {
+		return cfg, fmt.Errorf("invalid CRM AI issue creator: %w", err)
+	}
+	if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.TodoAssigneeType, cfg.TodoAssigneeID); err != nil {
+		return cfg, fmt.Errorf("invalid CRM AI issue todo assignee: %w", err)
+	}
+	return cfg, nil
+}
+
+func (h *Handler) validateCRMIssueActor(ctx context.Context, workspaceID pgtype.UUID, actorType, actorID string) error {
+	parsed, err := parseUUIDStringToPgtype(actorID)
+	if err != nil {
+		return err
+	}
+	switch actorType {
+	case "member":
+		return h.DB.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND id=$2`, workspaceID, parsed).Scan(&parsed)
+	case "agent":
+		return h.DB.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL`, workspaceID, parsed).Scan(&parsed)
+	default:
+		return fmt.Errorf("unsupported actor type %q", actorType)
+	}
+}
+
+func mustParsePgUUID(value string) pgtype.UUID {
+	parsed, _ := parseUUIDStringToPgtype(value)
+	return parsed
+}
+
 func (h *Handler) crmIssueActorByAgentNameOrFallback(ctx context.Context, workspaceID pgtype.UUID, name string) (string, pgtype.UUID, error) {
 	agentID, err := h.crmAgentByName(ctx, workspaceID, name)
 	if err == nil && agentID.Valid {
@@ -499,16 +551,14 @@ func (h *Handler) crmIssueActorByAgentNameOrFallback(ctx context.Context, worksp
 	return h.crmIssueCommentAuthor(ctx, workspaceID)
 }
 
-func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype.UUID, title, body, originID string, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {
+func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype.UUID, title, body, originID string, actors crmAIIssueActorConfig) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
 	originUUID, err := parseUUIDStringToPgtype(originID)
 	if err != nil {
 		return issueID, err
 	}
-	creatorType, creatorID, err := h.crmIssueCommentAuthor(ctx, workspaceID)
-	if err != nil {
-		return issueID, err
-	}
+	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
+	assigneeType, assigneeID := actors.TodoAssigneeType, mustParsePgUUID(actors.TodoAssigneeID)
 	err = h.DB.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, origin_type, origin_id, number)
 		SELECT $1, $2, $3, 'todo', 'medium', NULLIF($7,''), $8, $5, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
