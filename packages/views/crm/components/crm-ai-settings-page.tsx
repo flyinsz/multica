@@ -1,14 +1,21 @@
 "use client";
 /* eslint-disable i18next/no-literal-string */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, Clock, Mail, RefreshCw, Users } from "lucide-react";
+import { Activity, ArrowLeft, Bot, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { crmKeys } from "@multica/core/crm/queries";
 import { agentListOptions } from "@multica/core/workspace/queries";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
@@ -286,10 +293,67 @@ function SettingCard({ setting, agents }: { setting: CRMAISetting; agents: Array
   );
 }
 
+function SettingListRow({
+  setting,
+  agentName,
+  onConfigure,
+}: {
+  setting: CRMAISetting;
+  agentName: string;
+  onConfigure: () => void;
+}) {
+  const info = meta[setting.automation_key];
+  const Icon = info.icon;
+  return (
+    <div
+      className="grid min-h-16 grid-cols-[minmax(260px,1fr)_120px_160px_160px_60px] items-center border-b px-4 text-sm last:border-b-0 hover:bg-muted/30"
+      onDoubleClick={onConfigure}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="shrink-0 rounded-md bg-muted p-2">
+          <Icon className="size-4 text-muted-foreground" />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate font-medium">{info.title}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">{info.description}</div>
+        </div>
+      </div>
+      <div>
+        <Badge variant={setting.enabled ? "default" : "secondary"}>{setting.enabled ? "已启用" : "已停用"}</Badge>
+      </div>
+      <div className="truncate text-xs text-muted-foreground">{agentName}</div>
+      <div className="truncate text-xs text-muted-foreground">{fmt(setting.last_checked_at)}</div>
+      <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon-sm" aria-label="打开操作菜单" />
+            }
+          >
+            <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-auto">
+            <DropdownMenuItem onClick={onConfigure}>
+              <Settings className="h-3.5 w-3.5" />
+              配置
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
 export function CRMAISettingsPage() {
   const wsId = useWorkspaceId();
-  const { data, isLoading } = useQuery({ queryKey: crmKeys.aiSettings(wsId), queryFn: () => api.listCRMAISettings(), select: (res) => res.settings as CRMAISetting[] });
+  const { data = [], isLoading } = useQuery({ queryKey: crmKeys.aiSettings(wsId), queryFn: () => api.listCRMAISettings(), select: (res) => res.settings as CRMAISetting[] });
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const [selectedKey, setSelectedKey] = useState<SettingKey | null>(null);
+
+  const selectedSetting = useMemo(
+    () => data.find((setting) => setting.automation_key === selectedKey) ?? null,
+    [data, selectedKey],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -297,14 +361,56 @@ export function CRMAISettingsPage() {
         <div className="flex items-center gap-2">
           <Bot className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">CRM AI</h1>
+          {!selectedSetting && data.length > 0 ? (
+            <span className="font-mono text-xs tabular-nums text-muted-foreground/70">{data.length}</span>
+          ) : null}
         </div>
+        {selectedSetting ? (
+          <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedKey(null)}>
+            <ArrowLeft className="h-3.5 w-3.5" />
+            返回列表
+          </Button>
+        ) : null}
       </PageHeader>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 pb-10">
-        <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-          这些设置控制 Hermes 低成本 SQL watchdog。SQL 先做候选筛选与去重/已处理审视；只有发现真实待处理事项时，才创建 Multica issue 并启动 AI。
+
+      {selectedSetting ? (
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-10">
+          <SettingCard setting={selectedSetting} agents={agents} />
         </div>
-        {isLoading ? <Skeleton className="h-48" /> : data?.map((setting) => <SettingCard key={setting.automation_key} setting={setting} agents={agents} />)}
-      </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
+          <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
+            这些设置控制 Hermes 低成本 SQL watchdog。SQL 先做候选筛选与去重/已处理审视；只有发现真实待处理事项时，才创建 Multica issue 并启动 AI。
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background">
+            <div className="grid h-11 shrink-0 grid-cols-[minmax(260px,1fr)_120px_160px_160px_60px] items-center border-b px-4 text-xs font-medium text-muted-foreground">
+              <div>自动化</div>
+              <div>状态</div>
+              <div>执行 Agent</div>
+              <div>上次检查</div>
+              <div />
+            </div>
+            {isLoading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-md" />
+                ))}
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {data.map((setting) => (
+                  <SettingListRow
+                    key={setting.automation_key}
+                    setting={setting}
+                    agentName={agents.find((agent) => agent.id === setting.assignee_agent_id)?.name ?? "默认 Agent"}
+                    onConfigure={() => setSelectedKey(setting.automation_key)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

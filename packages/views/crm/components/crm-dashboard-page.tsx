@@ -13,7 +13,7 @@ import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 import { countryByCode, localizedName, localizedSort, normalizeLocale } from "../geo";
-import { CRM_INDUSTRY_OPTIONS, industryLabel } from "../options";
+import { industryLabel } from "../options";
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString() : "—";
