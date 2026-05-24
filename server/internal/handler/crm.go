@@ -345,6 +345,7 @@ type crmEmailListItemRow struct {
 	SentAt             pgtype.Timestamptz
 	ReceivedAt         pgtype.Timestamptz
 	Attachments        []byte
+	AttachmentCount    int64
 	ThreadMessageCount int64
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
@@ -596,7 +597,7 @@ func crmEmailListItemToResponse(row crmEmailListItemRow) CRMEmailListItemRespons
 		SentAt:             timestampToPtr(row.SentAt),
 		ReceivedAt:         timestampToPtr(row.ReceivedAt),
 		Attachments:        attachments,
-		AttachmentCount:    len(attachments),
+		AttachmentCount:    int(row.AttachmentCount),
 		ThreadMessageCount: row.ThreadMessageCount,
 		CreatedAt:          timestampToString(row.CreatedAt),
 		UpdatedAt:          timestampToString(row.UpdatedAt),
@@ -2022,6 +2023,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(m.is_starred, t.is_starred) AS is_starred, COALESCE(m.is_trashed, t.is_trashed) AS is_trashed,
 			       m.from_email, m.from_name, m.to_emails, m.sent_at, m.received_at,
 			       COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(m.attachments) = 'array' THEN m.attachments ELSE '[]'::jsonb END) AS elem), '[]'::jsonb) AS attachments,
+			       jsonb_array_length(CASE WHEN jsonb_typeof(m.attachments) = 'array' THEN m.attachments ELSE '[]'::jsonb END)::bigint AS attachment_count,
 			       COUNT(*) OVER (PARTITION BY m.thread_id)::bigint AS thread_message_count,
 			       m.created_at, m.updated_at
 			FROM crm_email_message m
@@ -2035,7 +2037,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT id, workspace_id, thread_id, account_id, contact_id, subject, snippet, mailbox, folder,
 		       direction, status, is_read, is_starred, is_trashed, from_email, from_name, to_emails,
-		       sent_at, received_at, attachments, thread_message_count, created_at, updated_at
+		       sent_at, received_at, attachments, attachment_count, thread_message_count, created_at, updated_at
 		FROM message_rows
 		ORDER BY COALESCE(sent_at, received_at, created_at) DESC
 		LIMIT 100
@@ -2054,7 +2056,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.ThreadID, &item.AccountID, &item.ContactID, &item.Subject,
 			&item.Snippet, &item.Mailbox, &item.Folder, &item.Direction, &item.Status, &item.IsRead, &item.IsStarred,
 			&item.IsTrashed, &item.FromEmail, &item.FromName, &item.ToEmails, &item.SentAt, &item.ReceivedAt,
-			&item.Attachments, &item.ThreadMessageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.Attachments, &item.AttachmentCount, &item.ThreadMessageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scan CRM email message")
 			return
 		}
