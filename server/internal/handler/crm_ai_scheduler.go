@@ -370,7 +370,11 @@ func stringsTrimForCRM(value string, limit int) string {
 
 func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID, reviewerMemberID pgtype.UUID) string {
 	if !reviewerMemberID.Valid {
-		return "邮件草稿审核人：客户没有负责人，请交由 imchow 审核。"
+		ownerMemberID, ownerLabel, err := h.crmWorkspaceOwnerMember(ctx, workspaceID)
+		if err != nil || !ownerMemberID.Valid {
+			return "邮件草稿审核人：客户没有负责人，请交由工作区 owner/admin 审核。"
+		}
+		return fmt.Sprintf("邮件草稿审核人：客户没有负责人，请交由工作区 owner %s（member:%s）审核。", ownerLabel, uuidToString(ownerMemberID))
 	}
 	var name, email string
 	if err := h.DB.QueryRow(ctx, `SELECT COALESCE(u.name,''), COALESCE(u.email,'') FROM member m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND m.id=$2 LIMIT 1`, workspaceID, reviewerMemberID).Scan(&name, &email); err != nil {
@@ -384,6 +388,23 @@ func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID, reviewe
 		label = uuidToString(reviewerMemberID)
 	}
 	return fmt.Sprintf("邮件草稿审核人：客户所有人 %s（member:%s）。", label, uuidToString(reviewerMemberID))
+}
+
+func (h *Handler) crmWorkspaceOwnerMember(ctx context.Context, workspaceID pgtype.UUID) (pgtype.UUID, string, error) {
+	var memberID pgtype.UUID
+	var name, email string
+	err := h.DB.QueryRow(ctx, `SELECT m.id, COALESCE(u.name,''), COALESCE(u.email,'') FROM member m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, m.created_at ASC LIMIT 1`, workspaceID).Scan(&memberID, &name, &email)
+	if err != nil {
+		return memberID, "", err
+	}
+	label := strings.TrimSpace(name)
+	if label == "" {
+		label = strings.TrimSpace(email)
+	}
+	if label == "" {
+		label = uuidToString(memberID)
+	}
+	return memberID, label, nil
 }
 
 func (h *Handler) buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID pgtype.UUID, accountName, subject, messageLink, latestAt, reviewerLine string) string {
