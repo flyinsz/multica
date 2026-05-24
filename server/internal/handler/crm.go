@@ -2011,7 +2011,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	}
 	query := `
 		WITH message_rows AS (
-			SELECT m.id, m.workspace_id, m.thread_id, t.account_id, t.contact_id,
+			SELECT m.id, m.workspace_id, m.thread_id, COALESCE(m.account_id, t.account_id, c.account_id), COALESCE(m.contact_id, t.contact_id),
 			       m.subject, COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) AS snippet,
 			       t.mailbox, COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX') AS folder,
 			       m.direction, t.status, COALESCE(m.is_read, t.is_read) AS is_read,
@@ -2022,8 +2022,9 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       m.created_at, m.updated_at
 			FROM crm_email_message m
 			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
+			LEFT JOIN crm_contact c ON c.id = COALESCE(m.contact_id, t.contact_id) AND c.workspace_id = m.workspace_id
 			WHERE m.workspace_id::text = $1
-			  AND ($2 = '' OR t.account_id::text = $2 OR m.account_id::text = $2 OR EXISTS (SELECT 1 FROM crm_contact c WHERE c.workspace_id = m.workspace_id AND c.account_id::text = $2 AND lower(COALESCE(c.email, '')) <> '' AND (lower(m.from_email) = lower(c.email) OR EXISTS (SELECT 1 FROM unnest(m.to_emails) AS x(email) WHERE lower(x.email) = lower(c.email)) OR EXISTS (SELECT 1 FROM unnest(m.cc_emails) AS x(email) WHERE lower(x.email) = lower(c.email)))))
+			  AND ($2 = '' OR t.account_id::text = $2 OR m.account_id::text = $2 OR c.account_id::text = $2 OR EXISTS (SELECT 1 FROM crm_contact c WHERE c.workspace_id = m.workspace_id AND c.account_id::text = $2 AND lower(COALESCE(c.email, '')) <> '' AND (lower(m.from_email) = lower(c.email) OR EXISTS (SELECT 1 FROM unnest(m.to_emails) AS x(email) WHERE lower(x.email) = lower(c.email)) OR EXISTS (SELECT 1 FROM unnest(m.cc_emails) AS x(email) WHERE lower(x.email) = lower(c.email)))))
 			  AND ($3 = '' OR t.mailbox = $3)
 			  AND (` + folderCondition + `)
 			  AND (` + filterCondition + `)
