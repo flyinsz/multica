@@ -270,10 +270,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		candidates++
 		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
 		messageLink := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(messageID)+"&thread="+uuidToString(threadID))
-		reviewerLine := "审核人：客户负责人。若客户没有负责人，请交由 imchow 审核；客户负责人对特定内容不确定，或存在需要更高层评估的风险时，也请交由 imchow 审核。"
-		if !ownerMemberID.Valid {
-			reviewerLine = "审核人：客户没有负责人，请交由 imchow 审核。"
-		}
+		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, ownerMemberID)
 		body := h.buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID, accountName, subject, messageLink, timestampToString(lastAt), reviewerLine)
 		parentIssueID, err := h.findCRMEmailThreadParentIssue(ctx, workspaceID, threadID)
 		if err != nil {
@@ -332,14 +329,14 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 			continue
 		}
 		title := stringsTrimForCRM(fmt.Sprintf("跟进客户：%s", name), 120)
-		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s", name, uuidToString(accountID), timestampToString(due))
-		assigneeType := ""
-		assigneeID := pgtype.UUID{}
 		var ownerMemberID pgtype.UUID
-		_ = h.DB.QueryRow(ctx, `SELECT COALESCE((SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1), (SELECT id FROM member WHERE workspace_id=$1 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, created_at ASC LIMIT 1)) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
-		if ownerMemberID.Valid {
-			assigneeType = "member"
-			assigneeID = ownerMemberID
+		_ = h.DB.QueryRow(ctx, `SELECT (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
+		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, ownerMemberID)
+		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\n处理要求：\n1. Issue 初始负责人必须为 Multica agent Jarvis，由 Jarvis 负责生成客户跟进邮件草稿。\n2. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n3. %s\n4. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), reviewerLine)
+		assigneeType, assigneeID, err := h.crmIssueActorByAgentNameOrFallback(ctx, workspaceID, "Jarvis")
+		if err != nil {
+			slog.Warn("CRM due followup Jarvis lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(accountID), "error", err)
+			continue
 		}
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), assigneeType, assigneeID)
 		if err == nil && issueID.Valid {
@@ -361,11 +358,29 @@ func stringsTrimForCRM(value string, limit int) string {
 	return string(r[:limit])
 }
 
+func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID, reviewerMemberID pgtype.UUID) string {
+	if !reviewerMemberID.Valid {
+		return "邮件草稿审核人：客户没有负责人，请交由 imchow 审核。"
+	}
+	var name, email string
+	if err := h.DB.QueryRow(ctx, `SELECT COALESCE(u.name,''), COALESCE(u.email,'') FROM member m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND m.id=$2 LIMIT 1`, workspaceID, reviewerMemberID).Scan(&name, &email); err != nil {
+		return fmt.Sprintf("邮件草稿审核人：客户所有人 member:%s。", uuidToString(reviewerMemberID))
+	}
+	label := strings.TrimSpace(name)
+	if label == "" {
+		label = strings.TrimSpace(email)
+	}
+	if label == "" {
+		label = uuidToString(reviewerMemberID)
+	}
+	return fmt.Sprintf("邮件草稿审核人：客户所有人 %s（member:%s）。", label, uuidToString(reviewerMemberID))
+}
+
 func (h *Handler) buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID pgtype.UUID, accountName, subject, messageLink, latestAt, reviewerLine string) string {
 	if strings.TrimSpace(accountName) == "" {
 		accountName = "未绑定客户"
 	}
-	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. 请由 Multica Issue 流程自动生成待审核邮件草稿，不要依赖巡检程序写死模板。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 若客户已有负责人，由客户负责人审核；若没有负责人，交由 imchow 审核。\n%s\n\n流转说明：Issue 状态流转交由 Multica 自动化流程处理，不需要人工修改核心流转。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. Issue 初始负责人必须为 Multica agent Jarvis，由 Jarvis 负责生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：todo 阶段由 Jarvis 接手；进入审核阶段时显性转交给上述客户所有人。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
 }
 
 func (h *Handler) buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID pgtype.UUID, subject, messageLink, latestAt, reviewerLine string) string {
@@ -496,7 +511,7 @@ func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype
 	}
 	err = h.DB.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, origin_type, origin_id, number)
-		SELECT $1, $2, $3, 'in_review', 'medium', NULLIF($7,''), $8, $5, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
+		SELECT $1, $2, $3, 'todo', 'medium', NULLIF($7,''), $8, $5, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
 		WHERE NOT EXISTS (
 			SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
 		)
