@@ -79,11 +79,34 @@ function emailHTMLBodyWithCID(message: { body_html?: string | null; body_text?: 
 function safeEmailHTML(html: string) {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<object[\s\S]*?>[\s\S]*?<\/object>/gi, "")
+    .replace(/<embed[\s\S]*?>[\s\S]*?<\/embed>/gi, "")
+    .replace(/<link[\s\S]*?>/gi, "")
+    .replace(/<meta[\s\S]*?>/gi, "")
+    .replace(/<base[\s\S]*?>/gi, "")
     .replace(/\son\w+\s*=\s*(["']).*?\1/gi, "")
     .replace(/\s(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"')
     .replace(/\ssrc\s*=\s*(["'])\s*cid:[^"']*\1/gi, ' data-blocked-src="cid-image"')
     .replace(/\ssrc\s*=\s*(["'])\s*https?:\/\/[^"']*\1/gi, ' data-blocked-src="external-image"')
     .replace(/\ssrcset\s*=\s*(["'])[\s\S]*?\1/gi, "");
+}
+
+function emailSandboxDocument(html: string) {
+  const safe = safeEmailHTML(html);
+  return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>html,body{margin:0;padding:0;background:transparent;color:#111827;font:14px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-wrap:anywhere;}img{max-width:100%;height:auto;}table{max-width:100%;border-collapse:collapse;}a{color:#2563eb;}</style></head><body>${safe}</body></html>`;
+}
+
+function EmailHTMLFrame({ html }: { html: string }) {
+  return (
+    <iframe
+      title="Email HTML body"
+      sandbox=""
+      referrerPolicy="no-referrer"
+      className="h-[28rem] w-full rounded-md border bg-white"
+      srcDoc={emailSandboxDocument(html)}
+    />
+  );
 }
 
 function mailboxToDraft(setting?: CRMIMAPSetting | null): MailboxDraft {
@@ -1609,7 +1632,7 @@ export function CRMEmailsPage() {
                         <div className="rounded-md border bg-muted/20 p-3">
                           <div className="mb-1.5 text-xs font-medium text-muted-foreground">{emailCopy.htmlBody}</div>
                           {emailHTMLBodyWithCID(message) ? (
-                            <div className="leading-5 text-foreground/80" dangerouslySetInnerHTML={{ __html: safeEmailHTML(emailHTMLBodyWithCID(message)) }} />
+                            <EmailHTMLFrame html={emailHTMLBodyWithCID(message)} />
                           ) : (
                             <div className="whitespace-pre-wrap leading-5 text-foreground/80">{message.body_text || message.snippet || t(($) => $.emails.no_body)}</div>
                           )}

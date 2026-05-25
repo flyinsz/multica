@@ -39,6 +39,8 @@ type CRMAccountResponse struct {
 	Status          string   `json:"status"`
 	OwnerID         *string  `json:"owner_id"`
 	OwnerMemberID   *string  `json:"owner_member_id"`
+	OwnerType       string   `json:"owner_type"`
+	OwnerAgentID    *string  `json:"owner_agent_id"`
 	Source          *string  `json:"source"`
 	Rating          string   `json:"rating"`
 	Priority        string   `json:"priority"`
@@ -71,6 +73,8 @@ type crmAccountRow struct {
 	Status          string
 	OwnerID         pgtype.UUID
 	OwnerMemberID   pgtype.UUID
+	OwnerType       string
+	OwnerAgentID    pgtype.UUID
 	Source          pgtype.Text
 	Rating          string
 	Priority        string
@@ -107,6 +111,8 @@ func crmAccountToResponse(row crmAccountRow) CRMAccountResponse {
 		Status:          row.Status,
 		OwnerID:         uuidToPtr(row.OwnerID),
 		OwnerMemberID:   uuidToPtr(row.OwnerMemberID),
+		OwnerType:       row.OwnerType,
+		OwnerAgentID:    uuidToPtr(row.OwnerAgentID),
 		Source:          textToPtr(row.Source),
 		Rating:          row.Rating,
 		Priority:        row.Priority,
@@ -137,6 +143,8 @@ type CreateCRMAccountRequest struct {
 	Status          *string  `json:"status"`
 	OwnerID         *string  `json:"owner_id"`
 	OwnerMemberID   *string  `json:"owner_member_id"`
+	OwnerType       *string  `json:"owner_type"`
+	OwnerAgentID    *string  `json:"owner_agent_id"`
 	Source          *string  `json:"source"`
 	Rating          *string  `json:"rating"`
 	Priority        *string  `json:"priority"`
@@ -1359,7 +1367,7 @@ func (h *Handler) scanCRMAccount(row pgx.Row) (crmAccountRow, error) {
 		&account.AccountCode, &account.AccountType, &account.Website, &account.Country,
 		&account.CountryCode, &account.CountryName, &account.Region, &account.City,
 		&account.Industry, &account.SubIndustry, &account.Status, &account.OwnerID,
-		&account.OwnerMemberID, &account.Source, &account.Rating, &account.Priority,
+		&account.OwnerMemberID, &account.OwnerType, &account.OwnerAgentID, &account.Source, &account.Rating, &account.Priority,
 		&account.AnnualRevenue, &account.EmployeeCount, &account.Tags, &account.Notes,
 		&account.LastContactedAt, &account.NextFollowUpAt, &account.CreatedAt, &account.UpdatedAt,
 		&account.ContactCount,
@@ -1372,7 +1380,7 @@ func (h *Handler) getCRMAccount(w http.ResponseWriter, r *http.Request, accountI
 		SELECT a.id, a.workspace_id, a.name, a.normalized_name, a.account_code, a.account_type,
 		       a.website, a.country, a.country_code, a.country_name, a.region, a.city,
 		       a.industry, a.sub_industry, a.status, a.owner_id, a.owner_member_id,
-		       a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
+		       COALESCE(a.owner_type, 'member'), a.owner_agent_id, a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
 		       a.tags, a.notes, a.last_contacted_at, a.next_follow_up_at,
 		       a.created_at, a.updated_at, COUNT(c.id)::bigint AS contact_count
 		FROM crm_account a
@@ -1419,6 +1427,30 @@ func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ownerAgentID, ok := optionalUUID(w, req.OwnerAgentID, "owner_agent_id")
+	if !ok {
+		return
+	}
+	ownerType := ""
+	if req.OwnerType != nil {
+		ownerType = strings.TrimSpace(*req.OwnerType)
+	}
+	if ownerType == "" {
+		if ownerAgentID.Valid {
+			ownerType = "agent"
+		} else {
+			ownerType = "member"
+		}
+	}
+	if ownerType != "member" && ownerType != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid owner_type")
+		return
+	}
+	if ownerType == "member" {
+		ownerAgentID = pgtype.UUID{}
+	} else {
+		ownerMemberID = pgtype.UUID{}
+	}
 	lastContactedAt, ok := cleanOptionalTimestamp(w, req.LastContactedAt, "last_contacted_at")
 	if !ok {
 		return
@@ -1432,22 +1464,22 @@ func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO crm_account (
 			workspace_id, name, normalized_name, account_code, account_type, website, country,
 			country_code, country_name, region, city, industry, sub_industry, status, owner_id,
-			owner_member_id, source, rating, priority, annual_revenue, employee_count, tags,
+			owner_member_id, owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count, tags,
 			notes, last_contacted_at, next_follow_up_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 		        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-		        $21, $22, $23, $24, $25)
+		        $21, $22, $23, $24, $25, $26, $27)
 		RETURNING id, workspace_id, name, normalized_name, account_code, account_type,
 		          website, country, country_code, country_name, region, city,
 		          industry, sub_industry, status, owner_id, owner_member_id,
-		          source, rating, priority, annual_revenue, employee_count,
+		          owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count,
 		          tags, notes, last_contacted_at, next_follow_up_at,
 		          created_at, updated_at, 0::bigint
 	`, workspaceID, name, normalizedCRMKey(name), cleanOptionalText(req.AccountCode), cleanDefault(req.AccountType, "prospect"),
 		cleanOptionalText(req.Website), countryName, countryCode, countryName,
 		cleanOptionalText(req.Region), cleanOptionalText(req.City), cleanOptionalText(req.Industry), cleanOptionalText(req.SubIndustry), status,
-		ownerID, ownerMemberID, cleanOptionalText(req.Source), cleanDefault(req.Rating, "unknown"), cleanDefault(req.Priority, "medium"),
+		ownerID, ownerMemberID, ownerType, ownerAgentID, cleanOptionalText(req.Source), cleanDefault(req.Rating, "unknown"), cleanDefault(req.Priority, "medium"),
 		cleanOptionalText(req.AnnualRevenue), cleanOptionalText(req.EmployeeCount), cleanOptionalStringList(req.Tags), cleanOptionalText(req.Notes),
 		lastContactedAt, nextFollowUpAt))
 	if err != nil {
@@ -1526,7 +1558,7 @@ func (h *Handler) ListCRMAccounts(w http.ResponseWriter, r *http.Request) {
 		SELECT a.id, a.workspace_id, a.name, a.normalized_name, a.account_code, a.account_type,
 		       a.website, a.country, a.country_code, a.country_name, a.region, a.city,
 		       a.industry, a.sub_industry, a.status, a.owner_id, a.owner_member_id,
-		       a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
+		       COALESCE(a.owner_type, 'member'), a.owner_agent_id, a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
 		       a.tags, a.notes, a.last_contacted_at, a.next_follow_up_at,
 		       a.created_at, a.updated_at, COUNT(c.id)::bigint AS contact_count
 		FROM crm_account a
@@ -1618,6 +1650,30 @@ func (h *Handler) UpdateCRMAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ownerAgentID, ok := optionalUUID(w, req.OwnerAgentID, "owner_agent_id")
+	if !ok {
+		return
+	}
+	ownerType := ""
+	if req.OwnerType != nil {
+		ownerType = strings.TrimSpace(*req.OwnerType)
+	}
+	if ownerType == "" {
+		if ownerAgentID.Valid {
+			ownerType = "agent"
+		} else {
+			ownerType = "member"
+		}
+	}
+	if ownerType != "member" && ownerType != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid owner_type")
+		return
+	}
+	if ownerType == "member" {
+		ownerAgentID = pgtype.UUID{}
+	} else {
+		ownerMemberID = pgtype.UUID{}
+	}
 	lastContactedAt, ok := cleanOptionalTimestamp(w, req.LastContactedAt, "last_contacted_at")
 	if !ok {
 		return
@@ -1644,27 +1700,29 @@ func (h *Handler) UpdateCRMAccount(w http.ResponseWriter, r *http.Request) {
 			status = $15,
 			owner_id = $16,
 			owner_member_id = $17,
-			source = $18,
-			rating = $19,
-			priority = $20,
-			annual_revenue = $21,
-			employee_count = $22,
-			tags = $23,
-			notes = $24,
-			last_contacted_at = $25,
-			next_follow_up_at = $26,
+			owner_type = $18,
+			owner_agent_id = $19,
+			source = $20,
+			rating = $21,
+			priority = $22,
+			annual_revenue = $23,
+			employee_count = $24,
+			tags = $25,
+			notes = $26,
+			last_contacted_at = $27,
+			next_follow_up_at = $28,
 			updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, name, normalized_name, account_code, account_type,
 		          website, country, country_code, country_name, region, city,
 		          industry, sub_industry, status, owner_id, owner_member_id,
-		          source, rating, priority, annual_revenue, employee_count,
+		          owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count,
 		          tags, notes, last_contacted_at, next_follow_up_at,
 		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_contact c WHERE c.account_id = crm_account.id AND c.workspace_id = crm_account.workspace_id)
 	`, accountID, workspaceID, name, normalizedCRMKey(name), cleanOptionalText(req.AccountCode), cleanDefault(req.AccountType, "prospect"),
 		cleanOptionalText(req.Website), countryName, countryCode, countryName, cleanOptionalText(req.Region), cleanOptionalText(req.City),
-		cleanOptionalText(req.Industry), cleanOptionalText(req.SubIndustry), status, ownerID, ownerMemberID, cleanOptionalText(req.Source),
+		cleanOptionalText(req.Industry), cleanOptionalText(req.SubIndustry), status, ownerID, ownerMemberID, ownerType, ownerAgentID, cleanOptionalText(req.Source),
 		cleanDefault(req.Rating, "unknown"), cleanDefault(req.Priority, "medium"), cleanOptionalText(req.AnnualRevenue), cleanOptionalText(req.EmployeeCount),
 		cleanOptionalStringList(req.Tags), cleanOptionalText(req.Notes), lastContactedAt, nextFollowUpAt))
 	if err != nil {

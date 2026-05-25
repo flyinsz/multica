@@ -40,6 +40,8 @@ type Translation = (
   options?: Record<string, unknown>,
 ) => string;
 
+type AccountOwnerType = "" | "member" | "agent";
+
 type AccountFormState = {
   name: string;
   accountType: CRMAccountType;
@@ -47,7 +49,9 @@ type AccountFormState = {
   source: CRMAccountSource;
   rating: CRMAccountRating;
   priority: CRMAccountPriority;
+  ownerType: AccountOwnerType;
   ownerMemberID: string;
+  ownerAgentID: string;
   website: string;
   countryCode: string;
   regionCode: string;
@@ -68,7 +72,9 @@ const blankAccountForm = (): AccountFormState => ({
   source: "manual",
   rating: "unknown",
   priority: "medium",
+  ownerType: "",
   ownerMemberID: "",
+  ownerAgentID: "",
   website: "",
   countryCode: "",
   regionCode: "",
@@ -126,13 +132,15 @@ function AccountForm({
   locale,
   suggestedTags,
   members,
+  agents,
 }: {
   form: AccountFormState;
   setForm: (next: AccountFormState) => void;
   t: Translation;
   locale: "en" | "zh-Hans";
   suggestedTags: string[];
-  members: Array<{ id: string; user_id: string; name: string; email: string }>;
+  members: Array<{ id: string; user_id: string; name: string; email: string; user?: { name?: string; email?: string } }>;
+  agents: Array<{ id: string; name: string }>;
 }) {
   const { regions, cities, regionsLoading, citiesLoading } = useLocationSelection(form.countryCode, form.regionCode, locale);
   const countries = useMemo(() => localizedSort(COUNTRY_OPTIONS, locale), [locale]);
@@ -177,9 +185,14 @@ function AccountForm({
         <option value="high">{t(($) => $.priorities.high)}</option>
         <option value="low">{t(($) => $.priorities.low)}</option>
       </select>
-      <select aria-label="客户所有人" className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerMemberID} onChange={(e) => setForm({ ...form, ownerMemberID: e.target.value })}>
+      <select aria-label="客户所有人" className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerType === "agent" ? `agent:${form.ownerAgentID}` : form.ownerType === "member" ? `member:${form.ownerMemberID}` : ""} onChange={(e) => { const [type, id = ""] = e.target.value.split(":"); setForm({ ...form, ownerType: (type || "") as AccountOwnerType, ownerMemberID: type === "member" ? id : "", ownerAgentID: type === "agent" ? id : "" }); }}>
         <option value="">客户所有人</option>
-        {members.map((member) => <option key={member.id} value={member.user_id}>{member.name || member.email}</option>)}
+        <optgroup label="Member">
+          {members.map((member) => <option key={member.id} value={`member:${member.user_id}`}>{member.name || member.email || member.user?.name || member.user?.email || member.id}</option>)}
+        </optgroup>
+        <optgroup label="Agent">
+          {agents.map((agent) => <option key={agent.id} value={`agent:${agent.id}`}>{agent.name}</option>)}
+        </optgroup>
       </select>
       <select aria-label={t(($) => $.customers.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value, regionCode: "", cityCode: "" })}>
         <option value="">{t(($) => $.customers.country)}</option>
@@ -253,6 +266,7 @@ export function CRMPage() {
   }), [countryFilter, followUpBucket, industryFilter, priorityFilter, ratingFilter, search, sort, sourceFilter, statusFilter]);
   const { data: accounts = [], isLoading } = useQuery(crmAccountListOptions(wsId, accountListParams));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-accounts"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
+  const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-accounts"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
   const sortedAccounts = useMemo(
     () => sort === "name" ? [...accounts].sort((a, b) => a.name.localeCompare(b.name, locale === "zh-Hans" ? "zh-Hans-CN-u-co-pinyin" : "en")) : accounts,
     [accounts, locale, sort],
@@ -281,7 +295,9 @@ export function CRMPage() {
         source: form.source,
         rating: form.rating,
         priority: form.priority,
-        owner_member_id: form.ownerMemberID || null,
+        owner_type: form.ownerType || null,
+        owner_member_id: form.ownerType === "member" ? form.ownerMemberID || null : null,
+        owner_agent_id: form.ownerType === "agent" ? form.ownerAgentID || null : null,
         annual_revenue: form.annualRevenue || null,
         employee_count: form.employeeCount || null,
         tags: splitTags(form.tags),
@@ -418,7 +434,7 @@ export function CRMPage() {
             <DialogTitle>{t(($) => $.customers.add_customer)}</DialogTitle>
             <DialogDescription>{t(($) => $.customers.basic_profile)}</DialogDescription>
           </DialogHeader>
-          <AccountForm form={form} setForm={setForm} t={t} locale={locale} suggestedTags={suggestedTags} members={members} />
+          <AccountForm form={form} setForm={setForm} t={t} locale={locale} suggestedTags={suggestedTags} members={members} agents={agents} />
           {createAccount.isError && <p className="text-xs text-destructive">{t(($) => $.customers.create_error)}</p>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>{t(($) => $.actions.cancel)}</Button>

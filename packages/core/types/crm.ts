@@ -23,6 +23,8 @@ export interface CRMAccount {
   status: CRMAccountStatus;
   owner_id?: string | null;
   owner_member_id?: string | null;
+  owner_type?: "member" | "agent" | null;
+  owner_agent_id?: string | null;
   source?: CRMAccountSource | null;
   rating: CRMAccountRating;
   priority: CRMAccountPriority;
@@ -72,6 +74,8 @@ export interface CreateCRMAccountRequest {
   status?: CRMAccountStatus;
   owner_id?: string | null;
   owner_member_id?: string | null;
+  owner_type?: "member" | "agent" | null;
+  owner_agent_id?: string | null;
   source?: CRMAccountSource | null;
   rating?: CRMAccountRating;
   priority?: CRMAccountPriority;

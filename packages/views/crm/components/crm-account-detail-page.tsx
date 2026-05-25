@@ -70,6 +70,8 @@ type Translation = (
 
 type Locale = "en" | "zh-Hans";
 
+type AccountOwnerType = "" | "member" | "agent";
+
 type AccountFormState = {
   name: string;
   accountCode: string;
@@ -78,7 +80,9 @@ type AccountFormState = {
   source: CRMAccountSource;
   rating: CRMAccountRating;
   priority: CRMAccountPriority;
+  ownerType: AccountOwnerType;
   ownerMemberID: string;
+  ownerAgentID: string;
   website: string;
   countryCode: string;
   regionCode: string;
@@ -209,7 +213,9 @@ function accountToForm(account: CRMAccount): AccountFormState {
     source: account.source ?? "manual",
     rating: account.rating,
     priority: account.priority,
+    ownerType: account.owner_agent_id ? "agent" : account.owner_member_id ? "member" : "",
     ownerMemberID: account.owner_member_id ?? "",
+    ownerAgentID: account.owner_agent_id ?? "",
     website: account.website ?? "",
     countryCode: country?.code ?? account.country_code ?? account.country ?? "",
     regionCode: account.region ?? "",
@@ -290,7 +296,7 @@ function FieldRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[]; members?: Array<{ id: string; user_id: string; name: string; email: string }> }) {
+function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [], agents = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[]; members?: Array<{ id: string; user_id: string; name: string; email: string; user?: { name?: string; email?: string } }>; agents?: Array<{ id: string; name: string }> }) {
   const { regions, cities, regionsLoading, citiesLoading } = useLocationSelection(form.countryCode, form.regionCode, locale);
   const countries = useMemo(() => localizedSort(COUNTRY_OPTIONS, locale), [locale]);
   const subIndustries = subIndustryOptions(form.industry);
@@ -312,9 +318,14 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
         <option value="inactive">{t(($) => $.statuses.inactive)}</option>
         <option value="archived">{t(($) => $.statuses.archived)}</option>
       </select>
-      <select aria-label="客户所有人" className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerMemberID} onChange={(e) => setForm({ ...form, ownerMemberID: e.target.value })}>
+      <select aria-label="客户所有人" className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerType === "agent" ? `agent:${form.ownerAgentID}` : form.ownerType === "member" ? `member:${form.ownerMemberID}` : ""} onChange={(e) => { const [type, id = ""] = e.target.value.split(":"); setForm({ ...form, ownerType: (type || "") as AccountOwnerType, ownerMemberID: type === "member" ? id : "", ownerAgentID: type === "agent" ? id : "" }); }}>
         <option value="">客户所有人</option>
-        {members.map((member) => <option key={member.id} value={member.user_id}>{member.name || member.email}</option>)}
+        <optgroup label="Member">
+          {members.map((member) => <option key={member.id} value={`member:${member.user_id}`}>{member.name || member.email || member.user?.name || member.user?.email || member.id}</option>)}
+        </optgroup>
+        <optgroup label="Agent">
+          {agents.map((agent) => <option key={agent.id} value={`agent:${agent.id}`}>{agent.name}</option>)}
+        </optgroup>
       </select>
       <select aria-label={t(($) => $.customers.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value, regionCode: "", cityCode: "" })}>
         <option value="">{t(($) => $.customers.country)}</option>
@@ -456,6 +467,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const emailThreads = emailThreadData?.threads ?? [];
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
+  const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-account-detail"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
 
   const [accountForm, setAccountForm] = useState<AccountFormState | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState | null>(null);
@@ -526,7 +538,9 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
         source: accountForm.source,
         rating: accountForm.rating,
         priority: accountForm.priority,
-        owner_member_id: accountForm.ownerMemberID || null,
+        owner_type: accountForm.ownerType || null,
+        owner_member_id: accountForm.ownerType === "member" ? accountForm.ownerMemberID || null : null,
+        owner_agent_id: accountForm.ownerType === "agent" ? accountForm.ownerAgentID || null : null,
         annual_revenue: accountForm.annualRevenue || null,
         employee_count: accountForm.employeeCount || null,
         tags: splitTags(accountForm.tags),
@@ -917,7 +931,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
       <Dialog open={accountForm !== null} onOpenChange={(open) => !open && setAccountForm(null)}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader><DialogTitle>{t(($) => $.customers.edit_customer)}</DialogTitle><DialogDescription>{account.name}</DialogDescription></DialogHeader>
-          {accountForm && <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={tagSuggestions(account)} members={members} />}
+          {accountForm && <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={tagSuggestions(account)} members={members} agents={agents} />}
           {updateAccount.isError && <p className="text-xs text-destructive">{t(($) => $.customers.create_error)}</p>}
           <DialogFooter><Button variant="outline" onClick={() => setAccountForm(null)}>{t(($) => $.actions.cancel)}</Button><Button disabled={!accountForm?.name.trim() || updateAccount.isPending} onClick={() => updateAccount.mutate()}>{t(($) => $.actions.save)}</Button></DialogFooter>
         </DialogContent>
