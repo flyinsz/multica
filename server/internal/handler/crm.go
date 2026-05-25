@@ -3124,10 +3124,20 @@ func normalizeCRMEmailThreadSubject(subject string) string {
 func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
 	subject = cleanStringForDB(subject)
 	message.FromEmail = cleanStringForDB(message.FromEmail)
+	matchedAccountID, matchedContactID, err := h.matchCRMEmailParties(ctx, workspaceID, message)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+	}
 	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
 	var threadID, accountID, contactID pgtype.UUID
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
 		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, COALESCE(m.account_id,t.account_id,c.account_id), COALESCE(m.contact_id,t.contact_id) FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id LEFT JOIN crm_contact c ON c.id=COALESCE(m.contact_id,t.contact_id) AND c.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID, &contactID); err == nil {
+			if !accountID.Valid && matchedAccountID.Valid {
+				if _, err := h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND account_id IS NULL`, threadID, workspaceID, matchedAccountID, matchedContactID); err != nil {
+					return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+				}
+				return threadID, matchedAccountID, matchedContactID, nil
+			}
 			return threadID, accountID, contactID, nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
@@ -3135,14 +3145,17 @@ func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceI
 	}
 	threadKey := cfg.ID + ":subject-from:" + normalizeCRMEmailThreadSubject(subject) + ":" + strings.ToLower(strings.TrimSpace(message.FromEmail))
 	if err := h.DB.QueryRow(ctx, `SELECT t.id, COALESCE(t.account_id,c.account_id), t.contact_id FROM crm_email_thread t LEFT JOIN crm_contact c ON c.id=t.contact_id AND c.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND t.external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID, &contactID); err == nil {
+		if !accountID.Valid && matchedAccountID.Valid {
+			if _, err := h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND account_id IS NULL`, threadID, workspaceID, matchedAccountID, matchedContactID); err != nil {
+				return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+			}
+			return threadID, matchedAccountID, matchedContactID, nil
+		}
 		return threadID, accountID, contactID, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	accountID, contactID, err := h.matchCRMEmailParties(ctx, workspaceID, message)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
+	accountID, contactID = matchedAccountID, matchedContactID
 	lastAt := pgtype.Timestamptz{}
 	if !message.Date.IsZero() {
 		lastAt = pgtype.Timestamptz{Time: message.Date, Valid: true}

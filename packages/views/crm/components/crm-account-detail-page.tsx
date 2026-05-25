@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -296,14 +296,23 @@ function FieldRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+function LabeledField({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <label className={`space-y-1.5 ${className}`}>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [], agents = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[]; members?: Array<{ id: string; user_id: string; name: string; email: string; user?: { name?: string; email?: string } }>; agents?: Array<{ id: string; name: string }> }) {
   const { regions, cities, regionsLoading, citiesLoading } = useLocationSelection(form.countryCode, form.regionCode, locale);
   const countries = useMemo(() => localizedSort(COUNTRY_OPTIONS, locale), [locale]);
   const subIndustries = subIndustryOptions(form.industry);
   return (
     <div className="grid max-h-[70vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
-      <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.customers.new_customer_name)} />
-      <Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder={t(($) => $.customers.website)} />
+      <LabeledField label={t(($) => $.customers.new_customer_name)}><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.customers.new_customer_name)} /></LabeledField>
+      <LabeledField label={t(($) => $.customers.website)}><Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder={t(($) => $.customers.website)} /></LabeledField>
       <select className="h-9 rounded-md border bg-background px-3 text-sm" value={form.accountType} onChange={(e) => setForm({ ...form, accountType: e.target.value as CRMAccountType })}>
         <option value="prospect">{t(($) => $.account_types.prospect)}</option>
         <option value="customer">{t(($) => $.account_types.customer)}</option>
@@ -347,8 +356,8 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
         <option value="">{t(($) => $.customers.sub_industry)}</option>
         {subIndustries.map((option) => <option key={option.value} value={option.value}>{optionLabel(option, locale)}</option>)}
       </select>
-      <Input value={form.annualRevenue} onChange={(e) => setForm({ ...form, annualRevenue: e.target.value })} placeholder={t(($) => $.customers.annual_revenue)} />
-      <Input value={form.employeeCount} onChange={(e) => setForm({ ...form, employeeCount: e.target.value })} placeholder={t(($) => $.customers.employee_count)} />
+      <LabeledField label={t(($) => $.customers.annual_revenue)}><Input value={form.annualRevenue} onChange={(e) => setForm({ ...form, annualRevenue: e.target.value })} placeholder={t(($) => $.customers.annual_revenue)} /></LabeledField>
+      <LabeledField label={t(($) => $.customers.employee_count)}><Input value={form.employeeCount} onChange={(e) => setForm({ ...form, employeeCount: e.target.value })} placeholder={t(($) => $.customers.employee_count)} /></LabeledField>
       <div className="space-y-2 sm:col-span-2">
         <Input aria-label={t(($) => $.customers.tags)} value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder={t(($) => $.customers.tags_placeholder)} />
         {suggestedTags.length > 0 && (
@@ -359,8 +368,8 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
           </div>
         )}
       </div>
-      <Input aria-label={t(($) => $.customers.next_follow_up_at)} className="sm:col-span-2" type="datetime-local" value={form.nextFollowUpAt} onChange={(e) => setForm({ ...form, nextFollowUpAt: e.target.value })} />
-      <textarea className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm sm:col-span-2" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder={t(($) => $.customers.notes)} />
+      <LabeledField label={t(($) => $.customers.next_follow_up_at)} className="sm:col-span-2"><Input aria-label={t(($) => $.customers.next_follow_up_at)} type="datetime-local" value={form.nextFollowUpAt} onChange={(e) => setForm({ ...form, nextFollowUpAt: e.target.value })} /></LabeledField>
+      <LabeledField label={t(($) => $.customers.notes)} className="sm:col-span-2"><textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder={t(($) => $.customers.notes)} /></LabeledField>
     </div>
   );
 }
@@ -740,17 +749,25 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
           <TabsContent value="overview" className="space-y-6">
             <section className="rounded-lg border bg-card p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <FieldRow label={t(($) => $.customers.account_code)} value={account.account_code} />
                 <FieldRow label={t(($) => $.customers.status)} value={t(($) => $.statuses[account.status])} />
                 <FieldRow label={t(($) => $.customers.account_type)} value={t(($) => $.account_types[account.account_type])} />
+                <FieldRow label={t(($) => $.customers.source)} value={account.source ? t(($) => $.sources[account.source as CRMAccountSource]) : null} />
                 <FieldRow label={t(($) => $.customers.rating)} value={t(($) => $.ratings[account.rating])} />
                 <FieldRow label={t(($) => $.customers.priority)} value={t(($) => $.priorities[account.priority])} />
                 <FieldRow label={t(($) => $.customers.website)} value={account.website} />
                 <FieldRow label={t(($) => $.customers.country)} value={countryName(account.country_code || account.country_name || account.country, locale)} />
                 <FieldRow label={t(($) => $.customers.region)} value={account.region} />
                 <FieldRow label={t(($) => $.customers.city)} value={account.city} />
-                <FieldRow label={t(($) => $.customers.industry)} value={[account.industry, account.sub_industry].filter(Boolean).join(" · ")} />
+                <FieldRow label={t(($) => $.customers.industry)} value={account.industry ? industryLabel(account.industry, locale) : null} />
+                <FieldRow label={t(($) => $.customers.sub_industry)} value={account.sub_industry} />
+                <FieldRow label={t(($) => $.customers.annual_revenue)} value={account.annual_revenue} />
+                <FieldRow label={t(($) => $.customers.employee_count)} value={account.employee_count} />
+                <FieldRow label={t(($) => $.customers.tags)} value={account.tags?.join(", ")} />
                 <FieldRow label={t(($) => $.customers.last_contacted_at)} value={account.last_contacted_at ? new Date(account.last_contacted_at).toLocaleString() : null} />
                 <FieldRow label={t(($) => $.customers.next_follow_up_at)} value={account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : null} />
+                <FieldRow label="Created" value={account.created_at ? new Date(account.created_at).toLocaleString() : null} />
+                <FieldRow label="Updated" value={account.updated_at ? new Date(account.updated_at).toLocaleString() : null} />
               </div>
               {account.notes && <p className="mt-4 whitespace-pre-wrap rounded-md border bg-background/50 p-3 text-sm">{account.notes}</p>}
             </section>

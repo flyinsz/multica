@@ -36,6 +36,7 @@
     "website": "Website",
     "region": "Region",
     "notes": "Notes",
+    "account_code": "Account code",
     "account_type": "Account type",
     "rating": "Rating",
     "priority": "Priority",
