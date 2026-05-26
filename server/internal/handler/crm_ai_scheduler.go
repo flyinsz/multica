@@ -416,11 +416,11 @@ func (h *Handler) buildCRMPendingReplyIssueBody(threadID, messageID, accountID, 
 	if strings.TrimSpace(accountName) == "" {
 		accountName = "未绑定客户"
 	}
-	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：todo 阶段由配置负责人接手；进入审核阶段时显性转交给上述客户所有人。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：todo 阶段由配置负责人接手；进入审核阶段时显性转交给上述客户所有人。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
 }
 
 func (h *Handler) buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID pgtype.UUID, subject, messageLink, latestAt, reviewerLine string) string {
-	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复草稿。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；不要把历史往来/profile 摘要展开写进 Issue。草稿必须中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复草稿。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要把历史往来/profile 摘要展开写进 Issue。草稿必须中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
 }
 
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {

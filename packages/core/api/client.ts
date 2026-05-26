@@ -1269,6 +1269,16 @@ export class ApiClient {
     return this.fetch("/api/crm/ai-settings");
   }
 
+  async listCRMAIHistory(params: { limit?: number; offset?: number; days?: number; automation_key?: string } = {}): Promise<{ items: unknown[]; limit: number; offset: number; days: number; has_more: boolean }> {
+    const query = new URLSearchParams();
+    if (params.limit != null) query.set("limit", String(params.limit));
+    if (params.offset != null) query.set("offset", String(params.offset));
+    if (params.days != null) query.set("days", String(params.days));
+    if (params.automation_key) query.set("automation_key", params.automation_key);
+    const suffix = query.toString();
+    return this.fetch(`/api/crm/ai-history${suffix ? `?${suffix}` : ""}`);
+  }
+
   async updateCRMAISetting(key: string, data: unknown): Promise<unknown> {
     return this.fetch(`/api/crm/ai-settings/${key}`, {
       method: "PUT",

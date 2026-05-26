@@ -4424,6 +4424,78 @@ func (h *Handler) ListCRMAISettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
 }
 
+type CRMAIHistoryItemResponse struct {
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	Status        string    `json:"status"`
+	OriginID      *string   `json:"origin_id"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	AutomationKey string    `json:"automation_key"`
+}
+
+func (h *Handler) ListCRMAIHistory(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	limit := parsePositiveIntQuery(r, "limit", 20, 100)
+	offset := parsePositiveIntQuery(r, "offset", 0, 10000)
+	days := parsePositiveIntQuery(r, "days", 30, 365)
+	automationKey := strings.TrimSpace(r.URL.Query().Get("automation_key"))
+	rows, err := h.DB.Query(r.Context(), `
+		WITH history AS (
+			SELECT id, title, status, origin_id, created_at, updated_at,
+				CASE
+					WHEN title LIKE '回复邮件：%' OR title LIKE 'CRM 邮件待回复：%' THEN 'email_pending_reply'
+					WHEN title LIKE '跟进客户：%' THEN 'due_followup'
+					ELSE 'other'
+				END AS automation_key
+			FROM issue
+			WHERE workspace_id=$1
+			  AND (origin_type='crm_ai' OR title LIKE 'CRM 邮件待回复：%' OR title LIKE '回复邮件：%' OR title LIKE '跟进客户：%')
+			  AND created_at >= now() - ($4::int * interval '1 day')
+		)
+		SELECT id, title, status, origin_id, created_at, updated_at, automation_key
+		FROM history
+		WHERE ($5 = '' OR automation_key = $5)
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, workspaceID, limit, offset, days, automationKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list CRM AI history")
+		return
+	}
+	defer rows.Close()
+	items := []CRMAIHistoryItemResponse{}
+	for rows.Next() {
+		var item CRMAIHistoryItemResponse
+		var id, originID pgtype.UUID
+		if err := rows.Scan(&id, &item.Title, &item.Status, &originID, &item.CreatedAt, &item.UpdatedAt, &item.AutomationKey); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scan CRM AI history")
+			return
+		}
+		item.ID = uuidToString(id)
+		if originID.Valid {
+			s := uuidToString(originID)
+			item.OriginID = &s
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset, "days": days, "has_more": len(items) == limit})
+}
+
+func parsePositiveIntQuery(r *http.Request, key string, fallback, max int) int {
+	value, err := strconv.Atoi(r.URL.Query().Get(key))
+	if err != nil || value < 0 {
+		return fallback
+	}
+	if max > 0 && value > max {
+		return max
+	}
+	return value
+}
+
 func (h *Handler) withRecentCRMAIIssues(ctx context.Context, workspaceID pgtype.UUID, automationKey string, lastResult []byte) json.RawMessage {
 	payload := map[string]any{}
 	if len(lastResult) > 0 {

@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowLeft, Bot, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
+import { Activity, ArrowLeft, Bot, Clock, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -63,6 +63,16 @@ type CRMAISetting = {
   last_checked_at?: string | null;
   config?: CRMAIConfig | null;
   last_result?: CRMAILastResult | null;
+};
+
+type CRMAIHistoryItem = {
+  id: string;
+  title: string;
+  status: string;
+  origin_id?: string | null;
+  automation_key: SettingKey | "other";
+  created_at: string;
+  updated_at: string;
 };
 
 type ActorType = "member" | "agent";
@@ -166,42 +176,57 @@ function buildForm(setting: CRMAISetting): FormState {
   };
 }
 
-function ResultGrid({ result }: { result?: CRMAILastResult | null }) {
+function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
+  const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
-  const r = result || {};
-  const createdCount = r.issues_created ?? r.created;
-  const items = [
-    ["候选", r.candidates],
-    ["创建 issue", createdCount],
-    ["排队任务", r.tasks_queued],
-    ["已联系跳过", r.skipped_contacted],
-    ["已有 issue", r.skipped_existing_issue],
-    ["已有任务", r.skipped_existing_task],
-    ["标题重复", r.skipped_title_duplicate],
-    ["已处理/已完成", (r.skipped_handled || 0) + (r.skipped_done_issue || 0)],
-  ];
+  const [limit, setLimit] = useState(20);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: [...crmKeys.aiSettings(wsId), "history", automationKey, limit],
+    queryFn: () => api.listCRMAIHistory({ automation_key: automationKey, days: 30, limit, offset: 0 }),
+    select: (res) => ({ ...res, items: res.items as CRMAIHistoryItem[] }),
+    enabled: Boolean(wsId),
+  });
+  const items = data?.items ?? [];
+  const latest = items[0];
+  const info = meta[automationKey];
   return (
-    <div className="mt-4 rounded-md border bg-muted/30 p-3">
-      <div className="mb-2 text-xs text-muted-foreground">最近运行：{fmt(r.checked_at)}</div>
-      <div className="grid gap-2 sm:grid-cols-4">
-        {items.map(([label, value]) => (
-          <div key={label} className="rounded border bg-background px-2 py-1">
-            <div className="text-[11px] text-muted-foreground">{label}</div>
-            <div className="text-sm font-medium">{typeof value === "number" ? value : 0}</div>
-          </div>
-        ))}
-      </div>
-      {r.created_issues && r.created_issues.length > 0 ? (
-        <div className="mt-3 space-y-1 border-t pt-2">
-          <div className="text-[11px] text-muted-foreground">本次创建/更新 issue</div>
-          {r.created_issues.map((issue) => (
-            <a key={`${issue.id}-${issue.message_id || issue.thread_id || issue.account_id || ""}`} className="block truncate text-xs text-primary hover:underline" href={paths.issueDetail(issue.id)}>
-              {issue.title || issue.id}
-            </a>
-          ))}
+    <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-10">
+      <section className="rounded-lg border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium"><Clock className="size-4" />{info.title} · 最近一次</div>
+        {isLoading ? <Skeleton className="h-16 w-full" /> : latest ? (
+          <a href={paths.issueDetail(latest.id)} className="block rounded-md border bg-background p-3 hover:bg-muted/40">
+            <div className="flex items-center justify-between gap-3">
+              <div className="truncate text-sm font-medium">{latest.title}</div>
+              <Badge variant="secondary">{latest.status}</Badge>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{fmt(latest.created_at)}</div>
+          </a>
+        ) : <div className="text-sm text-muted-foreground">暂无运行记录</div>}
+      </section>
+      <section className="mt-4 rounded-lg border bg-card">
+        <div className="flex h-11 items-center justify-between border-b px-4 text-sm font-medium">
+          <span>最近30天所有历史</span>
+          <span className="text-xs text-muted-foreground">已加载 {items.length}</span>
         </div>
-      ) : null}
-      {r.note ? <div className="mt-2 text-xs text-muted-foreground">{r.note}</div> : null}
+        {isLoading ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+        ) : items.length ? (
+          <div className="divide-y">
+            {items.map((item) => (
+              <a key={item.id} href={paths.issueDetail(item.id)} className="grid grid-cols-[minmax(220px,1fr)_120px_180px] items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40">
+                <div className="truncate font-medium">{item.title}</div>
+                <Badge variant="secondary" className="w-fit">{item.status}</Badge>
+                <div className="text-xs text-muted-foreground">{fmt(item.created_at)}</div>
+              </a>
+            ))}
+          </div>
+        ) : <div className="p-4 text-sm text-muted-foreground">暂无运行记录</div>}
+        {data?.has_more ? (
+          <div className="border-t p-4 text-center">
+            <Button variant="outline" size="sm" disabled={isFetching} onClick={() => setLimit((value) => value + 20)}>{isFetching ? "加载中..." : "加载更多"}</Button>
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }
@@ -353,7 +378,6 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
           </>
         ) : null}
       </div>
-      <ResultGrid result={setting.last_result} />
       <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
         <span>上次检查：{fmt(setting.last_checked_at)}</span>
         <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "保存中..." : "保存"}</Button>
@@ -366,10 +390,12 @@ function SettingListRow({
   setting,
   agentName,
   onConfigure,
+  onHistory,
 }: {
   setting: CRMAISetting;
   agentName: string;
   onConfigure: () => void;
+  onHistory: () => void;
 }) {
   const info = meta[setting.automation_key];
   const Icon = info.icon;
@@ -406,6 +432,10 @@ function SettingListRow({
               <Settings className="h-3.5 w-3.5" />
               配置
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={onHistory}>
+              <Clock className="h-3.5 w-3.5" />
+              运行记录
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -419,6 +449,7 @@ export function CRMAISettingsPage() {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const [selectedKey, setSelectedKey] = useState<SettingKey | null>(null);
+  const [mode, setMode] = useState<"config" | "history">("config");
 
   const selectedSetting = useMemo(
     () => data.find((setting) => setting.automation_key === selectedKey) ?? null,
@@ -436,7 +467,7 @@ export function CRMAISettingsPage() {
           ) : null}
         </div>
         {selectedSetting ? (
-          <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedKey(null)}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedKey(null); setMode("config"); }}>
             <ArrowLeft className="h-3.5 w-3.5" />
             返回列表
           </Button>
@@ -444,9 +475,13 @@ export function CRMAISettingsPage() {
       </PageHeader>
 
       {selectedSetting ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-10">
-          <SettingCard setting={selectedSetting} agents={agents} members={members} />
-        </div>
+        mode === "history" ? (
+          <SettingHistory automationKey={selectedSetting.automation_key} />
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-10">
+            <SettingCard setting={selectedSetting} agents={agents} members={members} />
+          </div>
+        )
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
           <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
@@ -473,7 +508,8 @@ export function CRMAISettingsPage() {
                     key={setting.automation_key}
                     setting={setting}
                     agentName={actorLabel({ type: setting.config?.issue_todo_assignee_type || "agent", id: setting.config?.issue_todo_assignee_id || setting.assignee_agent_id || "" }, agents, members)}
-                    onConfigure={() => setSelectedKey(setting.automation_key)}
+                    onConfigure={() => { setSelectedKey(setting.automation_key); setMode("config"); }}
+                    onHistory={() => { setSelectedKey(setting.automation_key); setMode("history"); }}
                   />
                 ))}
               </div>

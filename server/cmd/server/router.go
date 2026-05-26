@@ -375,6 +375,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// CRM
 			r.Route("/api/crm", func(r chi.Router) {
 				r.Get("/ai-settings", h.ListCRMAISettings)
+				r.Get("/ai-history", h.ListCRMAIHistory)
 				r.Put("/ai-settings/{automationKey}", h.UpdateCRMAISetting)
 				r.Route("/accounts", func(r chi.Router) {
 					r.Get("/", h.ListCRMAccounts)
