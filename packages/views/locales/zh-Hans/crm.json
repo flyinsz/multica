@@ -23,7 +23,7 @@
   "customers": {
     "title": "客户",
     "search_placeholder": "搜索客户",
-    "new_customer_name": "新客户名称",
+    "new_customer_name": "客户名称",
     "country": "国家",
     "industry": "行业",
     "add_customer": "添加客户",

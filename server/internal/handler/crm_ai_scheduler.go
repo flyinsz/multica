@@ -270,6 +270,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	}
 	defer rows.Close()
 	created := 0
+	createdIssues := []map[string]string{}
 	candidates := 0
 	for rows.Next() {
 		var threadID, messageID, accountID, contactID, ownerMemberID pgtype.UUID
@@ -293,6 +294,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		}
 		if parentIssueID.Valid {
 			created++
+			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(threadID), "message_id": uuidToString(messageID), "kind": "merged_comment"})
 			comment := h.buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID, subject, messageLink, timestampToString(lastAt), reviewerLine)
 			if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, comment); err != nil {
 				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(threadID), "error", err)
@@ -306,6 +308,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		}
 		if issueID.Valid {
 			created++
+			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "thread_id": uuidToString(threadID), "message_id": uuidToString(messageID), "kind": "created"})
 			if accountID.Valid || contactID.Valid {
 				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$3), contact_id=COALESCE(contact_id,$4), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, accountID, contactID)
 			}
@@ -314,7 +317,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"automation_key": "email_pending_reply", "candidates": candidates, "created": created}, nil
+	return map[string]any{"automation_key": "email_pending_reply", "candidates": candidates, "created": created, "created_issues": createdIssues}, nil
 }
 
 func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
@@ -336,6 +339,7 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 	}
 	defer rows.Close()
 	created := 0
+	createdIssues := []map[string]string{}
 	for rows.Next() {
 		var accountID pgtype.UUID
 		var name string
@@ -351,13 +355,14 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), issueActors)
 		if err == nil && issueID.Valid {
 			created++
+			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "account_id": uuidToString(accountID), "kind": "created"})
 			_ = h.createCRMAIFollowupDraft(ctx, workspaceID, issueID, accountID, name, timestampToString(due))
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"automation_key": "due_followup", "created": created}, nil
+	return map[string]any{"automation_key": "due_followup", "created": created, "created_issues": createdIssues}, nil
 }
 
 func stringsTrimForCRM(value string, limit int) string {

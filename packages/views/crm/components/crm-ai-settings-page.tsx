@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeft, Bot, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import { crmKeys } from "@multica/core/crm/queries";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -39,6 +40,7 @@ type CRMAIConfig = {
 type CRMAILastResult = {
   checked_at?: string;
   candidates?: number;
+  created?: number;
   issues_created?: number;
   tasks_queued?: number;
   skipped_contacted?: number;
@@ -47,6 +49,7 @@ type CRMAILastResult = {
   skipped_title_duplicate?: number;
   skipped_handled?: number;
   skipped_done_issue?: number;
+  created_issues?: Array<{ id: string; title?: string; kind?: string; thread_id?: string; message_id?: string; account_id?: string }>;
   note?: string;
 };
 
@@ -164,10 +167,12 @@ function buildForm(setting: CRMAISetting): FormState {
 }
 
 function ResultGrid({ result }: { result?: CRMAILastResult | null }) {
+  const paths = useWorkspacePaths();
   const r = result || {};
+  const createdCount = r.issues_created ?? r.created;
   const items = [
     ["候选", r.candidates],
-    ["创建 issue", r.issues_created],
+    ["创建 issue", createdCount],
     ["排队任务", r.tasks_queued],
     ["已联系跳过", r.skipped_contacted],
     ["已有 issue", r.skipped_existing_issue],
@@ -186,6 +191,16 @@ function ResultGrid({ result }: { result?: CRMAILastResult | null }) {
           </div>
         ))}
       </div>
+      {r.created_issues && r.created_issues.length > 0 ? (
+        <div className="mt-3 space-y-1 border-t pt-2">
+          <div className="text-[11px] text-muted-foreground">本次创建/更新 issue</div>
+          {r.created_issues.map((issue) => (
+            <a key={`${issue.id}-${issue.message_id || issue.thread_id || issue.account_id || ""}`} className="block truncate text-xs text-primary hover:underline" href={paths.issueDetail(issue.id)}>
+              {issue.title || issue.id}
+            </a>
+          ))}
+        </div>
+      ) : null}
       {r.note ? <div className="mt-2 text-xs text-muted-foreground">{r.note}</div> : null}
     </div>
   );

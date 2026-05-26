@@ -196,7 +196,7 @@ function countryName(codeOrName: string | null | undefined, locale: Locale) {
 function ProfileTextarea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="space-y-1 text-sm">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
       <Textarea className="min-h-20" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
@@ -299,7 +299,7 @@ function FieldRow({ label, value }: { label: string; value?: string | null }) {
 function LabeledField({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
   return (
     <label className={`space-y-1.5 ${className}`}>
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </label>
   );
@@ -925,7 +925,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
 
           <TabsContent value="emails" className="space-y-6">
             <section className="rounded-lg border bg-card">
-              {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : emailThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : <div className="divide-y">{emailThreads.map((thread) => <div key={thread.id} className="px-4 py-3 text-sm"><div className="font-medium">{thread.subject}</div><div className="mt-1 text-xs text-muted-foreground">{[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}</div></div>)}</div>}
+              {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : emailThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : <div className="divide-y">{emailThreads.map((thread) => <button key={thread.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(`${paths.crmEmails()}?thread=${encodeURIComponent(thread.id)}`)}><div className="font-medium">{thread.subject}</div><div className="mt-1 text-xs text-muted-foreground">{[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}</div></button>)}</div>}
             </section>
           </TabsContent>
 

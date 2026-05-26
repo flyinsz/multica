@@ -128,7 +128,7 @@ function AccountTypeLabel({ type, t }: { type: CRMAccountType; t: Translation })
 function LabeledField({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
   return (
     <label className={`space-y-1.5 ${className}`}>
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </label>
   );
