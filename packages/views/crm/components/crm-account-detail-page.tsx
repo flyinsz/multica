@@ -313,21 +313,21 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
     <div className="grid max-h-[70vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
       <LabeledField label={t(($) => $.customers.new_customer_name)}><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.customers.new_customer_name)} /></LabeledField>
       <LabeledField label={t(($) => $.customers.website)}><Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder={t(($) => $.customers.website)} /></LabeledField>
-      <select className="h-9 rounded-md border bg-background px-3 text-sm" value={form.accountType} onChange={(e) => setForm({ ...form, accountType: e.target.value as CRMAccountType })}>
+      <LabeledField label={t(($) => $.customers.account_type)}><select className="h-9 rounded-md border bg-background px-3 text-sm" value={form.accountType} onChange={(e) => setForm({ ...form, accountType: e.target.value as CRMAccountType })}>
         <option value="prospect">{t(($) => $.account_types.prospect)}</option>
         <option value="customer">{t(($) => $.account_types.customer)}</option>
         <option value="partner">{t(($) => $.account_types.partner)}</option>
         <option value="supplier">{t(($) => $.account_types.supplier)}</option>
         <option value="competitor">{t(($) => $.account_types.competitor)}</option>
         <option value="other">{t(($) => $.account_types.other)}</option>
-      </select>
-      <select className="h-9 rounded-md border bg-background px-3 text-sm" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as CRMAccountStatus })}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.status)}><select className="h-9 rounded-md border bg-background px-3 text-sm" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as CRMAccountStatus })}>
         <option value="active">{t(($) => $.statuses.active)}</option>
         <option value="prospect">{t(($) => $.statuses.prospect)}</option>
         <option value="inactive">{t(($) => $.statuses.inactive)}</option>
         <option value="archived">{t(($) => $.statuses.archived)}</option>
-      </select>
-      <select aria-label="客户所有人" className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerType === "agent" ? `agent:${form.ownerAgentID}` : form.ownerType === "member" ? `member:${form.ownerMemberID}` : ""} onChange={(e) => { const [type, id = ""] = e.target.value.split(":"); setForm({ ...form, ownerType: (type || "") as AccountOwnerType, ownerMemberID: type === "member" ? id : "", ownerAgentID: type === "agent" ? id : "" }); }}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.owner)}><select aria-label={t(($) => $.customers.owner)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.ownerType === "agent" ? `agent:${form.ownerAgentID}` : form.ownerType === "member" ? `member:${form.ownerMemberID}` : ""} onChange={(e) => { const [type, id = ""] = e.target.value.split(":"); setForm({ ...form, ownerType: (type || "") as AccountOwnerType, ownerMemberID: type === "member" ? id : "", ownerAgentID: type === "agent" ? id : "" }); }}>
         <option value="">客户所有人</option>
         <optgroup label="Member">
           {members.map((member) => <option key={member.id} value={`member:${member.user_id}`}>{member.name || member.email || member.user?.name || member.user?.email || member.id}</option>)}
@@ -335,30 +335,30 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
         <optgroup label="Agent">
           {agents.map((agent) => <option key={agent.id} value={`agent:${agent.id}`}>{agent.name}</option>)}
         </optgroup>
-      </select>
-      <select aria-label={t(($) => $.customers.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value, regionCode: "", cityCode: "" })}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.country)}><select aria-label={t(($) => $.customers.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value, regionCode: "", cityCode: "" })}>
         <option value="">{t(($) => $.customers.country)}</option>
         {countries.map((option) => <option key={option.code} value={option.code}>{localizedName(option.name, locale)}</option>)}
-      </select>
-      <select aria-label={t(($) => $.customers.region)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.regionCode} onChange={(e) => setForm({ ...form, regionCode: e.target.value, cityCode: "" })} disabled={!form.countryCode || regionsLoading}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.region)}><select aria-label={t(($) => $.customers.region)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.regionCode} onChange={(e) => setForm({ ...form, regionCode: e.target.value, cityCode: "" })} disabled={!form.countryCode || regionsLoading}>
         <option value="">{regionsLoading ? `${t(($) => $.customers.region)}...` : t(($) => $.customers.region)}</option>
         {regions.map((option) => <option key={option.code} value={option.code}>{localizedName(option.name, locale)}</option>)}
-      </select>
-      <select aria-label={t(($) => $.customers.city)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.cityCode} onChange={(e) => setForm({ ...form, cityCode: e.target.value })} disabled={!form.regionCode || citiesLoading}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.city)}><select aria-label={t(($) => $.customers.city)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.cityCode} onChange={(e) => setForm({ ...form, cityCode: e.target.value })} disabled={!form.regionCode || citiesLoading}>
         <option value="">{citiesLoading ? `${t(($) => $.customers.city)}...` : t(($) => $.customers.city)}</option>
         {cities.map((option) => <option key={option.code} value={option.code}>{localizedName(option.name, locale)}</option>)}
-      </select>
-      <select aria-label={t(($) => $.customers.industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value, subIndustry: "" })}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.industry)}><select aria-label={t(($) => $.customers.industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value, subIndustry: "" })}>
         <option value="">{t(($) => $.customers.industry)}</option>
         {CRM_INDUSTRY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{industryLabel(option.value, locale)}</option>)}
-      </select>
-      <select aria-label={t(($) => $.customers.sub_industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.subIndustry} onChange={(e) => setForm({ ...form, subIndustry: e.target.value })} disabled={!form.industry}>
+      </select></LabeledField>
+      <LabeledField label={t(($) => $.customers.sub_industry)}><select aria-label={t(($) => $.customers.sub_industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.subIndustry} onChange={(e) => setForm({ ...form, subIndustry: e.target.value })} disabled={!form.industry}>
         <option value="">{t(($) => $.customers.sub_industry)}</option>
         {subIndustries.map((option) => <option key={option.value} value={option.value}>{optionLabel(option, locale)}</option>)}
-      </select>
+      </select></LabeledField>
       <LabeledField label={t(($) => $.customers.annual_revenue)}><Input value={form.annualRevenue} onChange={(e) => setForm({ ...form, annualRevenue: e.target.value })} placeholder={t(($) => $.customers.annual_revenue)} /></LabeledField>
       <LabeledField label={t(($) => $.customers.employee_count)}><Input value={form.employeeCount} onChange={(e) => setForm({ ...form, employeeCount: e.target.value })} placeholder={t(($) => $.customers.employee_count)} /></LabeledField>
-      <div className="space-y-2 sm:col-span-2">
+      <LabeledField label={t(($) => $.customers.tags)} className="sm:col-span-2"><div className="space-y-2">
         <Input aria-label={t(($) => $.customers.tags)} value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder={t(($) => $.customers.tags_placeholder)} />
         {suggestedTags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -367,7 +367,7 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
             ))}
           </div>
         )}
-      </div>
+      </div></LabeledField>
       <LabeledField label={t(($) => $.customers.next_follow_up_at)} className="sm:col-span-2"><Input aria-label={t(($) => $.customers.next_follow_up_at)} type="datetime-local" value={form.nextFollowUpAt} onChange={(e) => setForm({ ...form, nextFollowUpAt: e.target.value })} /></LabeledField>
       <LabeledField label={t(($) => $.customers.notes)} className="sm:col-span-2"><textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder={t(($) => $.customers.notes)} /></LabeledField>
     </div>
@@ -477,6 +477,19 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-account-detail"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
+  const ownerLabel = useMemo(() => {
+    if (!account) return "";
+    if (account.owner_agent_id) {
+      const agent = agents.find((item) => item.id === account.owner_agent_id);
+      return agent ? `Agent: ${agent.name}` : `Agent: ${account.owner_agent_id}`;
+    }
+    if (account.owner_member_id) {
+      const member = members.find((item) => item.user_id === account.owner_member_id || item.id === account.owner_member_id);
+      const memberName = member?.name || member?.email || account.owner_member_id;
+      return `Member: ${memberName}`;
+    }
+    return "";
+  }, [account, agents, members]);
 
   const [accountForm, setAccountForm] = useState<AccountFormState | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState | null>(null);
@@ -755,6 +768,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 <FieldRow label={t(($) => $.customers.source)} value={account.source ? t(($) => $.sources[account.source as CRMAccountSource]) : null} />
                 <FieldRow label={t(($) => $.customers.rating)} value={t(($) => $.ratings[account.rating])} />
                 <FieldRow label={t(($) => $.customers.priority)} value={t(($) => $.priorities[account.priority])} />
+                <FieldRow label={t(($) => $.customers.owner)} value={ownerLabel} />
                 <FieldRow label={t(($) => $.customers.website)} value={account.website} />
                 <FieldRow label={t(($) => $.customers.country)} value={countryName(account.country_code || account.country_name || account.country, locale)} />
                 <FieldRow label={t(($) => $.customers.region)} value={account.region} />

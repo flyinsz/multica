@@ -37,6 +37,7 @@
     "region": "Region",
     "notes": "Notes",
     "account_code": "Account code",
+    "owner": "Owner",
     "account_type": "Account type",
     "rating": "Rating",
     "priority": "Priority",

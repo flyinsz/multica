@@ -2044,7 +2044,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		filter = "all"
 	}
 	mailbox := strings.TrimSpace(r.URL.Query().Get("mailbox"))
-	folderCondition := "$3 = 'all'"
+	folderCondition := "TRUE"
 	switch folder {
 	case "inbox":
 		folderCondition = "m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])"

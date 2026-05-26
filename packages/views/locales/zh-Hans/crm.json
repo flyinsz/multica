@@ -37,6 +37,7 @@
     "region": "地区",
     "notes": "备注",
     "account_code": "客户编码",
+    "owner": "客户所有人",
     "account_type": "客户类型",
     "rating": "评级",
     "priority": "优先级",
