@@ -4418,10 +4418,55 @@ func (h *Handler) ListCRMAISettings(w http.ResponseWriter, r *http.Request) {
 			item.LastCheckedAt = &t
 		}
 		item.Config = json.RawMessage(config)
-		item.LastResult = json.RawMessage(lastResult)
+		item.LastResult = h.withRecentCRMAIIssues(r.Context(), workspaceID, item.AutomationKey, lastResult)
 		settings = append(settings, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
+}
+
+func (h *Handler) withRecentCRMAIIssues(ctx context.Context, workspaceID pgtype.UUID, automationKey string, lastResult []byte) json.RawMessage {
+	payload := map[string]any{}
+	if len(lastResult) > 0 {
+		_ = json.Unmarshal(lastResult, &payload)
+	}
+	if existing, ok := payload["created_issues"].([]any); ok && len(existing) > 0 {
+		out, _ := json.Marshal(payload)
+		return json.RawMessage(out)
+	}
+	prefix := ""
+	switch automationKey {
+	case "email_pending_reply":
+		prefix = "回复邮件：%"
+	case "due_followup":
+		prefix = "跟进客户：%"
+	default:
+		out, _ := json.Marshal(payload)
+		return json.RawMessage(out)
+	}
+	rows, err := h.DB.Query(ctx, `
+		SELECT id, title
+		FROM issue
+		WHERE workspace_id=$1 AND origin_type='crm_ai' AND title LIKE $2
+		ORDER BY created_at DESC
+		LIMIT 10`, workspaceID, prefix)
+	if err != nil {
+		out, _ := json.Marshal(payload)
+		return json.RawMessage(out)
+	}
+	defer rows.Close()
+	issues := []map[string]string{}
+	for rows.Next() {
+		var id pgtype.UUID
+		var title string
+		if err := rows.Scan(&id, &title); err == nil && id.Valid {
+			issues = append(issues, map[string]string{"id": uuidToString(id), "title": title, "kind": "recent"})
+		}
+	}
+	if len(issues) > 0 {
+		payload["created_issues"] = issues
+	}
+	out, _ := json.Marshal(payload)
+	return json.RawMessage(out)
 }
 
 func (h *Handler) UpdateCRMAISetting(w http.ResponseWriter, r *http.Request) {
