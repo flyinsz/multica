@@ -558,7 +558,7 @@ export function CRMEmailsPage() {
   });
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId && settingsOpen) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId && settingsOpen) });
-  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts", initialDraftId ?? ""], queryFn: () => api.listCRMEmailDrafts(initialDraftId), enabled: Boolean(wsId && activeFolder === "drafts"), refetchOnMount: "always" });
+  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts", initialDraftId ?? ""], queryFn: () => api.listCRMEmailDrafts(initialDraftId), enabled: Boolean(wsId), refetchOnMount: "always" });
   const { data: syncRunsData, dataUpdatedAt: syncRunsUpdatedAt } = useQuery({
     queryKey: ["crm", wsId, "imap-sync-runs"],
     queryFn: () => api.listCRMIMAPSyncRuns(),
@@ -1135,6 +1135,15 @@ export function CRMEmailsPage() {
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 
+  const aiReplySuggestion = useMutation({
+    mutationFn: () => api.suggestCRMEmailDraftReply({
+      thread_id: selectedThread?.id ?? null,
+      account_id: composeDraft?.accountId || selectedThread?.account_id || null,
+      contact_id: composeDraft?.contactId || selectedThread?.contact_id || null,
+      to_emails: composeDraft?.to.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean) ?? [],
+      subject: composeDraft?.subject ?? selectedThread?.subject ?? "",
+    }),
+  });
 
   const openAssociationDialog = (suggestion?: CRMEmailThreadAssociationSuggestion) => {
     const inferred = inferContactDraft(messages);
@@ -1147,6 +1156,13 @@ export function CRMEmailsPage() {
   };
 
   const openComposeDraft = (mode: "new" | "reply" | "reply-all" | "forward" = "reply") => {
+    if ((mode === "reply" || mode === "reply-all") && selectedThread?.id) {
+      const existing = visibleMailboxDrafts.find((draft: any) => draft.thread_id === selectedThread.id && draft.status !== "sent" && draft.status !== "discarded");
+      if (existing && window.confirm("该邮件线程已有未发送回复草稿，是否从已有草稿继续编辑？")) {
+        openDraftInComposer(existing);
+        return;
+      }
+    }
     const inbound = messages.find((message) => message.direction === "inbound" && message.from_email);
     const lastMsg = messages[messages.length - 1] || inbound;
     const subjectBase = selectedThread?.subject ?? "";
@@ -1487,6 +1503,31 @@ export function CRMEmailsPage() {
                     <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
                   </div>
                   <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
+                  <div className="rounded-md border bg-blue-50/60 p-3 text-sm dark:bg-blue-950/20">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="font-medium">AI 回复辅助</div>
+                        <div className="text-xs text-muted-foreground">自动读取客户资料和邮件往来，生成中文参考和客户语言回复。</div>
+                      </div>
+                      <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending} onClick={() => aiReplySuggestion.mutate()}>{aiReplySuggestion.isPending ? "生成中..." : "生成建议"}</Button>
+                    </div>
+                    {aiReplySuggestion.data ? (
+                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                        <div className="rounded border bg-background p-3">
+                          <div className="mb-1 text-xs font-medium text-muted-foreground">中文参考</div>
+                          <div className="whitespace-pre-wrap text-xs leading-5">{aiReplySuggestion.data.chinese || "—"}</div>
+                        </div>
+                        <div className="rounded border bg-background p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="text-xs font-medium text-muted-foreground">客户语言：{aiReplySuggestion.data.customer_language || "—"}</div>
+                            <Button type="button" size="sm" onClick={() => setComposeDraft({ ...composeDraft, body: aiReplySuggestion.data?.customer_reply || composeDraft.body })}>采纳</Button>
+                          </div>
+                          <div className="whitespace-pre-wrap text-xs leading-5">{aiReplySuggestion.data.customer_reply || "—"}</div>
+                        </div>
+                      </div>
+                    ) : null}
+                    {aiReplySuggestion.isError ? <p className="mt-2 text-xs text-destructive">AI 建议生成失败，请稍后重试。</p> : null}
+                  </div>
                   <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
                   <div className="rounded-md border bg-muted/20 p-3 text-sm">
                     <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground"><span>{emailCopy.attachments}</span><label className="inline-flex cursor-pointer items-center gap-1 rounded border bg-background px-2 py-1 hover:bg-muted"><Paperclip className="size-3" />{emailCopy.addAttachment}<input type="file" multiple className="hidden" onChange={async (event) => { const files = Array.from(event.target.files ?? []); const added = await Promise.all(files.map((file) => new Promise<ComposeAttachment>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({ file_name: file.name, content_type: file.type || "application/octet-stream", content: String(reader.result || "").split(",")[1] || "", size: file.size }); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }))); setComposeDraft({ ...composeDraft, attachments: [...composeDraft.attachments, ...added] }); event.currentTarget.value = ""; }} /></label></div>

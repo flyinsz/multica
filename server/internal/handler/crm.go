@@ -5063,3 +5063,149 @@ func (h *Handler) SetCRMIMAPSyncCron(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sync_enabled": req.SyncEnabled})
 }
+
+type CRMEmailDraftAISuggestRequest struct {
+	ThreadID  *string  `json:"thread_id"`
+	AccountID *string  `json:"account_id"`
+	ContactID *string  `json:"contact_id"`
+	ToEmails  []string `json:"to_emails"`
+	Subject   string   `json:"subject"`
+}
+
+type CRMEmailDraftAISuggestResponse struct {
+	Chinese          string `json:"chinese"`
+	CustomerLanguage string `json:"customer_language"`
+	CustomerReply    string `json:"customer_reply"`
+	Source           string `json:"source"`
+}
+
+func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	var req CRMEmailDraftAISuggestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	threadID := mustParsePgUUID(strings.TrimSpace(ptrString(req.ThreadID)))
+	accountID := mustParsePgUUID(strings.TrimSpace(ptrString(req.AccountID)))
+	contactID := mustParsePgUUID(strings.TrimSpace(ptrString(req.ContactID)))
+	ctx := r.Context()
+
+	accountName := ""
+	accountNotes := ""
+	if accountID.Valid {
+		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(notes,'') FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&accountName, &accountNotes)
+	}
+	contactName := ""
+	contactEmail := ""
+	contactLanguage := ""
+	if contactID.Valid {
+		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(email,''), COALESCE(language,'') FROM crm_contact WHERE workspace_id=$1 AND id=$2`, workspaceID, contactID).Scan(&contactName, &contactEmail, &contactLanguage)
+	}
+	messages := []string{}
+	if threadID.Valid {
+		rows, err := h.DB.Query(ctx, `SELECT direction, COALESCE(from_name,''), COALESCE(from_email,''), COALESCE(subject,''), COALESCE(body_text, regexp_replace(COALESCE(body_html,''), '<[^>]+>', ' ', 'g'), ''), COALESCE(received_at, sent_at, created_at) FROM crm_email_message WHERE workspace_id=$1 AND thread_id=$2 ORDER BY COALESCE(received_at, sent_at, created_at) DESC LIMIT 8`, workspaceID, threadID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var direction, fromName, fromEmail, subject, body string
+				var at pgtype.Timestamptz
+				if rows.Scan(&direction, &fromName, &fromEmail, &subject, &body, &at) == nil {
+					messages = append(messages, fmt.Sprintf("[%s] %s <%s> %s\n%s", direction, fromName, fromEmail, subject, stringsTrimForCRM(body, 1200)))
+					if contactEmail == "" && direction == "inbound" {
+						contactEmail = fromEmail
+					}
+				}
+			}
+		}
+	}
+	language := strings.TrimSpace(contactLanguage)
+	if language == "" {
+		language = inferCRMCustomerLanguage(contactEmail, strings.Join(messages, "\n"))
+	}
+	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	apiKey = strings.TrimSpace(apiKey)
+	if baseURL == "" || apiKey == "" || model == "" {
+		zh := "您好，\n\n感谢您的来信。我们已收到您的需求，会尽快核对相关信息后回复您。若方便，请补充具体产品、数量、规格、目的港和期望交期，便于我们提供更准确的方案。\n\n此致"
+		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{Chinese: zh, CustomerLanguage: language, CustomerReply: zh, Source: "fallback"})
+		return
+	}
+	prompt := "你是外贸CRM邮件回复助手。根据客户资料和邮件往来，输出JSON：{\"chinese\":\"中文回复建议\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"客户语言回复建议\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件；3) 中文建议用于内部参考；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务。\n\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n主题：" + req.Subject + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
+	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
+	body, _ := json.Marshal(payload)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build AI request")
+		return
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to call AI model")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, "AI model returned error")
+		return
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
+		writeError(w, http.StatusBadGateway, "invalid AI model response")
+		return
+	}
+	var parsed CRMEmailDraftAISuggestResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.Choices[0].Message.Content)), &parsed); err != nil {
+		writeError(w, http.StatusBadGateway, "invalid AI suggestion JSON")
+		return
+	}
+	if parsed.CustomerLanguage == "" {
+		parsed.CustomerLanguage = language
+	}
+	parsed.Source = source
+	writeJSON(w, http.StatusOK, parsed)
+}
+
+func ptrString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func inferCRMCustomerLanguage(email, body string) string {
+	text := strings.ToLower(email + " " + body)
+	if strings.Contains(text, ".cn") || strings.Contains(body, "你好") || strings.Contains(body, "您好") {
+		return "Chinese"
+	}
+	if strings.Contains(text, ".es") || strings.Contains(text, ".mx") || strings.Contains(text, ".ar") {
+		return "Spanish"
+	}
+	if strings.Contains(text, ".fr") {
+		return "French"
+	}
+	if strings.Contains(text, ".de") {
+		return "German"
+	}
+	if strings.Contains(text, ".ru") {
+		return "Russian"
+	}
+	if strings.Contains(text, ".jp") {
+		return "Japanese"
+	}
+	if strings.Contains(text, ".kr") {
+		return "Korean"
+	}
+	return "English"
+}

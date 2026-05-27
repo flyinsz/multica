@@ -419,6 +419,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/email-drafts", func(r chi.Router) {
 					r.Get("/", h.ListCRMEmailDrafts)
 					r.Post("/", h.CreateCRMEmailDraft)
+					r.Post("/ai-suggest", h.SuggestCRMEmailDraftReply)
 					r.Patch("/{draftId}", h.UpdateCRMEmailDraft)
 					r.Post("/{draftId}/send", h.SendCRMEmailDraft)
 				})

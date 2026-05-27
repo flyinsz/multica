@@ -1370,6 +1370,10 @@ export class ApiClient {
     return this.fetch("/api/crm/email-drafts", { method: "POST", body: JSON.stringify(data) });
   }
 
+  async suggestCRMEmailDraftReply(data: Record<string, unknown>): Promise<{ chinese: string; customer_language: string; customer_reply: string; source: string }> {
+    return this.fetch("/api/crm/email-drafts/ai-suggest", { method: "POST", body: JSON.stringify(data) });
+  }
+
   async updateCRMEmailDraft(draftId: string, data: Record<string, unknown>): Promise<{ ok: boolean; id: string }> {
     return this.fetch(`/api/crm/email-drafts/${draftId}`, { method: "PATCH", body: JSON.stringify(data) });
   }
