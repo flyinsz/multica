@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -46,7 +46,6 @@ import {
 } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   Table,
@@ -71,8 +70,6 @@ type Translation = (
 
 type Locale = "en" | "zh-Hans";
 
-type AccountOwnerType = "" | "member" | "agent";
-
 type AccountFormState = {
   name: string;
   accountCode: string;
@@ -81,9 +78,6 @@ type AccountFormState = {
   source: CRMAccountSource;
   rating: CRMAccountRating;
   priority: CRMAccountPriority;
-  ownerType: AccountOwnerType;
-  ownerMemberID: string;
-  ownerAgentID: string;
   website: string;
   countryCode: string;
   regionCode: string;
@@ -197,7 +191,7 @@ function countryName(codeOrName: string | null | undefined, locale: Locale) {
 function ProfileTextarea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="space-y-1 text-sm">
-      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <Textarea className="min-h-20" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
@@ -214,9 +208,6 @@ function accountToForm(account: CRMAccount): AccountFormState {
     source: account.source ?? "manual",
     rating: account.rating,
     priority: account.priority,
-    ownerType: account.owner_agent_id ? "agent" : account.owner_member_id ? "member" : "",
-    ownerMemberID: account.owner_member_id ?? "",
-    ownerAgentID: account.owner_agent_id ?? "",
     website: account.website ?? "",
     countryCode: country?.code ?? account.country_code ?? account.country ?? "",
     regionCode: account.region ?? "",
@@ -276,6 +267,25 @@ function AccountStatusLabel({ status, t }: { status: CRMAccountStatus; t: Transl
   return labels[status] ?? status;
 }
 
+function AccountSourceLabel({ source, t }: { source?: CRMAccountSource | null; t: Translation }) {
+  if (!source) return "";
+  const labels: Record<CRMAccountSource, string> = {
+    manual: t(($) => $.sources.manual),
+    email: t(($) => $.sources.email),
+    whatsapp: t(($) => $.sources.whatsapp),
+    website: t(($) => $.sources.website),
+    referral: t(($) => $.sources.referral),
+    trade_show: t(($) => $.sources.trade_show),
+    linkedin: t(($) => $.sources.linkedin),
+    other: t(($) => $.sources.other),
+  };
+  return labels[source] ?? source;
+}
+
+function industryDisplay(industry: string | null | undefined, subIndustry: string | null | undefined, locale: Locale) {
+  return [industry ? industryLabel(industry, locale) : "", subIndustry].filter(Boolean).join(" · ");
+}
+
 function ChannelLabel({ channel, t }: { channel: string; t: Translation }) {
   const labels: Record<string, string> = {
     manual: t(($) => $.channels.manual),
@@ -297,52 +307,51 @@ function FieldRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-
-const accountTypeLabel = (t: Translation, value: CRMAccountType) => t(($) => $.account_types[value] ?? value);
-const statusLabel = (t: Translation, value: CRMAccountStatus) => t(($) => $.statuses[value] ?? value);
-const localizedNameOrFallback = (name: Parameters<typeof localizedName>[0] | undefined, locale: "en" | "zh-Hans", fallback: string) => name ? localizedName(name, locale) : fallback;
-const optionLabelOrFallback = (option: Parameters<typeof optionLabel>[0] | undefined, locale: "en" | "zh-Hans", fallback: string) => option ? optionLabel(option, locale) : fallback;
-
-const ownerLabel = (t: Translation, form: AccountFormState, members: Array<{ id: string; user_id: string; name: string; email: string; user?: { name?: string; email?: string } }>, agents: Array<{ id: string; name: string }>) => {
-  if (form.ownerType === "member") {
-    const member = members.find((item) => item.user_id === form.ownerMemberID || item.id === form.ownerMemberID);
-    return member ? `成员 · ${member.name || member.email || member.user?.name || member.user?.email || member.id}` : t(($) => $.customers.owner);
-  }
-  if (form.ownerType === "agent") {
-    const agent = agents.find((item) => item.id === form.ownerAgentID);
-    return agent ? `Agent · ${agent.name}` : t(($) => $.customers.owner);
-  }
-  return t(($) => $.customers.owner);
-};
-
-function LabeledField({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
-  return (
-    <label className={`space-y-1.5 ${className}`}>
-      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [], agents = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[]; members?: Array<{ id: string; user_id: string; name: string; email: string; user?: { name?: string; email?: string } }>; agents?: Array<{ id: string; name: string }> }) {
+function AccountForm({ form, setForm, t, locale, suggestedTags = [] }: { form: AccountFormState; setForm: (next: AccountFormState) => void; t: Translation; locale: Locale; suggestedTags?: string[] }) {
   const { regions, cities, regionsLoading, citiesLoading } = useLocationSelection(form.countryCode, form.regionCode, locale);
   const countries = useMemo(() => localizedSort(COUNTRY_OPTIONS, locale), [locale]);
   const subIndustries = subIndustryOptions(form.industry);
   return (
-    <div className="grid max-h-[70vh] gap-4 overflow-y-auto rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
-      <LabeledField label={t(($) => $.customers.new_customer_name)}><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.customers.new_customer_name)} /></LabeledField>
-      <LabeledField label={t(($) => $.customers.website)}><Input value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder={t(($) => $.customers.website)} /></LabeledField>
-      <LabeledField label={t(($) => $.customers.account_type)}><Select value={form.accountType} onValueChange={(value) => setForm({ ...form, accountType: value as CRMAccountType })}><SelectTrigger className="w-full"><SelectValue>{() => accountTypeLabel(t, form.accountType)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="prospect">{t(($) => $.account_types.prospect)}</SelectItem><SelectItem value="customer">{t(($) => $.account_types.customer)}</SelectItem><SelectItem value="partner">{t(($) => $.account_types.partner)}</SelectItem><SelectItem value="supplier">{t(($) => $.account_types.supplier)}</SelectItem><SelectItem value="competitor">{t(($) => $.account_types.competitor)}</SelectItem><SelectItem value="other">{t(($) => $.account_types.other)}</SelectItem></SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.status)}><Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value as CRMAccountStatus })}><SelectTrigger className="w-full"><SelectValue>{() => statusLabel(t, form.status)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="active">{t(($) => $.statuses.active)}</SelectItem><SelectItem value="prospect">{t(($) => $.statuses.prospect)}</SelectItem><SelectItem value="inactive">{t(($) => $.statuses.inactive)}</SelectItem><SelectItem value="archived">{t(($) => $.statuses.archived)}</SelectItem></SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.owner)}><Select value={form.ownerType === "agent" ? `agent:${form.ownerAgentID}` : form.ownerType === "member" ? `member:${form.ownerMemberID}` : "none"} onValueChange={(value) => { const nextValue = value ?? "none"; const [type, id = ""] = nextValue === "none" ? ["", ""] : nextValue.split(":"); setForm({ ...form, ownerType: (type || "") as AccountOwnerType, ownerMemberID: type === "member" ? id : "", ownerAgentID: type === "agent" ? id : "" }); }}><SelectTrigger className="w-full"><SelectValue>{() => ownerLabel(t, form, members, agents)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t(($) => $.customers.owner)}</SelectItem>{members.map((member) => <SelectItem key={member.id} value={`member:${member.user_id}`}>Member · {member.name || member.email || member.user?.name || member.user?.email || member.id}</SelectItem>)}{agents.map((agent) => <SelectItem key={agent.id} value={`agent:${agent.id}`}>Agent · {agent.name}</SelectItem>)}</SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.country)}><Select value={form.countryCode || "none"} onValueChange={(value) => setForm({ ...form, countryCode: !value || value === "none" ? "" : value, regionCode: "", cityCode: "" })}><SelectTrigger className="w-full"><SelectValue>{() => form.countryCode ? localizedNameOrFallback(countries.find((option) => option.code === form.countryCode)?.name, locale, form.countryCode) : t(($) => $.customers.country)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t(($) => $.customers.country)}</SelectItem>{countries.map((option) => <SelectItem key={option.code} value={option.code}>{localizedName(option.name, locale)}</SelectItem>)}</SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.region)}><Select value={form.regionCode || "none"} onValueChange={(value) => setForm({ ...form, regionCode: !value || value === "none" ? "" : value, cityCode: "" })} disabled={!form.countryCode || regionsLoading}><SelectTrigger className="w-full"><SelectValue>{() => form.regionCode ? localizedNameOrFallback(regions.find((option) => option.code === form.regionCode)?.name, locale, form.regionCode) : t(($) => $.customers.region)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{regionsLoading ? `${t(($) => $.customers.region)}...` : t(($) => $.customers.region)}</SelectItem>{regions.map((option) => <SelectItem key={option.code} value={option.code}>{localizedName(option.name, locale)}</SelectItem>)}</SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.city)}><Select value={form.cityCode || "none"} onValueChange={(value) => setForm({ ...form, cityCode: !value || value === "none" ? "" : value })} disabled={!form.regionCode || citiesLoading}><SelectTrigger className="w-full"><SelectValue>{() => form.cityCode ? localizedNameOrFallback(cities.find((option) => option.code === form.cityCode)?.name, locale, form.cityCode) : t(($) => $.customers.city)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{citiesLoading ? `${t(($) => $.customers.city)}...` : t(($) => $.customers.city)}</SelectItem>{cities.map((option) => <SelectItem key={option.code} value={option.code}>{localizedName(option.name, locale)}</SelectItem>)}</SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.industry)}><Select value={form.industry || "none"} onValueChange={(value) => setForm({ ...form, industry: !value || value === "none" ? "" : value, subIndustry: "" })}><SelectTrigger className="w-full"><SelectValue>{() => form.industry ? industryLabel(form.industry, locale) : t(($) => $.customers.industry)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t(($) => $.customers.industry)}</SelectItem>{CRM_INDUSTRY_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{industryLabel(option.value, locale)}</SelectItem>)}</SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.sub_industry)}><Select value={form.subIndustry || "none"} onValueChange={(value) => setForm({ ...form, subIndustry: !value || value === "none" ? "" : value })} disabled={!form.industry}><SelectTrigger className="w-full"><SelectValue>{() => form.subIndustry ? optionLabelOrFallback(subIndustries.find((option) => option.value === form.subIndustry), locale, form.subIndustry) : t(($) => $.customers.sub_industry)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="none">{t(($) => $.customers.sub_industry)}</SelectItem>{subIndustries.map((option) => <SelectItem key={option.value} value={option.value}>{optionLabel(option, locale)}</SelectItem>)}</SelectContent></Select></LabeledField>
-      <LabeledField label={t(($) => $.customers.annual_revenue)}><Input value={form.annualRevenue} onChange={(e) => setForm({ ...form, annualRevenue: e.target.value })} placeholder={t(($) => $.customers.annual_revenue)} /></LabeledField>
-      <LabeledField label={t(($) => $.customers.employee_count)}><Input value={form.employeeCount} onChange={(e) => setForm({ ...form, employeeCount: e.target.value })} placeholder={t(($) => $.customers.employee_count)} /></LabeledField>
-      <LabeledField label={t(($) => $.customers.tags)} className="sm:col-span-2"><div className="space-y-2">
+    <div className="grid max-h-[70vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+      <Input aria-label={t(($) => $.customers.new_customer_name)} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.customers.new_customer_name)} />
+      <Input aria-label={t(($) => $.customers.website)} value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder={t(($) => $.customers.website)} />
+      <select aria-label={t(($) => $.customers.account_type)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.accountType} onChange={(e) => setForm({ ...form, accountType: e.target.value as CRMAccountType })}>
+        <option value="prospect">{t(($) => $.account_types.prospect)}</option>
+        <option value="customer">{t(($) => $.account_types.customer)}</option>
+        <option value="partner">{t(($) => $.account_types.partner)}</option>
+        <option value="supplier">{t(($) => $.account_types.supplier)}</option>
+        <option value="competitor">{t(($) => $.account_types.competitor)}</option>
+        <option value="other">{t(($) => $.account_types.other)}</option>
+      </select>
+      <select aria-label={t(($) => $.customers.status)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as CRMAccountStatus })}>
+        <option value="active">{t(($) => $.statuses.active)}</option>
+        <option value="prospect">{t(($) => $.statuses.prospect)}</option>
+        <option value="inactive">{t(($) => $.statuses.inactive)}</option>
+        <option value="archived">{t(($) => $.statuses.archived)}</option>
+      </select>
+      <select aria-label={t(($) => $.customers.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value, regionCode: "", cityCode: "" })}>
+        <option value="">{t(($) => $.customers.country)}</option>
+        {countries.map((option) => <option key={option.code} value={option.code}>{localizedName(option.name, locale)}</option>)}
+      </select>
+      <select aria-label={t(($) => $.customers.region)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.regionCode} onChange={(e) => setForm({ ...form, regionCode: e.target.value, cityCode: "" })} disabled={!form.countryCode || regionsLoading}>
+        <option value="">{regionsLoading ? `${t(($) => $.customers.region)}...` : t(($) => $.customers.region)}</option>
+        {regions.map((option) => <option key={option.code} value={option.code}>{localizedName(option.name, locale)}</option>)}
+      </select>
+      <select aria-label={t(($) => $.customers.city)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.cityCode} onChange={(e) => setForm({ ...form, cityCode: e.target.value })} disabled={!form.regionCode || citiesLoading}>
+        <option value="">{citiesLoading ? `${t(($) => $.customers.city)}...` : t(($) => $.customers.city)}</option>
+        {cities.map((option) => <option key={option.code} value={option.code}>{localizedName(option.name, locale)}</option>)}
+      </select>
+      <select aria-label={t(($) => $.customers.industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value, subIndustry: "" })}>
+        <option value="">{t(($) => $.customers.industry)}</option>
+        {CRM_INDUSTRY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{industryLabel(option.value, locale)}</option>)}
+      </select>
+      <select aria-label={t(($) => $.customers.sub_industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={form.subIndustry} onChange={(e) => setForm({ ...form, subIndustry: e.target.value })} disabled={!form.industry}>
+        <option value="">{t(($) => $.customers.sub_industry)}</option>
+        {subIndustries.map((option) => <option key={option.value} value={option.value}>{optionLabel(option, locale)}</option>)}
+      </select>
+      <Input aria-label={t(($) => $.customers.annual_revenue)} value={form.annualRevenue} onChange={(e) => setForm({ ...form, annualRevenue: e.target.value })} placeholder={t(($) => $.customers.annual_revenue)} />
+      <Input aria-label={t(($) => $.customers.employee_count)} value={form.employeeCount} onChange={(e) => setForm({ ...form, employeeCount: e.target.value })} placeholder={t(($) => $.customers.employee_count)} />
+      <div className="space-y-2 sm:col-span-2">
         <Input aria-label={t(($) => $.customers.tags)} value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder={t(($) => $.customers.tags_placeholder)} />
         {suggestedTags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -351,16 +360,16 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
             ))}
           </div>
         )}
-      </div></LabeledField>
-      <LabeledField label={t(($) => $.customers.next_follow_up_at)} className="sm:col-span-2"><Input aria-label={t(($) => $.customers.next_follow_up_at)} type="datetime-local" value={form.nextFollowUpAt} onChange={(e) => setForm({ ...form, nextFollowUpAt: e.target.value })} /></LabeledField>
-      <LabeledField label={t(($) => $.customers.notes)} className="sm:col-span-2"><textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder={t(($) => $.customers.notes)} /></LabeledField>
+      </div>
+      <Input aria-label={t(($) => $.customers.next_follow_up_at)} className="sm:col-span-2" type="datetime-local" value={form.nextFollowUpAt} onChange={(e) => setForm({ ...form, nextFollowUpAt: e.target.value })} />
+      <textarea className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm sm:col-span-2" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder={t(($) => $.customers.notes)} />
     </div>
   );
 }
 
 function ContactForm({ form, setForm, t }: { form: ContactFormState; setForm: (next: ContactFormState) => void; t: Translation }) {
   return (
-    <div className="grid max-h-[70vh] gap-4 overflow-y-auto rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
+    <div className="grid max-h-[70vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
       <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.contacts.name)} />
       <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder={t(($) => $.contacts.email)} />
       <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder={t(($) => $.contacts.phone)} />
@@ -456,24 +465,9 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const { data: profile, isLoading: profileLoading } = useQuery(crmAccountProfileOptions(wsId, accountId));
   const { data: contacts = [], isLoading: contactsLoading } = useQuery(crmContactListOptions(wsId, accountId));
   const { data: notes = [], isLoading: notesLoading } = useQuery(crmCommunicationNoteListOptions(wsId, accountId));
-  const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId, "all"));
+  const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId));
   const emailThreads = emailThreadData?.threads ?? [];
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
-  const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
-  const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-account-detail"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
-  const ownerLabel = useMemo(() => {
-    if (!account) return "";
-    if (account.owner_agent_id) {
-      const agent = agents.find((item) => item.id === account.owner_agent_id);
-      return agent ? `Agent: ${agent.name}` : `Agent: ${account.owner_agent_id}`;
-    }
-    if (account.owner_member_id) {
-      const member = members.find((item) => item.user_id === account.owner_member_id || item.id === account.owner_member_id);
-      const memberName = member?.name || member?.email || account.owner_member_id;
-      return `Member: ${memberName}`;
-    }
-    return "";
-  }, [account, agents, members]);
 
   const [accountForm, setAccountForm] = useState<AccountFormState | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState | null>(null);
@@ -544,9 +538,6 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
         source: accountForm.source,
         rating: accountForm.rating,
         priority: accountForm.priority,
-        owner_type: accountForm.ownerType || null,
-        owner_member_id: accountForm.ownerType === "member" ? accountForm.ownerMemberID || null : null,
-        owner_agent_id: accountForm.ownerType === "agent" ? accountForm.ownerAgentID || null : null,
         annual_revenue: accountForm.annualRevenue || null,
         employee_count: accountForm.employeeCount || null,
         tags: splitTags(accountForm.tags),
@@ -602,7 +593,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const refreshProfile = useMutation({
     mutationFn: () => api.refreshCRMAccountProfile(accountId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId) });
     },
   });
 
@@ -746,26 +737,22 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
           <TabsContent value="overview" className="space-y-6">
             <section className="rounded-lg border bg-card p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <FieldRow label={t(($) => $.customers.account_code)} value={account.account_code} />
                 <FieldRow label={t(($) => $.customers.status)} value={t(($) => $.statuses[account.status])} />
                 <FieldRow label={t(($) => $.customers.account_type)} value={t(($) => $.account_types[account.account_type])} />
-                <FieldRow label={t(($) => $.customers.source)} value={account.source ? t(($) => $.sources[account.source as CRMAccountSource]) : null} />
+                <FieldRow label={t(($) => $.customers.source)} value={AccountSourceLabel({ source: account.source, t })} />
+                <FieldRow label={t(($) => $.customers.account_code)} value={account.account_code} />
                 <FieldRow label={t(($) => $.customers.rating)} value={t(($) => $.ratings[account.rating])} />
                 <FieldRow label={t(($) => $.customers.priority)} value={t(($) => $.priorities[account.priority])} />
-                <FieldRow label={t(($) => $.customers.owner)} value={ownerLabel} />
                 <FieldRow label={t(($) => $.customers.website)} value={account.website} />
                 <FieldRow label={t(($) => $.customers.country)} value={countryName(account.country_code || account.country_name || account.country, locale)} />
                 <FieldRow label={t(($) => $.customers.region)} value={account.region} />
                 <FieldRow label={t(($) => $.customers.city)} value={account.city} />
-                <FieldRow label={t(($) => $.customers.industry)} value={account.industry ? industryLabel(account.industry, locale) : null} />
-                <FieldRow label={t(($) => $.customers.sub_industry)} value={account.sub_industry} />
+                <FieldRow label={t(($) => $.customers.industry)} value={industryDisplay(account.industry, account.sub_industry, locale)} />
                 <FieldRow label={t(($) => $.customers.annual_revenue)} value={account.annual_revenue} />
                 <FieldRow label={t(($) => $.customers.employee_count)} value={account.employee_count} />
                 <FieldRow label={t(($) => $.customers.tags)} value={account.tags?.join(", ")} />
                 <FieldRow label={t(($) => $.customers.last_contacted_at)} value={account.last_contacted_at ? new Date(account.last_contacted_at).toLocaleString() : null} />
                 <FieldRow label={t(($) => $.customers.next_follow_up_at)} value={account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : null} />
-                <FieldRow label="Created" value={account.created_at ? new Date(account.created_at).toLocaleString() : null} />
-                <FieldRow label="Updated" value={account.updated_at ? new Date(account.updated_at).toLocaleString() : null} />
               </div>
               {account.notes && <p className="mt-4 whitespace-pre-wrap rounded-md border bg-background/50 p-3 text-sm">{account.notes}</p>}
             </section>
@@ -823,7 +810,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={refreshProfile.isPending} onClick={() => refreshProfile.mutate()}>
-                    {refreshProfile.isPending ? "画像刷新中…" : t(($) => $.profile.refresh)}
+                    {t(($) => $.profile.refresh)}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setProfileForm(profileToForm(profile))}>
                     <Pencil className="mr-1 size-4" /> {profile ? t(($) => $.profile.edit) : t(($) => $.profile.add)}
@@ -835,8 +822,6 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
               ) : profile ? (
                 <div className="mt-4 space-y-4">
                   <FieldRow label={t(($) => $.profile.summary_title)} value={profile.summary} />
-                  <FieldRow label={t(($) => $.profile.source_summary)} value={profile.source_summary} />
-                  <FieldRow label={t(($) => $.profile.updated_at)} value={profile.updated_at} />
                   <div className="grid gap-3 sm:grid-cols-2">
                     <FieldRow label={t(($) => $.profile.business_model)} value={profileText(profile.profile_json, "business_model")} />
                     <FieldRow label={t(($) => $.profile.main_products)} value={profileText(profile.profile_json, "main_products")} />
@@ -909,7 +894,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
 
           <TabsContent value="emails" className="space-y-6">
             <section className="rounded-lg border bg-card">
-              {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : emailThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : <div className="divide-y">{emailThreads.map((thread) => <button key={thread.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(`${paths.crmEmails()}?thread=${encodeURIComponent(thread.id)}`)}><div className="font-medium">{thread.subject}</div><div className="mt-1 text-xs text-muted-foreground">{[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}</div></button>)}</div>}
+              {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : emailThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : <div className="divide-y">{emailThreads.map((thread) => <div key={thread.id} className="px-4 py-3 text-sm"><div className="font-medium">{thread.subject}</div><div className="mt-1 text-xs text-muted-foreground">{[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}</div></div>)}</div>}
             </section>
           </TabsContent>
 
@@ -946,7 +931,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
       <Dialog open={accountForm !== null} onOpenChange={(open) => !open && setAccountForm(null)}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader><DialogTitle>{t(($) => $.customers.edit_customer)}</DialogTitle><DialogDescription>{account.name}</DialogDescription></DialogHeader>
-          {accountForm && <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={tagSuggestions(account)} members={members} agents={agents} />}
+          {accountForm && <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={tagSuggestions(account)} />}
           {updateAccount.isError && <p className="text-xs text-destructive">{t(($) => $.customers.create_error)}</p>}
           <DialogFooter><Button variant="outline" onClick={() => setAccountForm(null)}>{t(($) => $.actions.cancel)}</Button><Button disabled={!accountForm?.name.trim() || updateAccount.isPending} onClick={() => updateAccount.mutate()}>{t(($) => $.actions.save)}</Button></DialogFooter>
         </DialogContent>

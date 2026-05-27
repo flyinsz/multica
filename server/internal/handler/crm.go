@@ -1,16 +1,13 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -40,8 +37,6 @@ type CRMAccountResponse struct {
 	Status          string   `json:"status"`
 	OwnerID         *string  `json:"owner_id"`
 	OwnerMemberID   *string  `json:"owner_member_id"`
-	OwnerType       string   `json:"owner_type"`
-	OwnerAgentID    *string  `json:"owner_agent_id"`
 	Source          *string  `json:"source"`
 	Rating          string   `json:"rating"`
 	Priority        string   `json:"priority"`
@@ -74,8 +69,6 @@ type crmAccountRow struct {
 	Status          string
 	OwnerID         pgtype.UUID
 	OwnerMemberID   pgtype.UUID
-	OwnerType       string
-	OwnerAgentID    pgtype.UUID
 	Source          pgtype.Text
 	Rating          string
 	Priority        string
@@ -112,8 +105,6 @@ func crmAccountToResponse(row crmAccountRow) CRMAccountResponse {
 		Status:          row.Status,
 		OwnerID:         uuidToPtr(row.OwnerID),
 		OwnerMemberID:   uuidToPtr(row.OwnerMemberID),
-		OwnerType:       row.OwnerType,
-		OwnerAgentID:    uuidToPtr(row.OwnerAgentID),
 		Source:          textToPtr(row.Source),
 		Rating:          row.Rating,
 		Priority:        row.Priority,
@@ -144,8 +135,6 @@ type CreateCRMAccountRequest struct {
 	Status          *string  `json:"status"`
 	OwnerID         *string  `json:"owner_id"`
 	OwnerMemberID   *string  `json:"owner_member_id"`
-	OwnerType       *string  `json:"owner_type"`
-	OwnerAgentID    *string  `json:"owner_agent_id"`
 	Source          *string  `json:"source"`
 	Rating          *string  `json:"rating"`
 	Priority        *string  `json:"priority"`
@@ -354,7 +343,6 @@ type crmEmailListItemRow struct {
 	SentAt             pgtype.Timestamptz
 	ReceivedAt         pgtype.Timestamptz
 	Attachments        []byte
-	AttachmentCount    int64
 	ThreadMessageCount int64
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
@@ -487,7 +475,6 @@ type UpdateCRMEmailThreadStateRequest struct {
 	Status    *string `json:"status"`
 	IsRead    *bool   `json:"is_read"`
 	IsStarred *bool   `json:"is_starred"`
-	MessageID *string `json:"message_id"`
 }
 
 type CRMEmailThreadAssociationSuggestion struct {
@@ -606,7 +593,7 @@ func crmEmailListItemToResponse(row crmEmailListItemRow) CRMEmailListItemRespons
 		SentAt:             timestampToPtr(row.SentAt),
 		ReceivedAt:         timestampToPtr(row.ReceivedAt),
 		Attachments:        attachments,
-		AttachmentCount:    int(row.AttachmentCount),
+		AttachmentCount:    len(attachments),
 		ThreadMessageCount: row.ThreadMessageCount,
 		CreatedAt:          timestampToString(row.CreatedAt),
 		UpdatedAt:          timestampToString(row.UpdatedAt),
@@ -735,248 +722,14 @@ func crmEmailMessageToResponse(row crmEmailMessageRow) CRMEmailMessageResponse {
 }
 
 type CRMAccountProfileResponse struct {
-	ID            string          `json:"id"`
-	WorkspaceID   string          `json:"workspace_id"`
-	AccountID     string          `json:"account_id"`
-	Summary       *string         `json:"summary"`
-	ProfileJSON   json.RawMessage `json:"profile_json"`
-	SourceSummary *string         `json:"source_summary"`
-	UpdatedBy     *string         `json:"updated_by"`
-	CreatedAt     string          `json:"created_at"`
-	UpdatedAt     string          `json:"updated_at"`
-}
-
-func buildCRMProfileSourceSummary(noteSnippets, projectTitles, issueTitles []string) *string {
-	parts := make([]string, 0, 3)
-	if len(noteSnippets) > 0 {
-		parts = append(parts, "notes: "+strings.Join(noteSnippets, " | "))
-	}
-	if len(projectTitles) > 0 {
-		parts = append(parts, "projects: "+strings.Join(projectTitles, ", "))
-	}
-	if len(issueTitles) > 0 {
-		parts = append(parts, "issues: "+strings.Join(issueTitles, ", "))
-	}
-	if len(parts) == 0 {
-		return nil
-	}
-	summary := strings.Join(parts, " ; ")
-	return &summary
-}
-
-func trimCRMProfileList(items []string, limit, snippetLimit int) []string {
-	out := make([]string, 0, min(len(items), limit))
-	for i := 0; i < len(items) && i < limit; i++ {
-		item := trimCRMProfileSnippet(items[i], snippetLimit)
-		if item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func (h *Handler) resolveCRMProfileAgentLLMConfig(ctx context.Context) (string, string, string, string) {
-	var model pgtype.Text
-	var runtimeConfig, customEnv []byte
-	if err := h.DB.QueryRow(ctx, `
-		SELECT a.model, a.runtime_config, a.custom_env
-		FROM agent a
-		JOIN agent_runtime r ON r.id = a.runtime_id
-		WHERE lower(a.name) = 'jarvis'
-		  AND r.provider = 'hermes'
-		ORDER BY CASE WHEN r.status = 'online' THEN 0 ELSE 1 END, a.updated_at DESC
-		LIMIT 1
-	`).Scan(&model, &runtimeConfig, &customEnv); err == nil {
-		config := map[string]any{}
-		_ = json.Unmarshal(runtimeConfig, &config)
-		env := map[string]any{}
-		_ = json.Unmarshal(customEnv, &env)
-		baseURL := firstNonEmpty(stringValue(config["base_url"]), stringValue(config["baseURL"]), stringValue(env["HERMES_MODEL_BASE_URL"]), os.Getenv("HERMES_MODEL_BASE_URL"))
-		apiKey := firstNonEmpty(stringValue(config["api_key"]), stringValue(config["apiKey"]), stringValue(env["HERMES_MODEL_API_KEY"]), os.Getenv("HERMES_MODEL_API_KEY"))
-		modelName := firstNonEmpty(textValue(model), stringValue(config["model"]), stringValue(env["HERMES_MODEL"]), os.Getenv("HERMES_MODEL"))
-		if baseURL != "" && apiKey != "" && modelName != "" {
-			return baseURL, apiKey, modelName, "agent:Jarvis"
-		}
-	}
-	return firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_BASE_URL"), os.Getenv("HERMES_MODEL_BASE_URL")), firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_API_KEY"), os.Getenv("HERMES_MODEL_API_KEY")), firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_MODEL"), os.Getenv("HERMES_MODEL")), "env:fallback"
-}
-
-func stringValue(value any) string {
-	s, _ := value.(string)
-	return strings.TrimSpace(s)
-}
-
-func textValue(value pgtype.Text) string {
-	if !value.Valid {
-		return ""
-	}
-	return strings.TrimSpace(value.String)
-}
-
-func trimCRMProfileSnippet(s string, limit int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if len(s) <= limit {
-		return s
-	}
-	return strings.TrimSpace(s[:limit])
-}
-
-func profileValueFromEvidence(emailSnippets, noteSnippets []string, label, fallback string) string {
-	items := append([]string{}, emailSnippets...)
-	items = append(items, noteSnippets...)
-	matches := make([]string, 0, 3)
-	for _, item := range items {
-		clean := trimCRMProfileSnippet(strings.Join(strings.Fields(item), " "), 180)
-		if clean == "" {
-			continue
-		}
-		matches = append(matches, clean)
-		if len(matches) >= 3 {
-			break
-		}
-	}
-	if len(matches) == 0 {
-		return "——"
-	}
-	return label + "：" + strings.Join(matches, "；")
-}
-
-func summarizeCRMProfileEvidence(emailSnippets, noteSnippets []string) string {
-	items := append([]string{}, emailSnippets...)
-	items = append(items, noteSnippets...)
-	trimmed := trimCRMProfileList(items, 3, 160)
-	if len(trimmed) == 0 {
-		return ""
-	}
-	return "往来记录摘要：" + strings.Join(trimmed, "；")
-}
-
-func cleanCRMProfileValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "——"
-	}
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '；' || r == ';' || r == '\n' || r == '\r'
-	})
-	kept := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		part = strings.Trim(part, "，,。.:：-— ")
-		if part == "" {
-			continue
-		}
-		if strings.Contains(part, "——") || isVagueCRMProfileFragment(part) {
-			continue
-		}
-		kept = append(kept, part)
-	}
-	if len(kept) == 0 {
-		return "——"
-	}
-	return strings.Join(kept, "；")
-}
-
-func isVagueCRMProfileFragment(part string) bool {
-	part = strings.TrimSpace(part)
-	return strings.HasPrefix(part, "具体") && len([]rune(part)) <= 12
-}
-
-func cleanCRMProfile(profile map[string]any) map[string]any {
-	for _, key := range []string{"customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions"} {
-		if value, ok := profile[key].(string); ok {
-			profile[key] = cleanCRMProfileValue(value)
-		}
-	}
-	return profile
-}
-
-func buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess string) string {
-	steps := []string{}
-	if mainProducts == "——" {
-		steps = append(steps, "确认客户关注/采购产品")
-	}
-	if procurementNeeds == "——" {
-		steps = append(steps, "补齐数量、目标价、交期、认证和物流要求")
-	}
-	if decisionProcess == "——" {
-		steps = append(steps, "确认决策人和采购流程")
-	}
-	if len(steps) == 0 {
-		steps = append(steps, "基于已确认需求推进报价、样品或下一次跟进")
-	}
-	return strings.Join(steps, "；")
-}
-
-func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountName, fallbackSummary, projectSource, issueSource, emailEvidence, noteEvidence, notes string) (map[string]any, error) {
-	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	apiKey = strings.TrimSpace(apiKey)
-	model = strings.TrimSpace(model)
-	if baseURL == "" || apiKey == "" || model == "" {
-		return nil, nil
-	}
-	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容。\n\n" +
-		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
-	payload := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": "You generate strict JSON CRM customer profiles."},
-			{"role": "user", "content": prompt},
-		},
-		"temperature": 0.2,
-	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errors.New("CRM profile LLM HTTP status: " + resp.Status)
-	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	if len(out.Choices) == 0 {
-		return nil, errors.New("CRM profile LLM returned no choices")
-	}
-	content := strings.TrimSpace(out.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
-	var profile map[string]any
-	if err := json.Unmarshal([]byte(content), &profile); err != nil {
-		return nil, err
-	}
-	profile["generated_by"] = source
-	return cleanCRMProfile(profile), nil
+	ID          string          `json:"id"`
+	WorkspaceID string          `json:"workspace_id"`
+	AccountID   string          `json:"account_id"`
+	Summary     *string         `json:"summary"`
+	ProfileJSON json.RawMessage `json:"profile_json"`
+	UpdatedBy   *string         `json:"updated_by"`
+	CreatedAt   string          `json:"created_at"`
+	UpdatedAt   string          `json:"updated_at"`
 }
 
 type UpsertCRMAccountProfileRequest struct {
@@ -1076,20 +829,21 @@ type CRMIMAPPreviewMessageResponse struct {
 }
 
 type CRMEmailDraftResponse struct {
-	ID          string   `json:"id"`
-	MailboxID   *string  `json:"mailbox_id"`
-	ThreadID    *string  `json:"thread_id"`
-	AccountID   *string  `json:"account_id"`
-	ContactID   *string  `json:"contact_id"`
-	ToEmails    []string `json:"to_emails"`
-	CcEmails    []string `json:"cc_emails"`
-	BccEmails   []string `json:"bcc_emails"`
-	Subject     string   `json:"subject"`
-	BodyText    string   `json:"body_text"`
-	Status      string   `json:"status"`
-	AIGenerated bool     `json:"ai_generated"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
+	ID              string   `json:"id"`
+	MailboxID       *string  `json:"mailbox_id"`
+	ThreadID        *string  `json:"thread_id"`
+	AccountID       *string  `json:"account_id"`
+	ContactID       *string  `json:"contact_id"`
+	ToEmails        []string `json:"to_emails"`
+	CcEmails        []string `json:"cc_emails"`
+	BccEmails       []string `json:"bcc_emails"`
+	Subject         string   `json:"subject"`
+	BodyText        string   `json:"body_text"`
+	Status          string   `json:"status"`
+	ScheduledSendAt *string  `json:"scheduled_send_at,omitempty"`
+	AIGenerated     bool     `json:"ai_generated"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 type CreateCRMEmailDraftRequest struct {
@@ -1097,8 +851,6 @@ type CreateCRMEmailDraftRequest struct {
 	ThreadID          *string              `json:"thread_id"`
 	AccountID         *string              `json:"account_id"`
 	ContactID         *string              `json:"contact_id"`
-	IssueID           *string              `json:"issue_id"`
-	ApprovalReason    string               `json:"approval_reason"`
 	ToEmails          []string             `json:"to_emails"`
 	CcEmails          []string             `json:"cc_emails"`
 	BccEmails         []string             `json:"bcc_emails"`
@@ -1109,6 +861,7 @@ type CreateCRMEmailDraftRequest struct {
 	ReferenceIDs      []string             `json:"reference_ids"`
 	Attachments       []crmEmailAttachment `json:"attachments"`
 	SentAppendEnabled *bool                `json:"sent_append_enabled"`
+	ScheduledSendAt   *string              `json:"scheduled_send_at"`
 	AIGenerated       bool                 `json:"ai_generated"`
 }
 type CRMProfileSuggestionResponse struct {
@@ -1368,7 +1121,7 @@ func (h *Handler) scanCRMAccount(row pgx.Row) (crmAccountRow, error) {
 		&account.AccountCode, &account.AccountType, &account.Website, &account.Country,
 		&account.CountryCode, &account.CountryName, &account.Region, &account.City,
 		&account.Industry, &account.SubIndustry, &account.Status, &account.OwnerID,
-		&account.OwnerMemberID, &account.OwnerType, &account.OwnerAgentID, &account.Source, &account.Rating, &account.Priority,
+		&account.OwnerMemberID, &account.Source, &account.Rating, &account.Priority,
 		&account.AnnualRevenue, &account.EmployeeCount, &account.Tags, &account.Notes,
 		&account.LastContactedAt, &account.NextFollowUpAt, &account.CreatedAt, &account.UpdatedAt,
 		&account.ContactCount,
@@ -1381,7 +1134,7 @@ func (h *Handler) getCRMAccount(w http.ResponseWriter, r *http.Request, accountI
 		SELECT a.id, a.workspace_id, a.name, a.normalized_name, a.account_code, a.account_type,
 		       a.website, a.country, a.country_code, a.country_name, a.region, a.city,
 		       a.industry, a.sub_industry, a.status, a.owner_id, a.owner_member_id,
-		       COALESCE(a.owner_type, 'member'), a.owner_agent_id, a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
+		       a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
 		       a.tags, a.notes, a.last_contacted_at, a.next_follow_up_at,
 		       a.created_at, a.updated_at, COUNT(c.id)::bigint AS contact_count
 		FROM crm_account a
@@ -1428,30 +1181,6 @@ func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ownerAgentID, ok := optionalUUID(w, req.OwnerAgentID, "owner_agent_id")
-	if !ok {
-		return
-	}
-	ownerType := ""
-	if req.OwnerType != nil {
-		ownerType = strings.TrimSpace(*req.OwnerType)
-	}
-	if ownerType == "" {
-		if ownerAgentID.Valid {
-			ownerType = "agent"
-		} else {
-			ownerType = "member"
-		}
-	}
-	if ownerType != "member" && ownerType != "agent" {
-		writeError(w, http.StatusBadRequest, "invalid owner_type")
-		return
-	}
-	if ownerType == "member" {
-		ownerAgentID = pgtype.UUID{}
-	} else {
-		ownerMemberID = pgtype.UUID{}
-	}
 	lastContactedAt, ok := cleanOptionalTimestamp(w, req.LastContactedAt, "last_contacted_at")
 	if !ok {
 		return
@@ -1465,22 +1194,22 @@ func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO crm_account (
 			workspace_id, name, normalized_name, account_code, account_type, website, country,
 			country_code, country_name, region, city, industry, sub_industry, status, owner_id,
-			owner_member_id, owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count, tags,
+			owner_member_id, source, rating, priority, annual_revenue, employee_count, tags,
 			notes, last_contacted_at, next_follow_up_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 		        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-		        $21, $22, $23, $24, $25, $26, $27)
+		        $21, $22, $23, $24, $25)
 		RETURNING id, workspace_id, name, normalized_name, account_code, account_type,
 		          website, country, country_code, country_name, region, city,
 		          industry, sub_industry, status, owner_id, owner_member_id,
-		          owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count,
+		          source, rating, priority, annual_revenue, employee_count,
 		          tags, notes, last_contacted_at, next_follow_up_at,
 		          created_at, updated_at, 0::bigint
 	`, workspaceID, name, normalizedCRMKey(name), cleanOptionalText(req.AccountCode), cleanDefault(req.AccountType, "prospect"),
 		cleanOptionalText(req.Website), countryName, countryCode, countryName,
 		cleanOptionalText(req.Region), cleanOptionalText(req.City), cleanOptionalText(req.Industry), cleanOptionalText(req.SubIndustry), status,
-		ownerID, ownerMemberID, ownerType, ownerAgentID, cleanOptionalText(req.Source), cleanDefault(req.Rating, "unknown"), cleanDefault(req.Priority, "medium"),
+		ownerID, ownerMemberID, cleanOptionalText(req.Source), cleanDefault(req.Rating, "unknown"), cleanDefault(req.Priority, "medium"),
 		cleanOptionalText(req.AnnualRevenue), cleanOptionalText(req.EmployeeCount), cleanOptionalStringList(req.Tags), cleanOptionalText(req.Notes),
 		lastContactedAt, nextFollowUpAt))
 	if err != nil {
@@ -1559,7 +1288,7 @@ func (h *Handler) ListCRMAccounts(w http.ResponseWriter, r *http.Request) {
 		SELECT a.id, a.workspace_id, a.name, a.normalized_name, a.account_code, a.account_type,
 		       a.website, a.country, a.country_code, a.country_name, a.region, a.city,
 		       a.industry, a.sub_industry, a.status, a.owner_id, a.owner_member_id,
-		       COALESCE(a.owner_type, 'member'), a.owner_agent_id, a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
+		       a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
 		       a.tags, a.notes, a.last_contacted_at, a.next_follow_up_at,
 		       a.created_at, a.updated_at, COUNT(c.id)::bigint AS contact_count
 		FROM crm_account a
@@ -1651,30 +1380,6 @@ func (h *Handler) UpdateCRMAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ownerAgentID, ok := optionalUUID(w, req.OwnerAgentID, "owner_agent_id")
-	if !ok {
-		return
-	}
-	ownerType := ""
-	if req.OwnerType != nil {
-		ownerType = strings.TrimSpace(*req.OwnerType)
-	}
-	if ownerType == "" {
-		if ownerAgentID.Valid {
-			ownerType = "agent"
-		} else {
-			ownerType = "member"
-		}
-	}
-	if ownerType != "member" && ownerType != "agent" {
-		writeError(w, http.StatusBadRequest, "invalid owner_type")
-		return
-	}
-	if ownerType == "member" {
-		ownerAgentID = pgtype.UUID{}
-	} else {
-		ownerMemberID = pgtype.UUID{}
-	}
 	lastContactedAt, ok := cleanOptionalTimestamp(w, req.LastContactedAt, "last_contacted_at")
 	if !ok {
 		return
@@ -1701,29 +1406,27 @@ func (h *Handler) UpdateCRMAccount(w http.ResponseWriter, r *http.Request) {
 			status = $15,
 			owner_id = $16,
 			owner_member_id = $17,
-			owner_type = $18,
-			owner_agent_id = $19,
-			source = $20,
-			rating = $21,
-			priority = $22,
-			annual_revenue = $23,
-			employee_count = $24,
-			tags = $25,
-			notes = $26,
-			last_contacted_at = $27,
-			next_follow_up_at = $28,
+			source = $18,
+			rating = $19,
+			priority = $20,
+			annual_revenue = $21,
+			employee_count = $22,
+			tags = $23,
+			notes = $24,
+			last_contacted_at = $25,
+			next_follow_up_at = $26,
 			updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, name, normalized_name, account_code, account_type,
 		          website, country, country_code, country_name, region, city,
 		          industry, sub_industry, status, owner_id, owner_member_id,
-		          owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count,
+		          source, rating, priority, annual_revenue, employee_count,
 		          tags, notes, last_contacted_at, next_follow_up_at,
 		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_contact c WHERE c.account_id = crm_account.id AND c.workspace_id = crm_account.workspace_id)
 	`, accountID, workspaceID, name, normalizedCRMKey(name), cleanOptionalText(req.AccountCode), cleanDefault(req.AccountType, "prospect"),
 		cleanOptionalText(req.Website), countryName, countryCode, countryName, cleanOptionalText(req.Region), cleanOptionalText(req.City),
-		cleanOptionalText(req.Industry), cleanOptionalText(req.SubIndustry), status, ownerID, ownerMemberID, ownerType, ownerAgentID, cleanOptionalText(req.Source),
+		cleanOptionalText(req.Industry), cleanOptionalText(req.SubIndustry), status, ownerID, ownerMemberID, cleanOptionalText(req.Source),
 		cleanDefault(req.Rating, "unknown"), cleanDefault(req.Priority, "medium"), cleanOptionalText(req.AnnualRevenue), cleanOptionalText(req.EmployeeCount),
 		cleanOptionalStringList(req.Tags), cleanOptionalText(req.Notes), lastContactedAt, nextFollowUpAt))
 	if err != nil {
@@ -1997,7 +1700,7 @@ func (h *Handler) scanCRMEmailMessage(row pgx.Row) (crmEmailMessageRow, error) {
 
 func (h *Handler) getCRMEmailThread(w http.ResponseWriter, r *http.Request, threadID pgtype.UUID, workspaceID pgtype.UUID) (crmEmailThreadRow, bool) {
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
-		SELECT t.id, t.workspace_id, COALESCE(t.account_id, c.account_id) AS account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
+		SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 		       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
 		       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
 		        FROM crm_email_message m2
@@ -2006,10 +1709,9 @@ func (h *Handler) getCRMEmailThread(w http.ResponseWriter, r *http.Request, thre
 		        LIMIT 1) AS last_snippet,
 		       t.created_at, t.updated_at, COUNT(m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed
 		FROM crm_email_thread t
-		LEFT JOIN crm_contact c ON c.id = t.contact_id AND c.workspace_id = t.workspace_id
 		LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
 		WHERE t.id = $1 AND t.workspace_id = $2
-		GROUP BY t.id, c.account_id
+		GROUP BY t.id
 	`, threadID, workspaceID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2027,82 +1729,60 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.autoLinkCRMEmailWorkspaceByContact(r.Context(), workspaceID); err != nil {
-		slog.Warn("auto-link CRM email workspace failed", "error", err, "workspace_id", uuidToString(workspaceID))
-	}
-	accountIDRaw := strings.TrimSpace(r.URL.Query().Get("account_id"))
 	accountID, ok := optionalUUID(w, optionalStringFromQuery(r, "account_id"), "account_id")
 	if !ok {
 		return
 	}
-	accountIDFilter := accountIDRaw
-	folder := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("folder")))
+	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
 	if folder == "" {
 		folder = "inbox"
 	}
-	filter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("filter")))
+	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 	if filter == "" {
 		filter = "all"
 	}
 	mailbox := strings.TrimSpace(r.URL.Query().Get("mailbox"))
-	folderCondition := "TRUE"
-	switch folder {
-	case "inbox":
-		folderCondition = "m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])"
-	case "sent":
-		folderCondition = "(m.direction = 'outbound' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('sent', 'sent messages', 'sent items'))"
-	case "spam":
-		folderCondition = "(lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%')"
-	case "archived":
-		folderCondition = "(t.status = 'archived' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('archive', 'archived'))"
-	case "starred":
-		folderCondition = "COALESCE(m.is_starred, t.is_starred) = true"
-	case "unlinked":
-		folderCondition = "t.account_id IS NULL AND t.contact_id IS NULL"
-	case "trash":
-		folderCondition = "(t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('trash', 'deleted messages', 'deleted items'))"
-	}
-	filterCondition := "TRUE"
-	switch filter {
-	case "unlinked":
-		filterCondition = "t.account_id IS NULL AND t.contact_id IS NULL"
-	case "linked":
-		filterCondition = "(t.account_id IS NOT NULL OR t.contact_id IS NOT NULL)"
-	case "unread":
-		filterCondition = "COALESCE(m.is_read, t.is_read) = false"
-	case "read":
-		filterCondition = "COALESCE(m.is_read, t.is_read) = true"
-	}
-	query := `
+	rows, err := h.DB.Query(r.Context(), `
 		WITH message_rows AS (
-			SELECT m.id, m.workspace_id, m.thread_id, COALESCE(m.account_id, t.account_id, c.account_id) AS account_id, COALESCE(m.contact_id, t.contact_id) AS contact_id,
+			SELECT m.id, m.workspace_id, m.thread_id, t.account_id, t.contact_id,
 			       m.subject, COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) AS snippet,
 			       t.mailbox, COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX') AS folder,
 			       m.direction, t.status, COALESCE(m.is_read, t.is_read) AS is_read,
 			       COALESCE(m.is_starred, t.is_starred) AS is_starred, COALESCE(m.is_trashed, t.is_trashed) AS is_trashed,
 			       m.from_email, m.from_name, m.to_emails, m.sent_at, m.received_at,
-			       COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(m.attachments) = 'array' THEN m.attachments ELSE '[]'::jsonb END) AS elem), '[]'::jsonb) AS attachments,
-			       jsonb_array_length(CASE WHEN jsonb_typeof(m.attachments) = 'array' THEN m.attachments ELSE '[]'::jsonb END)::bigint AS attachment_count,
+			       COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(COALESCE(m.attachments, '[]'::jsonb)) AS elem), '[]'::jsonb) AS attachments,
 			       COUNT(*) OVER (PARTITION BY m.thread_id)::bigint AS thread_message_count,
 			       m.created_at, m.updated_at
 			FROM crm_email_message m
 			JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
-			LEFT JOIN crm_contact c ON c.id = COALESCE(m.contact_id, t.contact_id) AND c.workspace_id = m.workspace_id
-			WHERE m.workspace_id::text = $1
-			  AND ($2 = '' OR t.account_id::text = $2 OR m.account_id::text = $2 OR c.account_id::text = $2 OR EXISTS (SELECT 1 FROM crm_contact c WHERE c.workspace_id = m.workspace_id AND c.account_id::text = $2 AND lower(COALESCE(c.email, '')) <> '' AND (lower(m.from_email) = lower(c.email) OR EXISTS (SELECT 1 FROM unnest(m.to_emails) AS x(email) WHERE lower(x.email) = lower(c.email)) OR EXISTS (SELECT 1 FROM unnest(m.cc_emails) AS x(email) WHERE lower(x.email) = lower(c.email)))))
-			  AND ($3 = '' OR t.mailbox = $3)
-			  AND (` + folderCondition + `)
-			  AND (` + filterCondition + `)
+			WHERE m.workspace_id = $1
+			  AND ($2::uuid IS NULL OR t.account_id = $2)
+			  AND ($5 = '' OR t.mailbox = $5)
+			  AND (
+				$3 = 'all'
+				OR ($3 = 'inbox' AND m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%']))
+				OR ($3 = 'sent' AND m.direction = 'outbound')
+				OR ($3 = 'spam' AND (lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%'))
+				OR ($3 = 'archived' AND t.status = 'archived')
+				OR ($3 = 'starred' AND COALESCE(m.is_starred, t.is_starred) = true)
+				OR ($3 = 'unlinked' AND t.account_id IS NULL AND t.contact_id IS NULL)
+				OR ($3 = 'trash' AND (t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true))
+			  )
+			  AND (
+				$4 = 'all'
+				OR ($4 = 'unlinked' AND t.account_id IS NULL AND t.contact_id IS NULL)
+				OR ($4 = 'linked' AND (t.account_id IS NOT NULL OR t.contact_id IS NOT NULL))
+				OR ($4 = 'unread' AND COALESCE(m.is_read, t.is_read) = false)
+				OR ($4 = 'read' AND COALESCE(m.is_read, t.is_read) = true)
+			  )
 		)
 		SELECT id, workspace_id, thread_id, account_id, contact_id, subject, snippet, mailbox, folder,
 		       direction, status, is_read, is_starred, is_trashed, from_email, from_name, to_emails,
-		       sent_at, received_at, attachments, attachment_count, thread_message_count, created_at, updated_at
+		       sent_at, received_at, attachments, thread_message_count, created_at, updated_at
 		FROM message_rows
 		ORDER BY COALESCE(sent_at, received_at, created_at) DESC
 		LIMIT 100
-	`
-	workspaceIDFilter := uuidToString(workspaceID)
-	rows, err := h.DB.Query(r.Context(), query, workspaceIDFilter, accountIDFilter, mailbox)
+	`, workspaceID, accountID, folder, filter, mailbox)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
@@ -2115,18 +1795,13 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.ThreadID, &item.AccountID, &item.ContactID, &item.Subject,
 			&item.Snippet, &item.Mailbox, &item.Folder, &item.Direction, &item.Status, &item.IsRead, &item.IsStarred,
 			&item.IsTrashed, &item.FromEmail, &item.FromName, &item.ToEmails, &item.SentAt, &item.ReceivedAt,
-			&item.Attachments, &item.AttachmentCount, &item.ThreadMessageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.Attachments, &item.ThreadMessageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scan CRM email message")
 			return
 		}
 		resp := crmEmailListItemToResponse(item)
 		threadIDs[resp.ThreadID] = true
 		messages = append(messages, resp)
-	}
-	if err := rows.Err(); err != nil {
-		slog.Warn("list CRM email messages iteration failed", "error", err, "workspace_id", uuidToString(workspaceID), "folder", folder, "filter", filter, "mailbox", mailbox)
-		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages: "+err.Error())
-		return
 	}
 	threadIDKeys := make([]string, 0, len(threadIDs))
 	for rawThreadID := range threadIDs {
@@ -2136,7 +1811,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 	threads := []CRMEmailThreadResponse{}
 	if len(threadIDValues) > 0 {
 		threadRows, err := h.DB.Query(r.Context(), `
-			SELECT t.id, t.workspace_id, COALESCE(t.account_id, c.account_id) AS account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
+			SELECT t.id, t.workspace_id, t.account_id, t.contact_id, t.project_id, t.issue_id, t.subject,
 			       t.external_thread_id, t.mailbox, t.direction, t.status, t.last_message_at,
 			       (SELECT COALESCE(NULLIF(m2.snippet, ''), LEFT(COALESCE(NULLIF(m2.body_text, ''), regexp_replace(COALESCE(m2.body_html, ''), '<[^>]+>', ' ', 'g')), 220))
 			        FROM crm_email_message m2
@@ -2146,11 +1821,10 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			       t.created_at, t.updated_at, COUNT(DISTINCT m.id)::bigint AS message_count, t.is_read, t.is_starred, t.is_trashed,
 			       COALESCE(array_agg(DISTINCT l.issue_id::text) FILTER (WHERE l.issue_id IS NOT NULL), ARRAY[]::text[]) AS issue_ids
 			FROM crm_email_thread t
-			LEFT JOIN crm_contact c ON c.id = t.contact_id AND c.workspace_id = t.workspace_id
 			LEFT JOIN crm_email_message m ON m.thread_id = t.id AND m.workspace_id = t.workspace_id
 			LEFT JOIN crm_email_thread_issue_link l ON l.thread_id = t.id
 			WHERE t.workspace_id = $1 AND t.id = ANY($2::uuid[])
-			GROUP BY t.id, c.account_id
+			GROUP BY t.id
 		`, workspaceID, threadIDValues)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list CRM email threads")
@@ -2168,14 +1842,8 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 			}
 			threads = append(threads, crmEmailListThreadToResponse(thread))
 		}
-		if err := threadRows.Err(); err != nil {
-			slog.Warn("list CRM email threads iteration failed", "error", err, "workspace_id", uuidToString(workspaceID), "folder", folder)
-			writeError(w, http.StatusInternalServerError, "failed to list CRM email threads: "+err.Error())
-			return
-		}
 	}
 	counts := h.crmEmailFolderCounts(r.Context(), workspaceID, accountID, mailbox)
-	slog.Info("crm email threads listed", "workspace_id", uuidToString(workspaceID), "account_id", accountIDRaw, "folder", folder, "filter", filter, "mailbox", mailbox, "folder_condition", folderCondition, "filter_condition", filterCondition, "messages", len(messages), "threads", len(threads), "total", len(messages))
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "threads": threads, "total": len(messages), "counts": counts})
 }
 
@@ -2185,12 +1853,12 @@ func (h *Handler) crmEmailFolderCounts(ctx context.Context, workspaceID pgtype.U
 		SELECT
 			COUNT(*) FILTER (WHERE m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])),
 			COUNT(*) FILTER (WHERE m.direction = 'inbound' AND t.status = 'open' AND COALESCE(m.is_read, t.is_read) = false AND COALESCE(m.is_trashed, t.is_trashed) = false AND lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''), 'INBOX')) NOT LIKE ALL(ARRAY['%spam%', '%junk%', '%trash%', '%deleted%', '%archive%'])),
-			COUNT(*) FILTER (WHERE m.direction = 'outbound' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('sent', 'sent messages', 'sent items')),
+			COUNT(*) FILTER (WHERE m.direction = 'outbound'),
 			COUNT(*) FILTER (WHERE lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) LIKE ANY(ARRAY['%spam%', '%junk%']) OR COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', '')) LIKE '%垃圾%'),
-			COUNT(*) FILTER (WHERE t.status = 'archived' OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('archive', 'archived')),
+			COUNT(*) FILTER (WHERE t.status = 'archived'),
 			COUNT(*) FILTER (WHERE COALESCE(m.is_starred, t.is_starred) = true),
 			COUNT(*) FILTER (WHERE t.account_id IS NULL AND t.contact_id IS NULL),
-			COUNT(*) FILTER (WHERE t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true OR lower(COALESCE(NULLIF(m.folder, ''), NULLIF(m.source_metadata->>'folder', ''))) IN ('trash', 'deleted messages', 'deleted items'))
+			COUNT(*) FILTER (WHERE t.status = 'trashed' OR COALESCE(m.is_trashed, t.is_trashed) = true)
 		FROM crm_email_message m
 		JOIN crm_email_thread t ON t.id = m.thread_id AND t.workspace_id = m.workspace_id
 		WHERE m.workspace_id = $1 AND ($2::uuid IS NULL OR t.account_id = $2) AND ($3 = '' OR t.mailbox = $3)
@@ -2207,94 +1875,11 @@ func (h *Handler) GetCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.autoLinkCRMEmailThreadByContact(r.Context(), workspaceID, threadID); err != nil {
-		slog.Warn("auto-link CRM email thread failed", "error", err, "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID))
-	}
 	thread, ok := h.getCRMEmailThread(w, r, threadID, workspaceID)
 	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
-}
-
-func (h *Handler) autoLinkCRMEmailThreadByContact(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID) error {
-	const bestMatch = `
-		SELECT c.account_id, c.id
-		FROM crm_email_message m
-		JOIN crm_contact c ON c.workspace_id = m.workspace_id
-		WHERE m.workspace_id = $1
-		  AND m.thread_id = $2
-		  AND c.account_id IS NOT NULL
-		  AND lower(trim(COALESCE(c.email, ''))) <> ''
-		  AND (
-			lower(trim(COALESCE(m.from_email, ''))) = lower(trim(c.email))
-			OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.to_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
-			OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.cc_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
-		  )
-		GROUP BY c.account_id, c.id, c.is_primary, c.updated_at
-		ORDER BY count(*) DESC, c.is_primary DESC NULLS LAST, c.updated_at DESC NULLS LAST
-		LIMIT 1
-	`
-	var accountID pgtype.UUID
-	var contactID pgtype.UUID
-	if err := h.DB.QueryRow(ctx, bestMatch, workspaceID, threadID).Scan(&accountID, &contactID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	if _, err := h.DB.Exec(ctx, `
-		UPDATE crm_email_thread
-		SET account_id = COALESCE(account_id, $3), contact_id = COALESCE(contact_id, $4), updated_at = now()
-		WHERE workspace_id = $1 AND id = $2 AND (account_id IS NULL OR contact_id IS NULL)
-	`, workspaceID, threadID, accountID, contactID); err != nil {
-		return err
-	}
-	_, err := h.DB.Exec(ctx, `
-		UPDATE crm_email_message
-		SET account_id = COALESCE(account_id, $3), contact_id = COALESCE(contact_id, $4), updated_at = now()
-		WHERE workspace_id = $1 AND thread_id = $2 AND (account_id IS NULL OR contact_id IS NULL)
-	`, workspaceID, threadID, accountID, contactID)
-	return err
-}
-
-func (h *Handler) autoLinkCRMEmailWorkspaceByContact(ctx context.Context, workspaceID pgtype.UUID) error {
-	const matchCTE = `
-		WITH best AS (
-			SELECT DISTINCT ON (m.thread_id)
-				m.thread_id, c.account_id, c.id AS contact_id
-			FROM crm_email_message m
-			JOIN crm_contact c ON c.workspace_id = m.workspace_id
-			WHERE m.workspace_id = $1
-			  AND c.account_id IS NOT NULL
-			  AND lower(trim(COALESCE(c.email, ''))) <> ''
-			  AND (
-				lower(trim(COALESCE(m.from_email, ''))) = lower(trim(c.email))
-				OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.to_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
-				OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.cc_emails, ARRAY[]::text[])) AS x(email) WHERE lower(trim(x.email)) = lower(trim(c.email)))
-			  )
-			ORDER BY m.thread_id, c.is_primary DESC NULLS LAST, c.updated_at DESC NULLS LAST
-		)
-	`
-	if _, err := h.DB.Exec(ctx, matchCTE+`
-		UPDATE crm_email_thread t
-		SET account_id = COALESCE(t.account_id, b.account_id),
-			contact_id = COALESCE(t.contact_id, b.contact_id),
-			updated_at = now()
-		FROM best b
-		WHERE t.workspace_id = $1 AND t.id = b.thread_id AND (t.account_id IS NULL OR t.contact_id IS NULL)
-	`, workspaceID); err != nil {
-		return err
-	}
-	_, err := h.DB.Exec(ctx, matchCTE+`
-		UPDATE crm_email_message m
-		SET account_id = COALESCE(m.account_id, b.account_id),
-			contact_id = COALESCE(m.contact_id, b.contact_id),
-			updated_at = now()
-		FROM best b
-		WHERE m.workspace_id = $1 AND m.thread_id = b.thread_id AND (m.account_id IS NULL OR m.contact_id IS NULL)
-	`, workspaceID)
-	return err
 }
 
 func emailDomain(value string) string {
@@ -2311,15 +1896,6 @@ func emailDomain(value string) string {
 		value = value[:colon]
 	}
 	return value
-}
-
-func isGenericCRMEmailDomain(domain string) bool {
-	switch strings.ToLower(strings.TrimSpace(domain)) {
-	case "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "icloud.com", "me.com", "qq.com", "163.com", "126.com", "yahoo.com", "proton.me", "protonmail.com":
-		return true
-	default:
-		return false
-	}
 }
 
 func addSuggestionReason(reasons []string, reason string) []string {
@@ -2534,47 +2110,11 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid email thread status")
 		return
 	}
-	var messageID pgtype.UUID
-	if req.MessageID != nil && strings.TrimSpace(*req.MessageID) != "" {
-		parsedMessageID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.MessageID), "message id")
-		if !ok {
-			return
-		}
-		messageID = parsedMessageID
-		cmd, err := h.DB.Exec(r.Context(), `
-			UPDATE crm_email_message
-			SET is_read = COALESCE($4, is_read),
-			    is_starred = COALESCE($5, is_starred),
-			    folder = CASE WHEN $6='archived' THEN 'Archive' WHEN $6='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
-			    is_trashed = CASE WHEN $6='open' THEN false ELSE is_trashed END,
-			    updated_at = now()
-			WHERE id = $1 AND thread_id = $2 AND workspace_id = $3
-		`, messageID, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update CRM email message")
-			return
-		}
-		if cmd.RowsAffected() == 0 {
-			writeError(w, http.StatusNotFound, "CRM email message not found")
-			return
-		}
-	} else {
-		_, _ = h.DB.Exec(r.Context(), `
-			UPDATE crm_email_message
-			SET is_read = COALESCE($3, is_read),
-			    is_starred = COALESCE($4, is_starred),
-			    folder = CASE WHEN $5='archived' THEN 'Archive' WHEN $5='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
-			    is_trashed = CASE WHEN $5='open' THEN false ELSE is_trashed END,
-			    updated_at = now()
-			WHERE thread_id = $1 AND workspace_id = $2
-		`, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
-	}
-
 	thread, err := h.scanCRMEmailThread(h.DB.QueryRow(r.Context(), `
 		UPDATE crm_email_thread
 		SET status = COALESCE($3, status),
-		    is_read = COALESCE((SELECT bool_and(m.is_read) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read),
-		    is_starred = COALESCE($4, is_starred),
+		    is_read = COALESCE($4, is_read),
+		    is_starred = COALESCE($5, is_starred),
 		    updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 		RETURNING id, workspace_id, account_id, contact_id, project_id, issue_id, subject,
@@ -2582,7 +2122,7 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		          (SELECT COALESCE(NULLIF(m.snippet, ''), LEFT(COALESCE(NULLIF(m.body_text, ''), regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')), 220)) FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC LIMIT 1) AS last_snippet,
 		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_email_message m WHERE m.thread_id = crm_email_thread.id AND m.workspace_id = crm_email_thread.workspace_id), is_read, is_starred, is_trashed
-	`, threadID, workspaceID, req.Status, req.IsStarred))
+	`, threadID, workspaceID, req.Status, req.IsRead, req.IsStarred))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "CRM email thread not found")
@@ -2591,6 +2131,15 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email thread")
 		return
 	}
+	_, _ = h.DB.Exec(r.Context(), `
+		UPDATE crm_email_message
+		SET is_read = COALESCE($3, is_read),
+		    is_starred = COALESCE($4, is_starred),
+		    folder = CASE WHEN $5='archived' THEN 'Archive' WHEN $5='open' AND folder IN ('Archive','Archived') THEN 'INBOX' ELSE folder END,
+		    is_trashed = CASE WHEN $5='open' THEN false ELSE is_trashed END,
+		    updated_at = now()
+		WHERE thread_id = $1 AND workspace_id = $2
+	`, threadID, workspaceID, req.IsRead, req.IsStarred, req.Status)
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
 	h.trySyncCRMEmailThreadFlags(r.Context(), workspaceID, threadID, req.IsRead, req.IsStarred)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
@@ -2657,20 +2206,6 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	if contactID.Valid {
-		var inferredAccountID pgtype.UUID
-		if err := h.DB.QueryRow(r.Context(), `SELECT account_id FROM crm_contact WHERE id=$1 AND workspace_id=$2`, contactID, workspaceID).Scan(&inferredAccountID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeError(w, http.StatusBadRequest, "contact not found in this workspace")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "failed to load CRM contact account")
-			return
-		}
-		if inferredAccountID.Valid {
-			accountID = inferredAccountID
-		}
-	}
 	primaryIssueID := issueID
 	if len(issueIDs) > 0 {
 		primaryIssueID = issueIDs[0]
@@ -2689,14 +2224,6 @@ func (h *Handler) UpdateCRMEmailThreadAssociation(w http.ResponseWriter, r *http
 		return
 	}
 	thread.IssueIDs = issueIDs
-	if _, err := h.DB.Exec(r.Context(), `
-		UPDATE crm_email_message
-		SET account_id = $3, contact_id = $4, updated_at = now()
-		WHERE thread_id = $1 AND workspace_id = $2
-	`, threadID, workspaceID, accountID, contactID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update CRM email message association")
-		return
-	}
 	if _, err := h.DB.Exec(r.Context(), `DELETE FROM crm_email_thread_issue_link WHERE thread_id = $1`, threadID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email issue links")
 		return
@@ -3122,68 +2649,58 @@ func normalizeCRMEmailThreadSubject(subject string) string {
 	}
 }
 
-func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
+func (h *Handler) resolveCRMEmailThreadForImport(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, message crmIMAPFetchedMessage, subject string) (pgtype.UUID, pgtype.UUID, error) {
 	subject = cleanStringForDB(subject)
 	message.FromEmail = cleanStringForDB(message.FromEmail)
-	matchedAccountID, matchedContactID, err := h.matchCRMEmailParties(ctx, workspaceID, message)
+	accountID, contactID, err := h.matchCRMEmailParticipants(ctx, workspaceID, cfg.Email, message)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	candidateIDs := normalizeCRMMessageIDSlice(cleanOptionalStringList(append(append([]string{}, message.References...), message.InReplyTo)))
-	var threadID, accountID, contactID pgtype.UUID
+	var threadID, existingAccountID pgtype.UUID
 	for i := len(candidateIDs) - 1; i >= 0; i-- {
-		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, COALESCE(m.account_id,t.account_id,c.account_id), COALESCE(m.contact_id,t.contact_id) FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id LEFT JOIN crm_contact c ON c.id=COALESCE(m.contact_id,t.contact_id) AND c.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &accountID, &contactID); err == nil {
-			if !accountID.Valid && matchedAccountID.Valid {
-				if _, err := h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND account_id IS NULL`, threadID, workspaceID, matchedAccountID, matchedContactID); err != nil {
-					return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
-				}
-				return threadID, matchedAccountID, matchedContactID, nil
+		if err := h.DB.QueryRow(ctx, `SELECT m.thread_id, t.account_id FROM crm_email_message m JOIN crm_email_thread t ON t.id=m.thread_id AND t.workspace_id=m.workspace_id WHERE m.workspace_id=$1 AND m.external_message_id=$2 ORDER BY m.created_at DESC LIMIT 1`, workspaceID, candidateIDs[i]).Scan(&threadID, &existingAccountID); err == nil {
+			if !existingAccountID.Valid && accountID.Valid {
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND account_id IS NULL`, threadID, workspaceID, accountID, contactID)
+				return threadID, accountID, nil
 			}
-			return threadID, accountID, contactID, nil
+			return threadID, existingAccountID, nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+			return pgtype.UUID{}, pgtype.UUID{}, err
 		}
 	}
 	threadKey := cfg.ID + ":subject-from:" + normalizeCRMEmailThreadSubject(subject) + ":" + strings.ToLower(strings.TrimSpace(message.FromEmail))
-	if err := h.DB.QueryRow(ctx, `SELECT t.id, COALESCE(t.account_id,c.account_id), t.contact_id FROM crm_email_thread t LEFT JOIN crm_contact c ON c.id=t.contact_id AND c.workspace_id=t.workspace_id WHERE t.workspace_id=$1 AND t.external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &accountID, &contactID); err == nil {
-		if !accountID.Valid && matchedAccountID.Valid {
-			if _, err := h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND account_id IS NULL`, threadID, workspaceID, matchedAccountID, matchedContactID); err != nil {
-				return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
-			}
-			return threadID, matchedAccountID, matchedContactID, nil
+	if err := h.DB.QueryRow(ctx, `SELECT id, account_id FROM crm_email_thread WHERE workspace_id=$1 AND external_thread_id=$2 LIMIT 1`, workspaceID, threadKey).Scan(&threadID, &existingAccountID); err == nil {
+		if !existingAccountID.Valid && accountID.Valid {
+			_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND account_id IS NULL`, threadID, workspaceID, accountID, contactID)
+			return threadID, accountID, nil
 		}
-		return threadID, accountID, contactID, nil
+		return threadID, existingAccountID, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	accountID, contactID = matchedAccountID, matchedContactID
 	lastAt := pgtype.Timestamptz{}
 	if !message.Date.IsZero() {
 		lastAt = pgtype.Timestamptz{Time: message.Date, Valid: true}
 	}
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, external_thread_id, mailbox, direction, status, last_message_at) VALUES ($1,$2,$3,$4,$5,$6,'inbound','open',$7) RETURNING id`, workspaceID, accountID, contactID, subject, threadKey, cfg.Email, lastAt).Scan(&threadID); err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return threadID, accountID, contactID, nil
+	return threadID, accountID, nil
 }
 
-func (h *Handler) matchCRMEmailParties(ctx context.Context, workspaceID pgtype.UUID, message crmIMAPFetchedMessage) (pgtype.UUID, pgtype.UUID, error) {
-	emails := []string{message.FromEmail}
-	emails = append(emails, message.ToEmails...)
-	emails = append(emails, message.CcEmails...)
-	seen := map[string]bool{}
-	for _, email := range emails {
-		email = strings.ToLower(strings.TrimSpace(email))
-		if email == "" || seen[email] {
-			continue
-		}
-		seen[email] = true
+func (h *Handler) matchCRMEmailParticipants(ctx context.Context, workspaceID pgtype.UUID, mailboxEmail string, message crmIMAPFetchedMessage) (pgtype.UUID, pgtype.UUID, error) {
+	mailboxEmail = strings.ToLower(strings.TrimSpace(mailboxEmail))
+	fromEmail := strings.ToLower(strings.TrimSpace(message.FromEmail))
+	candidates := []string{fromEmail}
+	if mailboxEmail != "" && fromEmail == mailboxEmail {
+		candidates = append([]string{}, message.ToEmails...)
+		candidates = append(candidates, message.CcEmails...)
+	}
+	for _, email := range candidates {
 		accountID, contactID, err := h.matchCRMEmailContact(ctx, workspaceID, email)
-		if err != nil {
-			return pgtype.UUID{}, pgtype.UUID{}, err
-		}
-		if accountID.Valid || contactID.Valid {
-			return accountID, contactID, nil
+		if err != nil || accountID.Valid {
+			return accountID, contactID, err
 		}
 	}
 	return pgtype.UUID{}, pgtype.UUID{}, nil
@@ -3196,32 +2713,12 @@ func (h *Handler) matchCRMEmailContact(ctx context.Context, workspaceID pgtype.U
 		return accountID, contactID, nil
 	}
 	if err := h.DB.QueryRow(ctx, `SELECT account_id, id FROM crm_contact WHERE workspace_id=$1 AND lower(email)=$2 ORDER BY is_primary DESC, updated_at DESC LIMIT 1`, workspaceID, email).Scan(&accountID, &contactID); err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, pgtype.UUID{}, err
-		}
-	} else {
-		return accountID, contactID, nil
-	}
-	domain := emailDomain(email)
-	if domain == "" || isGenericCRMEmailDomain(domain) {
-		return pgtype.UUID{}, pgtype.UUID{}, nil
-	}
-	if err := h.DB.QueryRow(ctx, `
-		SELECT a.id
-		FROM crm_account a
-		WHERE a.workspace_id=$1
-		  AND (
-			lower(regexp_replace(COALESCE(a.website,''), '^https?://(www\.)?', '')) LIKE $2
-			OR EXISTS (SELECT 1 FROM crm_contact c WHERE c.workspace_id=a.workspace_id AND c.account_id=a.id AND lower(split_part(c.email,'@',2))=$3)
-		  )
-		ORDER BY a.updated_at DESC
-		LIMIT 1`, workspaceID, "%"+domain+"%", domain).Scan(&accountID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.UUID{}, nil
 		}
 		return pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return accountID, pgtype.UUID{}, nil
+	return accountID, contactID, nil
 }
 
 func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, folder string, messages []crmIMAPFetchedMessage) (int, int, error) {
@@ -3248,7 +2745,7 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		if isCRMIMAPSentFolder(folder) {
 			direction = "outbound"
 		}
-		threadID, accountID, contactID, err := h.resolveCRMEmailThreadForImport(ctx, workspaceID, cfg, message, subject)
+		threadID, accountID, err := h.resolveCRMEmailThreadForImport(ctx, workspaceID, cfg, message, subject)
 		if err != nil {
 			return imported, skipped, err
 		}
@@ -3265,11 +2762,11 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 		canonicalFolder := canonicalCRMEmailFolder(folder)
 		isRead := strings.EqualFold(canonicalFolder, "Sent")
 		sourceMetadataJSON, _ := json.Marshal(map[string]any{"provider": "imap", "mailbox_id": cfg.ID, "folder": canonicalFolder, "source_folder": folder, "uid": message.UID})
-		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction, folder, is_read, source_metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, workspaceID, threadID, accountID, contactID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction, canonicalFolder, isRead, sourceMetadataJSON)
+		_, execErr := h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, external_message_id, in_reply_to, reference_ids, from_email, from_name, to_emails, cc_emails, subject, received_at, body_text, body_html, snippet, raw_size_bytes, raw_headers, attachments, direction, folder, is_read, source_metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, workspaceID, threadID, externalID, cleanOptionalText(&message.InReplyTo), cleanOptionalStringList(message.References), cleanOptionalText(&message.FromEmail), cleanOptionalText(&message.FromName), cleanOptionalStringList(message.ToEmails), cleanOptionalStringList(message.CcEmails), cleanOptionalText(&subject), receivedAt, cleanOptionalText(&message.BodyText), cleanOptionalText(&bodyHTML), cleanOptionalText(&message.Snippet), message.RawSize, rawHeadersJSON, attachmentsJSON, direction, canonicalFolder, isRead, sourceMetadataJSON)
 		if execErr != nil {
 			return imported, skipped, execErr
 		}
-		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$5), contact_id=COALESCE(contact_id,$6), last_message_at=COALESCE($3,last_message_at,now()), direction=CASE WHEN $4='outbound' THEN 'outbound' WHEN direction='outbound' THEN 'mixed' ELSE direction END, updated_at=now() WHERE id=$1 AND workspace_id=$2`, threadID, workspaceID, receivedAt, direction, accountID, contactID)
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET last_message_at=COALESCE($3,last_message_at,now()), direction=CASE WHEN $4='outbound' THEN 'outbound' WHEN direction='outbound' THEN 'mixed' ELSE direction END, updated_at=now() WHERE id=$1 AND workspace_id=$2`, threadID, workspaceID, receivedAt, direction)
 		if accountID.Valid {
 			if shouldAutoRefreshCRMAccountProfile(ctx, h.DB, workspaceID) {
 				if _, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID); err != nil {
@@ -3282,13 +2779,28 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 	return imported, skipped, nil
 }
 
+func parseCRMEmailDraftSchedule(w http.ResponseWriter, value *string) (pgtype.Timestamptz, string, bool) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return pgtype.Timestamptz{}, "draft", true
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*value))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid scheduled_send_at")
+		return pgtype.Timestamptz{}, "", false
+	}
+	if !parsed.After(time.Now().Add(30 * time.Second)) {
+		writeError(w, http.StatusBadRequest, "scheduled_send_at must be in the future")
+		return pgtype.Timestamptz{}, "", false
+	}
+	return pgtype.Timestamptz{Time: parsed, Valid: true}, "scheduled", true
+}
+
 func (h *Handler) ListCRMEmailDrafts(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {
 		return
 	}
-	draftIDFilter := strings.TrimSpace(r.URL.Query().Get("draft_id"))
-	rows, err := h.DB.Query(r.Context(), `SELECT id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, ai_generated, created_at, updated_at FROM crm_email_draft WHERE workspace_id=$1 ORDER BY CASE WHEN $2 <> '' AND id::text = $2 THEN 0 ELSE 1 END, updated_at DESC LIMIT 100`, workspaceID, draftIDFilter)
+	rows, err := h.DB.Query(r.Context(), `SELECT id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, scheduled_send_at, ai_generated, created_at, updated_at FROM crm_email_draft WHERE workspace_id=$1 ORDER BY updated_at DESC LIMIT 100`, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email drafts")
 		return
@@ -3300,12 +2812,12 @@ func (h *Handler) ListCRMEmailDrafts(w http.ResponseWriter, r *http.Request) {
 		var subject, body, status string
 		var toEmails, ccEmails, bccEmails []string
 		var ai bool
-		var created, updated pgtype.Timestamptz
-		if err := rows.Scan(&id, &mailboxID, &threadID, &accountID, &contactID, &toEmails, &ccEmails, &bccEmails, &subject, &body, &status, &ai, &created, &updated); err != nil {
+		var scheduledSendAt, created, updated pgtype.Timestamptz
+		if err := rows.Scan(&id, &mailboxID, &threadID, &accountID, &contactID, &toEmails, &ccEmails, &bccEmails, &subject, &body, &status, &scheduledSendAt, &ai, &created, &updated); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scan CRM email draft")
 			return
 		}
-		items = append(items, CRMEmailDraftResponse{ID: uuidToString(id), MailboxID: uuidToPtr(mailboxID), ThreadID: uuidToPtr(threadID), AccountID: uuidToPtr(accountID), ContactID: uuidToPtr(contactID), ToEmails: toEmails, CcEmails: ccEmails, BccEmails: bccEmails, Subject: subject, BodyText: body, Status: status, AIGenerated: ai, CreatedAt: timestampToString(created), UpdatedAt: timestampToString(updated)})
+		items = append(items, CRMEmailDraftResponse{ID: uuidToString(id), MailboxID: uuidToPtr(mailboxID), ThreadID: uuidToPtr(threadID), AccountID: uuidToPtr(accountID), ContactID: uuidToPtr(contactID), ToEmails: toEmails, CcEmails: ccEmails, BccEmails: bccEmails, Subject: subject, BodyText: body, Status: status, ScheduledSendAt: timestampToPtr(scheduledSendAt), AIGenerated: ai, CreatedAt: timestampToString(created), UpdatedAt: timestampToString(updated)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"drafts": items, "total": len(items)})
 }
@@ -3336,10 +2848,6 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	issueID, ok := optionalUUID(w, req.IssueID, "issue_id")
-	if !ok {
-		return
-	}
 	if req.ToEmails == nil {
 		req.ToEmails = []string{}
 	}
@@ -3364,8 +2872,12 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if req.SentAppendEnabled != nil {
 		sentAppendEnabled = *req.SentAppendEnabled
 	}
+	scheduledSendAt, draftStatus, ok := parseCRMEmailDraftSchedule(w, req.ScheduledSendAt)
+	if !ok {
+		return
+	}
 	var id pgtype.UUID
-	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_enabled, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, sentAppendEnabled, req.AIGenerated, cleanOptionalText(&req.ApprovalReason)).Scan(&id); err != nil {
+	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_enabled, scheduled_send_at, status, ai_generated) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, sentAppendEnabled, scheduledSendAt, draftStatus, req.AIGenerated).Scan(&id); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create CRM email draft")
 		return
 	}
@@ -3402,10 +2914,6 @@ func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	issueID, ok := optionalUUID(w, req.IssueID, "issue_id")
-	if !ok {
-		return
-	}
 	if req.ToEmails == nil {
 		req.ToEmails = []string{}
 	}
@@ -3426,71 +2934,15 @@ func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid attachments")
 		return
 	}
-	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET mailbox_id=$3, thread_id=$4, account_id=$5, contact_id=$6, issue_id=$7, to_emails=$8, cc_emails=$9, bcc_emails=$10, subject=$11, body_text=$12, body_html=$13, in_reply_to=$14, reference_ids=$15, attachments=$16, approval_reason=$17, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, cleanOptionalText(&req.ApprovalReason)); err != nil {
+	scheduledSendAt, draftStatus, ok := parseCRMEmailDraftSchedule(w, req.ScheduledSendAt)
+	if !ok {
+		return
+	}
+	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET mailbox_id=$3, thread_id=$4, account_id=$5, contact_id=$6, to_emails=$7, cc_emails=$8, bcc_emails=$9, subject=$10, body_text=$11, body_html=$12, in_reply_to=$13, reference_ids=$14, attachments=$15, scheduled_send_at=$16, status=$17, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID, mailboxID, threadID, accountID, contactID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, scheduledSendAt, draftStatus); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email draft")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": uuidToString(draftID)})
-}
-
-func (h *Handler) sendFirstPendingCRMEmailDraftForIssue(ctx context.Context, workspaceID, issueID pgtype.UUID) (pgtype.UUID, error) {
-	var draftID, mailboxID, threadID, accountID, contactID pgtype.UUID
-	var payload crmEmailSendPayload
-	var attachmentsJSON []byte
-	if err := h.DB.QueryRow(ctx, `UPDATE crm_email_draft SET status='sending', updated_at=now() WHERE id=(SELECT id FROM crm_email_draft WHERE workspace_id=$1 AND issue_id=$2 AND status IN ('pending_approval','draft','failed') AND sent_at IS NULL ORDER BY updated_at DESC LIMIT 1) RETURNING id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled`, workspaceID, issueID).Scan(&draftID, &mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
-		return draftID, err
-	}
-	if len(attachmentsJSON) > 0 {
-		_ = json.Unmarshal(attachmentsJSON, &payload.Attachments)
-	}
-	var cfg crmIMAPMailboxConfig
-	var id pgtype.UUID
-	var secretRef, ownerType, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef pgtype.Text
-	var ownerID pgtype.UUID
-	var smtpPort pgtype.Int4
-	query := `SELECT id, label, email, host, port, tls_mode, username, secret_ref, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref FROM crm_imap_setting WHERE workspace_id=$1`
-	args := []any{workspaceID}
-	if mailboxID.Valid {
-		query += ` AND id=$2`
-		args = append(args, mailboxID)
-	}
-	query += ` ORDER BY updated_at DESC LIMIT 1`
-	if err := h.DB.QueryRow(ctx, query, args...).Scan(&id, &cfg.Label, &cfg.Email, &cfg.Host, &cfg.Port, &cfg.TLSMode, &cfg.Username, &secretRef, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef); err != nil {
-		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-		return draftID, err
-	}
-	cfg.UUID = id
-	cfg.ID = uuidToString(id)
-	cfg.SecretRef = crmTextValue(secretRef)
-	cfg.OwnerType = crmTextValue(ownerType)
-	cfg.OwnerID = uuidToString(ownerID)
-	cfg.SMTPHost = crmTextValue(smtpHost)
-	if smtpPort.Valid {
-		cfg.SMTPPort = smtpPort.Int32
-	}
-	cfg.SMTPTLSMode = crmTextValue(smtpTLSMode)
-	cfg.SMTPUsername = crmTextValue(smtpUsername)
-	cfg.SMTPSecretRef = crmTextValue(smtpSecretRef)
-	messageID, rawMessage, sentAt, err := sendCRMEmailProvider(cfg, payload)
-	if err != nil {
-		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-		return draftID, err
-	}
-	appendWarning := ""
-	if payload.AppendToSent && len(rawMessage) > 0 {
-		if err := appendCRMIMAPSentMessage(cfg, rawMessage, sentAt); err != nil {
-			appendWarning = "Sent folder append failed: " + sanitizeCRMSendError(err).Error()
-		}
-	}
-	if !threadID.Valid {
-		if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, cleanStringForDB(cfg.Email)).Scan(&threadID); err != nil {
-			_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-			return draftID, err
-		}
-	}
-	_, _ = h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
-	_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$4, sent_append_warning=$5, error_message=NULL, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, sentAt, cleanOptionalText(&appendWarning))
-	return draftID, h.markCRMEmailDraftIssueSent(ctx, workspaceID, issueID, draftID, "Issue 评论确认通过，系统已自动发送绑定草稿邮件，并将 Issue 标记为 done。")
 }
 
 func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
@@ -3502,26 +2954,63 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var mailboxID, threadID, accountID, contactID, issueID pgtype.UUID
+	result, err := h.sendCRMEmailDraftCore(r.Context(), workspaceID, draftID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "CRM email draft not found")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "failed to send CRM email draft: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": result.MessageID, "sent_append_warning": result.AppendWarning})
+}
+
+type crmEmailDraftSendResult struct {
+	MessageID     string
+	AppendWarning string
+}
+
+func (h *Handler) loadCRMIMAPConfigForSend(ctx context.Context, workspaceID, mailboxID pgtype.UUID) (crmIMAPMailboxConfig, error) {
+	var cfg crmIMAPMailboxConfig
+	var secretRef, ownerType, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef pgtype.Text
+	var ownerID pgtype.UUID
+	var smtpPort pgtype.Int4
+	if err := h.DB.QueryRow(ctx, `SELECT id, label, email, host, port, tls_mode, username, secret_ref, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref FROM crm_imap_setting WHERE workspace_id=$1 AND id=$2 LIMIT 1`, workspaceID, mailboxID).Scan(&cfg.UUID, &cfg.Label, &cfg.Email, &cfg.Host, &cfg.Port, &cfg.TLSMode, &cfg.Username, &secretRef, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef); err != nil {
+		return crmIMAPMailboxConfig{}, err
+	}
+	cfg.ID = uuidToString(cfg.UUID)
+	cfg.SecretRef = crmTextValue(secretRef)
+	cfg.OwnerType = crmTextValue(ownerType)
+	cfg.OwnerID = uuidToString(ownerID)
+	cfg.SMTPHost = crmTextValue(smtpHost)
+	if smtpPort.Valid {
+		cfg.SMTPPort = smtpPort.Int32
+	}
+	cfg.SMTPTLSMode = crmTextValue(smtpTLSMode)
+	cfg.SMTPUsername = crmTextValue(smtpUsername)
+	cfg.SMTPSecretRef = crmTextValue(smtpSecretRef)
+	return cfg, nil
+}
+
+func (h *Handler) sendCRMEmailDraftCore(ctx context.Context, workspaceID, draftID pgtype.UUID) (crmEmailDraftSendResult, error) {
+	var mailboxID, threadID, accountID, contactID pgtype.UUID
 	var payload crmEmailSendPayload
 	var attachmentsJSON []byte
-	if err := h.DB.QueryRow(r.Context(), `SELECT mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &issueID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
-		writeError(w, http.StatusNotFound, "CRM email draft not found")
-		return
+	if err := h.DB.QueryRow(ctx, `SELECT mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2 AND status IN ('draft','scheduled','sending','failed')`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
 	if len(attachmentsJSON) > 0 {
 		_ = json.Unmarshal(attachmentsJSON, &payload.Attachments)
 	}
-	mailboxIDString := uuidToString(mailboxID)
-	cfg, ok := h.loadCRMIMAPConfig(w, r, workspaceID, &mailboxIDString)
-	if !ok {
-		return
+	cfg, err := h.loadCRMIMAPConfigForSend(ctx, workspaceID, mailboxID)
+	if err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
 	messageID, rawMessage, sentAt, err := sendCRMEmailProvider(cfg, payload)
 	if err != nil {
-		_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-		writeError(w, http.StatusBadGateway, "failed to send CRM email draft: "+err.Error())
-		return
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, scheduled_send_last_attempt_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
+		return crmEmailDraftSendResult{}, err
 	}
 	appendWarning := ""
 	if payload.AppendToSent {
@@ -3536,22 +3025,53 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if !threadID.Valid {
 		mailboxEmail := cleanStringForDB(cfg.Email)
-		if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, mailboxEmail).Scan(&threadID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create CRM sent email thread")
-			return
+		if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, mailboxEmail).Scan(&threadID); err != nil {
+			return crmEmailDraftSendResult{}, err
 		}
 	}
-	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
-	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
-	if issueID.Valid {
-		_ = h.addCRMInternalIssueComment(r.Context(), workspaceID, issueID, "绑定邮件草稿已手动修改并发送。\n\n草稿 ID："+uuidToString(draftID)+"\n\n请负责人确认客户跟进已完成后，将此 Issue 状态改为 done。")
-	}
-	if accountID.Valid && shouldAutoRefreshCRMAccountProfile(r.Context(), h.DB, workspaceID) {
-		if _, err := h.regenerateCRMAccountProfile(r.Context(), workspaceID, accountID); err != nil {
+	_, _ = h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
+	_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, scheduled_send_at=NULL, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
+	if accountID.Valid && shouldAutoRefreshCRMAccountProfile(ctx, h.DB, workspaceID) {
+		if _, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID); err != nil {
 			slog.Warn("CRM account profile auto refresh failed after sent email", "account_id", uuidToString(accountID), "error", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": messageID, "sent_append_warning": appendWarning})
+	return crmEmailDraftSendResult{MessageID: messageID, AppendWarning: appendWarning}, nil
+}
+
+func (h *Handler) processDueCRMEmailDrafts(ctx context.Context) {
+	rows, err := h.DB.Query(ctx, `SELECT workspace_id, id FROM crm_email_draft WHERE status='scheduled' AND scheduled_send_at IS NOT NULL AND scheduled_send_at <= now() ORDER BY scheduled_send_at ASC LIMIT 20`)
+	if err != nil {
+		slog.Warn("CRM scheduled email query failed", "error", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var workspaceID, draftID pgtype.UUID
+		if err := rows.Scan(&workspaceID, &draftID); err != nil {
+			continue
+		}
+		if _, err := h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sending', scheduled_send_last_attempt_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status='scheduled'`, draftID, workspaceID); err != nil {
+			continue
+		}
+		if _, err := h.sendCRMEmailDraftCore(ctx, workspaceID, draftID); err != nil {
+			slog.Warn("CRM scheduled email send failed", "draft_id", uuidToString(draftID), "workspace_id", uuidToString(workspaceID), "error", err)
+		}
+	}
+}
+
+func (h *Handler) startCRMEmailDraftScheduler() {
+	if h == nil || h.DB == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			h.processDueCRMEmailDrafts(context.Background())
+			<-ticker.C
+		}
+	}()
 }
 
 func crmTextValue(t pgtype.Text) string {
@@ -3572,51 +3092,17 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 		return CRMAccountProfileResponse{}, err
 	}
 	defer rows.Close()
-	noteSnippets := make([]string, 0, 5)
+	communications := make([]string, 0, 5)
 	for rows.Next() {
 		var channel, direction, subject, body string
 		if err := rows.Scan(&channel, &direction, &subject, &body); err == nil {
-			noteSnippets = append(noteSnippets, trimCRMProfileSnippet(strings.TrimSpace(strings.Join([]string{channel, direction, subject, body}, " ")), 220))
+			line := strings.TrimSpace(strings.Join([]string{channel, direction, subject, body}, " "))
+			if len(line) > 220 {
+				line = line[:220]
+			}
+			communications = append(communications, line)
 		}
 	}
-	rows, err = h.DB.Query(ctx, `SELECT direction, COALESCE(subject,''), COALESCE(body_text,'') FROM crm_email_message WHERE workspace_id=$1 AND account_id=$2 ORDER BY COALESCE(sent_at, received_at, created_at) DESC LIMIT 5`, workspaceID, accountID)
-	if err != nil {
-		return CRMAccountProfileResponse{}, err
-	}
-	defer rows.Close()
-	emailSnippets := make([]string, 0, 5)
-	for rows.Next() {
-		var direction, subject, body string
-		if err := rows.Scan(&direction, &subject, &body); err == nil {
-			emailSnippets = append(emailSnippets, trimCRMProfileSnippet(strings.TrimSpace(strings.Join([]string{"email", direction, subject, body}, " ")), 260))
-		}
-	}
-	rows, err = h.DB.Query(ctx, `SELECT DISTINCT p.title FROM project p JOIN project_resource pr ON pr.project_id=p.id AND pr.workspace_id=p.workspace_id WHERE p.workspace_id=$1 AND pr.resource_type='crm_account' AND pr.resource_ref->>'account_id'=$2 ORDER BY p.title ASC LIMIT 5`, workspaceID, uuidToString(accountID))
-	if err != nil {
-		return CRMAccountProfileResponse{}, err
-	}
-	defer rows.Close()
-	projectTitles := make([]string, 0, 5)
-	for rows.Next() {
-		var title string
-		if err := rows.Scan(&title); err == nil {
-			projectTitles = append(projectTitles, title)
-		}
-	}
-	rows, err = h.DB.Query(ctx, `SELECT DISTINCT COALESCE(NULLIF(i.number, 0)::text, ''), i.title, i.status, i.priority FROM issue i LEFT JOIN crm_email_thread t ON t.issue_id=i.id AND t.workspace_id=i.workspace_id LEFT JOIN crm_email_thread_issue_link til ON til.issue_id=i.id LEFT JOIN crm_email_thread lt ON lt.id=til.thread_id AND lt.workspace_id=i.workspace_id LEFT JOIN project_resource pr ON pr.project_id=i.project_id AND pr.workspace_id=i.workspace_id AND pr.resource_type='crm_account' AND pr.resource_ref->>'account_id'=$2 WHERE i.workspace_id=$1 AND (t.account_id=$3 OR lt.account_id=$3 OR pr.id IS NOT NULL) ORDER BY i.title ASC LIMIT 5`, workspaceID, uuidToString(accountID), accountID)
-	if err != nil {
-		return CRMAccountProfileResponse{}, err
-	}
-	defer rows.Close()
-	issueTitles := make([]string, 0, 5)
-	for rows.Next() {
-		var identifier, title, issueStatus, issuePriority string
-		if err := rows.Scan(&identifier, &title, &issueStatus, &issuePriority); err == nil {
-			issueTitles = append(issueTitles, strings.TrimSpace(strings.Join([]string{identifier, title, issueStatus, issuePriority}, " ")))
-		}
-	}
-	communicationSnippets := append([]string{}, noteSnippets...)
-	communicationSnippets = append(communicationSnippets, emailSnippets...)
 	country := crmTextValue(countryName)
 	industryValue := crmTextValue(industry)
 	baseParts := []string{name}
@@ -3630,62 +3116,30 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	if summary == "" {
 		summary = "CRM customer profile"
 	}
-	projectSource := strings.Join(trimCRMProfileList(projectTitles, 5, 120), "\n")
-	issueSource := strings.Join(trimCRMProfileList(issueTitles, 5, 160), "\n")
-	emailEvidence := strings.Join(trimCRMProfileList(emailSnippets, 5, 160), "\n")
-	noteEvidence := strings.Join(trimCRMProfileList(noteSnippets, 5, 160), "\n")
-	businessModel := strings.TrimSpace(strings.Join([]string{industryValue, crmTextValue(website)}, " "))
-	if businessModel == "" {
-		businessModel = profileValueFromEvidence(emailSnippets, noteSnippets, "业务模式", "当前客户基础资料中没有明确业务模式。")
+	if len(communications) > 0 {
+		summary += "。最近往来：" + communications[0]
 	}
-	profileEvidenceSummary := summarizeCRMProfileEvidence(emailSnippets, noteSnippets)
-	mainProducts := profileValueFromEvidence(emailSnippets, noteSnippets, "主营/关注产品", "请从后续邮件、报价、样品和订单中提炼客户主营/采购产品。")
-	procurementNeeds := profileValueFromEvidence(emailSnippets, noteSnippets, "采购需求", "重点补齐需求产品、数量、目标价格、交期、认证要求、物流方式和采购频率。")
-	painPoints := profileValueFromEvidence(emailSnippets, noteSnippets, "痛点/关注点", "当前往来未明确质量、价格、交期、付款、认证、沟通或售后痛点。")
-	decisionProcess := profileValueFromEvidence(emailSnippets, noteSnippets, "决策链", "需识别询价人、技术确认人、采购负责人、财务/老板审批人和采购周期。")
-	communicationPreference := profileValueFromEvidence(emailSnippets, noteSnippets, "沟通偏好", "根据回复速度、常用邮箱/WhatsApp/电话、语言和时区继续观察。")
 	profile := map[string]any{
-		"customer_summary":         strings.TrimSpace(strings.Join([]string{summary, profileEvidenceSummary}, "\n")),
-		"business_model":           businessModel,
-		"main_products":            mainProducts,
-		"procurement_needs":        procurementNeeds,
-		"pain_points":              painPoints,
-		"decision_process":         decisionProcess,
-		"communication_preference": communicationPreference,
-		"recent_progress":          strings.TrimSpace(strings.Join([]string{projectSource, issueSource, profileEvidenceSummary}, "\n")),
-		"risk_notes":               strings.TrimSpace(strings.Join([]string{crmTextValue(notes), "自动画像优先沉淀可从往来记录佐证的结论；原始片段仍保留在 evidence。"}, "\n")),
-		"cooperation_history":      strings.TrimSpace(strings.Join([]string{projectSource, issueSource, profileEvidenceSummary}, "\n")),
-		"next_step_suggestions":    buildCRMProfileNextSteps(mainProducts, procurementNeeds, decisionProcess),
-		"evidence": map[string]any{
-			"recent_email_snippets": emailEvidence,
-			"recent_note_snippets":  noteEvidence,
-			"projects":              projectSource,
-			"issues":                issueSource,
-		},
-		"tags":           []string{status, rating, priority},
-		"rating_hint":    rating,
-		"priority_hint":  priority,
-		"status_hint":    status,
-		"auto_generated": true,
+		"business_model":           strings.TrimSpace(strings.Join([]string{industryValue, crmTextValue(website)}, " ")),
+		"main_products":            "根据客户基础信息和往来记录持续更新；请在后续沟通中补充具体产品。",
+		"procurement_needs":        "结合最近往来跟进需求、数量、交期、目标价格和决策人。",
+		"pain_points":              strings.Join(communications, "\n"),
+		"decision_process":         "根据联系人、项目和历史往来持续归纳；优先确认决策链路和采购周期。",
+		"communication_preference": "参考最近往来渠道和回复习惯安排跟进。",
+		"risk_notes":               strings.TrimSpace(strings.Join([]string{crmTextValue(notes), "自动画像由客户信息和历史往来生成；新增往来或修改客户信息会自动刷新。"}, "\n")),
+		"cooperation_history":      strings.Join(communications, "\n"),
+		"rating_hint":              rating,
+		"priority_hint":            priority,
+		"status_hint":              status,
+		"auto_generated":           true,
 	}
-	if llmProfile, err := h.generateCRMAccountProfileWithLLM(ctx, name, summary, projectSource, issueSource, emailEvidence, noteEvidence, crmTextValue(notes)); err == nil && len(llmProfile) > 0 {
-		for key, value := range llmProfile {
-			profile[key] = value
-		}
-		profile["auto_generated"] = true
-		profile["generated_by"] = "llm"
-	} else if err != nil {
-		slog.Warn("CRM account profile LLM generation failed; using deterministic fallback", "account_id", uuidToString(accountID), "error", err)
-	}
-	profile = cleanCRMProfile(profile)
 	profileJSON, _ := json.Marshal(profile)
-	var id pgtype.UUID
 	var rawProfile []byte
-	var createdAt, updatedAt pgtype.Timestamptz
-	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_account_profile (workspace_id, account_id, summary, profile_json, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (account_id) DO UPDATE SET summary=EXCLUDED.summary, profile_json=EXCLUDED.profile_json, updated_at=now() RETURNING id, profile_json, created_at, updated_at`, workspaceID, accountID, summary, profileJSON).Scan(&id, &rawProfile, &createdAt, &updatedAt); err != nil {
+	var updatedAt pgtype.Timestamptz
+	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_account_profile (workspace_id, account_id, summary, profile_json, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (account_id) DO UPDATE SET summary=EXCLUDED.summary, profile_json=EXCLUDED.profile_json, updated_at=now() RETURNING profile_json, updated_at`, workspaceID, accountID, summary, profileJSON).Scan(&rawProfile, &updatedAt); err != nil {
 		return CRMAccountProfileResponse{}, err
 	}
-	return CRMAccountProfileResponse{ID: uuidToString(id), WorkspaceID: uuidToString(workspaceID), AccountID: uuidToString(accountID), Summary: &summary, ProfileJSON: rawProfile, SourceSummary: buildCRMProfileSourceSummary(trimCRMProfileList(communicationSnippets, 5, 160), trimCRMProfileList(projectTitles, 5, 120), trimCRMProfileList(issueTitles, 5, 120)), CreatedAt: timestampToString(createdAt), UpdatedAt: timestampToString(updatedAt)}, nil
+	return CRMAccountProfileResponse{WorkspaceID: uuidToString(workspaceID), AccountID: uuidToString(accountID), Summary: &summary, ProfileJSON: rawProfile, UpdatedAt: timestampToString(updatedAt)}, nil
 }
 
 func (h *Handler) SuggestCRMAccountProfile(w http.ResponseWriter, r *http.Request) {
@@ -3898,9 +3352,6 @@ func (h *Handler) CreateCRMEmailMessage(w http.ResponseWriter, r *http.Request) 
 		SET last_message_at = COALESCE($3, $4, last_message_at, now()), updated_at = now()
 		WHERE id = $1 AND workspace_id = $2
 	`, threadID, workspaceID, sentAt, receivedAt)
-	if accountID.Valid {
-		_, _ = h.regenerateCRMAccountProfile(r.Context(), workspaceID, accountID)
-	}
 	writeJSON(w, http.StatusCreated, crmEmailMessageToResponse(message))
 }
 
@@ -4419,127 +3870,10 @@ func (h *Handler) ListCRMAISettings(w http.ResponseWriter, r *http.Request) {
 			item.LastCheckedAt = &t
 		}
 		item.Config = json.RawMessage(config)
-		item.LastResult = h.withRecentCRMAIIssues(r.Context(), workspaceID, item.AutomationKey, lastResult)
+		item.LastResult = json.RawMessage(lastResult)
 		settings = append(settings, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
-}
-
-type CRMAIHistoryItemResponse struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	Status        string    `json:"status"`
-	OriginID      *string   `json:"origin_id"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	AutomationKey string    `json:"automation_key"`
-}
-
-func (h *Handler) ListCRMAIHistory(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := h.crmWorkspaceUUID(w, r)
-	if !ok {
-		return
-	}
-	limit := parsePositiveIntQuery(r, "limit", 20, 100)
-	offset := parsePositiveIntQuery(r, "offset", 0, 10000)
-	days := parsePositiveIntQuery(r, "days", 30, 365)
-	automationKey := strings.TrimSpace(r.URL.Query().Get("automation_key"))
-	rows, err := h.DB.Query(r.Context(), `
-		WITH history AS (
-			SELECT id, title, status, origin_id, created_at, updated_at,
-				CASE
-					WHEN title LIKE '回复邮件：%' OR title LIKE 'CRM 邮件待回复：%' THEN 'email_pending_reply'
-					WHEN title LIKE '跟进客户：%' THEN 'due_followup'
-					ELSE 'other'
-				END AS automation_key
-			FROM issue
-			WHERE workspace_id=$1
-			  AND (origin_type='crm_ai' OR title LIKE 'CRM 邮件待回复：%' OR title LIKE '回复邮件：%' OR title LIKE '跟进客户：%')
-			  AND created_at >= now() - ($4::int * interval '1 day')
-		)
-		SELECT id, title, status, origin_id, created_at, updated_at, automation_key
-		FROM history
-		WHERE ($5 = '' OR automation_key = $5)
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`, workspaceID, limit, offset, days, automationKey)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list CRM AI history")
-		return
-	}
-	defer rows.Close()
-	items := []CRMAIHistoryItemResponse{}
-	for rows.Next() {
-		var item CRMAIHistoryItemResponse
-		var id, originID pgtype.UUID
-		if err := rows.Scan(&id, &item.Title, &item.Status, &originID, &item.CreatedAt, &item.UpdatedAt, &item.AutomationKey); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to scan CRM AI history")
-			return
-		}
-		item.ID = uuidToString(id)
-		if originID.Valid {
-			s := uuidToString(originID)
-			item.OriginID = &s
-		}
-		items = append(items, item)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset, "days": days, "has_more": len(items) == limit})
-}
-
-func parsePositiveIntQuery(r *http.Request, key string, fallback, max int) int {
-	value, err := strconv.Atoi(r.URL.Query().Get(key))
-	if err != nil || value < 0 {
-		return fallback
-	}
-	if max > 0 && value > max {
-		return max
-	}
-	return value
-}
-
-func (h *Handler) withRecentCRMAIIssues(ctx context.Context, workspaceID pgtype.UUID, automationKey string, lastResult []byte) json.RawMessage {
-	payload := map[string]any{}
-	if len(lastResult) > 0 {
-		_ = json.Unmarshal(lastResult, &payload)
-	}
-	if existing, ok := payload["created_issues"].([]any); ok && len(existing) > 0 {
-		out, _ := json.Marshal(payload)
-		return json.RawMessage(out)
-	}
-	prefix := ""
-	switch automationKey {
-	case "email_pending_reply":
-		prefix = "回复邮件：%"
-	case "due_followup":
-		prefix = "跟进客户：%"
-	default:
-		out, _ := json.Marshal(payload)
-		return json.RawMessage(out)
-	}
-	rows, err := h.DB.Query(ctx, `
-		SELECT id, title
-		FROM issue
-		WHERE workspace_id=$1 AND origin_type='crm_ai' AND title LIKE $2
-		ORDER BY created_at DESC
-		LIMIT 10`, workspaceID, prefix)
-	if err != nil {
-		out, _ := json.Marshal(payload)
-		return json.RawMessage(out)
-	}
-	defer rows.Close()
-	issues := []map[string]string{}
-	for rows.Next() {
-		var id pgtype.UUID
-		var title string
-		if err := rows.Scan(&id, &title); err == nil && id.Valid {
-			issues = append(issues, map[string]string{"id": uuidToString(id), "title": title, "kind": "recent"})
-		}
-	}
-	if len(issues) > 0 {
-		payload["created_issues"] = issues
-	}
-	out, _ := json.Marshal(payload)
-	return json.RawMessage(out)
 }
 
 func (h *Handler) UpdateCRMAISetting(w http.ResponseWriter, r *http.Request) {
@@ -4653,27 +3987,36 @@ func (h *Handler) ServeCRMEmailAttachment(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid attachment index")
 		return
 	}
-	var attachmentJSON []byte
+	var attachmentsJSON []byte
 	if err := h.DB.QueryRow(r.Context(),
-		`SELECT attachments -> ($3::int) FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
-		messageID, workspaceID, index).Scan(&attachmentJSON); err != nil {
+		`SELECT attachments FROM crm_email_message WHERE id=$1 AND workspace_id=$2`,
+		messageID, workspaceID).Scan(&attachmentsJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "CRM email message not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load CRM email attachment")
+		writeError(w, http.StatusInternalServerError, "failed to load CRM email message")
 		return
 	}
-	if len(attachmentJSON) == 0 || string(attachmentJSON) == "null" {
+	if len(attachmentsJSON) == 0 {
+		writeError(w, http.StatusNotFound, "no attachments on this message")
+		return
+	}
+	var attachments []crmEmailAttachment
+	if normalized := normalizeCRMEmailAttachments(attachmentsJSON); len(normalized) > 0 {
+		attachments = normalized
+	} else if err := json.Unmarshal(attachmentsJSON, &attachments); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse attachments")
+		return
+	}
+	for i := range attachments {
+		attachments[i] = normalizeCRMEmailAttachment(attachments[i], i)
+	}
+	if index >= len(attachments) {
 		writeError(w, http.StatusNotFound, "attachment index out of range")
 		return
 	}
-	var att crmEmailAttachment
-	if err := json.Unmarshal(attachmentJSON, &att); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to parse attachment")
-		return
-	}
-	att = normalizeCRMEmailAttachment(att, index)
+	att := attachments[index]
 	if strings.TrimSpace(att.Content) == "" {
 		writeError(w, http.StatusNotFound, "attachment content is not available for this message")
 		return
@@ -4728,7 +4071,7 @@ func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd, err := h.DB.Exec(r.Context(),
-		`UPDATE crm_email_thread SET status='open', is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
+		`UPDATE crm_email_thread SET is_trashed=true, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
 		threadID, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to trash CRM email thread")
@@ -4738,13 +4081,6 @@ func (h *Handler) TrashCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "CRM email thread not found")
 		return
 	}
-	_, _ = h.DB.Exec(r.Context(), `
-		UPDATE crm_email_message
-		SET is_trashed=true,
-		    folder='Trash',
-		    updated_at=now()
-		WHERE thread_id=$1 AND workspace_id=$2
-	`, threadID, workspaceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -5063,150 +4399,4 @@ func (h *Handler) SetCRMIMAPSyncCron(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sync_enabled": req.SyncEnabled})
-}
-
-type CRMEmailDraftAISuggestRequest struct {
-	ThreadID  *string  `json:"thread_id"`
-	AccountID *string  `json:"account_id"`
-	ContactID *string  `json:"contact_id"`
-	ToEmails  []string `json:"to_emails"`
-	Subject   string   `json:"subject"`
-}
-
-type CRMEmailDraftAISuggestResponse struct {
-	Chinese          string `json:"chinese"`
-	CustomerLanguage string `json:"customer_language"`
-	CustomerReply    string `json:"customer_reply"`
-	Source           string `json:"source"`
-}
-
-func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := h.crmWorkspaceUUID(w, r)
-	if !ok {
-		return
-	}
-	var req CRMEmailDraftAISuggestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	threadID := mustParsePgUUID(strings.TrimSpace(ptrString(req.ThreadID)))
-	accountID := mustParsePgUUID(strings.TrimSpace(ptrString(req.AccountID)))
-	contactID := mustParsePgUUID(strings.TrimSpace(ptrString(req.ContactID)))
-	ctx := r.Context()
-
-	accountName := ""
-	accountNotes := ""
-	if accountID.Valid {
-		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(notes,'') FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&accountName, &accountNotes)
-	}
-	contactName := ""
-	contactEmail := ""
-	contactLanguage := ""
-	if contactID.Valid {
-		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(email,''), COALESCE(language,'') FROM crm_contact WHERE workspace_id=$1 AND id=$2`, workspaceID, contactID).Scan(&contactName, &contactEmail, &contactLanguage)
-	}
-	messages := []string{}
-	if threadID.Valid {
-		rows, err := h.DB.Query(ctx, `SELECT direction, COALESCE(from_name,''), COALESCE(from_email,''), COALESCE(subject,''), COALESCE(body_text, regexp_replace(COALESCE(body_html,''), '<[^>]+>', ' ', 'g'), ''), COALESCE(received_at, sent_at, created_at) FROM crm_email_message WHERE workspace_id=$1 AND thread_id=$2 ORDER BY COALESCE(received_at, sent_at, created_at) DESC LIMIT 8`, workspaceID, threadID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var direction, fromName, fromEmail, subject, body string
-				var at pgtype.Timestamptz
-				if rows.Scan(&direction, &fromName, &fromEmail, &subject, &body, &at) == nil {
-					messages = append(messages, fmt.Sprintf("[%s] %s <%s> %s\n%s", direction, fromName, fromEmail, subject, stringsTrimForCRM(body, 1200)))
-					if contactEmail == "" && direction == "inbound" {
-						contactEmail = fromEmail
-					}
-				}
-			}
-		}
-	}
-	language := strings.TrimSpace(contactLanguage)
-	if language == "" {
-		language = inferCRMCustomerLanguage(contactEmail, strings.Join(messages, "\n"))
-	}
-	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	apiKey = strings.TrimSpace(apiKey)
-	if baseURL == "" || apiKey == "" || model == "" {
-		zh := "您好，\n\n感谢您的来信。我们已收到您的需求，会尽快核对相关信息后回复您。若方便，请补充具体产品、数量、规格、目的港和期望交期，便于我们提供更准确的方案。\n\n此致"
-		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{Chinese: zh, CustomerLanguage: language, CustomerReply: zh, Source: "fallback"})
-		return
-	}
-	prompt := "你是外贸CRM邮件回复助手。根据客户资料和邮件往来，输出JSON：{\"chinese\":\"中文回复建议\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"客户语言回复建议\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件；3) 中文建议用于内部参考；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务。\n\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n主题：" + req.Subject + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
-	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
-	body, _ := json.Marshal(payload)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build AI request")
-		return
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to call AI model")
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		writeError(w, http.StatusBadGateway, "AI model returned error")
-		return
-	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
-		writeError(w, http.StatusBadGateway, "invalid AI model response")
-		return
-	}
-	var parsed CRMEmailDraftAISuggestResponse
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out.Choices[0].Message.Content)), &parsed); err != nil {
-		writeError(w, http.StatusBadGateway, "invalid AI suggestion JSON")
-		return
-	}
-	if parsed.CustomerLanguage == "" {
-		parsed.CustomerLanguage = language
-	}
-	parsed.Source = source
-	writeJSON(w, http.StatusOK, parsed)
-}
-
-func ptrString(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
-}
-
-func inferCRMCustomerLanguage(email, body string) string {
-	text := strings.ToLower(email + " " + body)
-	if strings.Contains(text, ".cn") || strings.Contains(body, "你好") || strings.Contains(body, "您好") {
-		return "Chinese"
-	}
-	if strings.Contains(text, ".es") || strings.Contains(text, ".mx") || strings.Contains(text, ".ar") {
-		return "Spanish"
-	}
-	if strings.Contains(text, ".fr") {
-		return "French"
-	}
-	if strings.Contains(text, ".de") {
-		return "German"
-	}
-	if strings.Contains(text, ".ru") {
-		return "Russian"
-	}
-	if strings.Contains(text, ".jp") {
-		return "Japanese"
-	}
-	if strings.Contains(text, ".kr") {
-		return "Korean"
-	}
-	return "English"
 }
