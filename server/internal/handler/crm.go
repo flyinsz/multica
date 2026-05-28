@@ -1076,20 +1076,21 @@ type CRMIMAPPreviewMessageResponse struct {
 }
 
 type CRMEmailDraftResponse struct {
-	ID          string   `json:"id"`
-	MailboxID   *string  `json:"mailbox_id"`
-	ThreadID    *string  `json:"thread_id"`
-	AccountID   *string  `json:"account_id"`
-	ContactID   *string  `json:"contact_id"`
-	ToEmails    []string `json:"to_emails"`
-	CcEmails    []string `json:"cc_emails"`
-	BccEmails   []string `json:"bcc_emails"`
-	Subject     string   `json:"subject"`
-	BodyText    string   `json:"body_text"`
-	Status      string   `json:"status"`
-	AIGenerated bool     `json:"ai_generated"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
+	ID              string   `json:"id"`
+	MailboxID       *string  `json:"mailbox_id"`
+	ThreadID        *string  `json:"thread_id"`
+	AccountID       *string  `json:"account_id"`
+	ContactID       *string  `json:"contact_id"`
+	ToEmails        []string `json:"to_emails"`
+	CcEmails        []string `json:"cc_emails"`
+	BccEmails       []string `json:"bcc_emails"`
+	Subject         string   `json:"subject"`
+	BodyText        string   `json:"body_text"`
+	Status          string   `json:"status"`
+	ScheduledSendAt *string  `json:"scheduled_send_at,omitempty"`
+	AIGenerated     bool     `json:"ai_generated"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 type CreateCRMEmailDraftRequest struct {
@@ -1098,7 +1099,6 @@ type CreateCRMEmailDraftRequest struct {
 	AccountID         *string              `json:"account_id"`
 	ContactID         *string              `json:"contact_id"`
 	IssueID           *string              `json:"issue_id"`
-	ApprovalReason    string               `json:"approval_reason"`
 	ToEmails          []string             `json:"to_emails"`
 	CcEmails          []string             `json:"cc_emails"`
 	BccEmails         []string             `json:"bcc_emails"`
@@ -1109,7 +1109,9 @@ type CreateCRMEmailDraftRequest struct {
 	ReferenceIDs      []string             `json:"reference_ids"`
 	Attachments       []crmEmailAttachment `json:"attachments"`
 	SentAppendEnabled *bool                `json:"sent_append_enabled"`
+	ScheduledSendAt   *string              `json:"scheduled_send_at"`
 	AIGenerated       bool                 `json:"ai_generated"`
+	ApprovalReason    *string              `json:"approval_reason"`
 }
 type CRMProfileSuggestionResponse struct {
 	ID          string          `json:"id"`
@@ -3282,13 +3284,28 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 	return imported, skipped, nil
 }
 
+func parseCRMEmailDraftSchedule(w http.ResponseWriter, value *string) (pgtype.Timestamptz, string, bool) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return pgtype.Timestamptz{}, "draft", true
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*value))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid scheduled_send_at")
+		return pgtype.Timestamptz{}, "", false
+	}
+	if !parsed.After(time.Now().Add(30 * time.Second)) {
+		writeError(w, http.StatusBadRequest, "scheduled_send_at must be in the future")
+		return pgtype.Timestamptz{}, "", false
+	}
+	return pgtype.Timestamptz{Time: parsed, Valid: true}, "scheduled", true
+}
+
 func (h *Handler) ListCRMEmailDrafts(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {
 		return
 	}
-	draftIDFilter := strings.TrimSpace(r.URL.Query().Get("draft_id"))
-	rows, err := h.DB.Query(r.Context(), `SELECT id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, ai_generated, created_at, updated_at FROM crm_email_draft WHERE workspace_id=$1 ORDER BY CASE WHEN $2 <> '' AND id::text = $2 THEN 0 ELSE 1 END, updated_at DESC LIMIT 100`, workspaceID, draftIDFilter)
+	rows, err := h.DB.Query(r.Context(), `SELECT id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, scheduled_send_at, ai_generated, created_at, updated_at FROM crm_email_draft WHERE workspace_id=$1 ORDER BY updated_at DESC LIMIT 100`, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email drafts")
 		return
@@ -3300,12 +3317,12 @@ func (h *Handler) ListCRMEmailDrafts(w http.ResponseWriter, r *http.Request) {
 		var subject, body, status string
 		var toEmails, ccEmails, bccEmails []string
 		var ai bool
-		var created, updated pgtype.Timestamptz
-		if err := rows.Scan(&id, &mailboxID, &threadID, &accountID, &contactID, &toEmails, &ccEmails, &bccEmails, &subject, &body, &status, &ai, &created, &updated); err != nil {
+		var scheduledSendAt, created, updated pgtype.Timestamptz
+		if err := rows.Scan(&id, &mailboxID, &threadID, &accountID, &contactID, &toEmails, &ccEmails, &bccEmails, &subject, &body, &status, &scheduledSendAt, &ai, &created, &updated); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to scan CRM email draft")
 			return
 		}
-		items = append(items, CRMEmailDraftResponse{ID: uuidToString(id), MailboxID: uuidToPtr(mailboxID), ThreadID: uuidToPtr(threadID), AccountID: uuidToPtr(accountID), ContactID: uuidToPtr(contactID), ToEmails: toEmails, CcEmails: ccEmails, BccEmails: bccEmails, Subject: subject, BodyText: body, Status: status, AIGenerated: ai, CreatedAt: timestampToString(created), UpdatedAt: timestampToString(updated)})
+		items = append(items, CRMEmailDraftResponse{ID: uuidToString(id), MailboxID: uuidToPtr(mailboxID), ThreadID: uuidToPtr(threadID), AccountID: uuidToPtr(accountID), ContactID: uuidToPtr(contactID), ToEmails: toEmails, CcEmails: ccEmails, BccEmails: bccEmails, Subject: subject, BodyText: body, Status: status, ScheduledSendAt: timestampToPtr(scheduledSendAt), AIGenerated: ai, CreatedAt: timestampToString(created), UpdatedAt: timestampToString(updated)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"drafts": items, "total": len(items)})
 }
@@ -3364,8 +3381,12 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if req.SentAppendEnabled != nil {
 		sentAppendEnabled = *req.SentAppendEnabled
 	}
+	scheduledSendAt, draftStatus, ok := parseCRMEmailDraftSchedule(w, req.ScheduledSendAt)
+	if !ok {
+		return
+	}
 	var id pgtype.UUID
-	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_enabled, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, sentAppendEnabled, req.AIGenerated, cleanOptionalText(&req.ApprovalReason)).Scan(&id); err != nil {
+	if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_enabled, scheduled_send_at, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, sentAppendEnabled, scheduledSendAt, draftStatus, req.AIGenerated, cleanOptionalText(req.ApprovalReason)).Scan(&id); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create CRM email draft")
 		return
 	}
@@ -3426,71 +3447,33 @@ func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid attachments")
 		return
 	}
-	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET mailbox_id=$3, thread_id=$4, account_id=$5, contact_id=$6, issue_id=$7, to_emails=$8, cc_emails=$9, bcc_emails=$10, subject=$11, body_text=$12, body_html=$13, in_reply_to=$14, reference_ids=$15, attachments=$16, approval_reason=$17, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, cleanOptionalText(&req.ApprovalReason)); err != nil {
+	scheduledSendAt, draftStatus, ok := parseCRMEmailDraftSchedule(w, req.ScheduledSendAt)
+	if !ok {
+		return
+	}
+	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET mailbox_id=$3, thread_id=$4, account_id=$5, contact_id=$6, issue_id=$7, to_emails=$8, cc_emails=$9, bcc_emails=$10, subject=$11, body_text=$12, body_html=$13, in_reply_to=$14, reference_ids=$15, attachments=$16, scheduled_send_at=$17, status=$18, approval_reason=$19, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, scheduledSendAt, draftStatus, cleanOptionalText(req.ApprovalReason)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email draft")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": uuidToString(draftID)})
 }
 
-func (h *Handler) sendFirstPendingCRMEmailDraftForIssue(ctx context.Context, workspaceID, issueID pgtype.UUID) (pgtype.UUID, error) {
-	var draftID, mailboxID, threadID, accountID, contactID pgtype.UUID
-	var payload crmEmailSendPayload
-	var attachmentsJSON []byte
-	if err := h.DB.QueryRow(ctx, `UPDATE crm_email_draft SET status='sending', updated_at=now() WHERE id=(SELECT id FROM crm_email_draft WHERE workspace_id=$1 AND issue_id=$2 AND status IN ('pending_approval','draft','failed') AND sent_at IS NULL ORDER BY updated_at DESC LIMIT 1) RETURNING id, mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled`, workspaceID, issueID).Scan(&draftID, &mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
-		return draftID, err
+func (h *Handler) sendFirstPendingCRMEmailDraftForIssue(ctx context.Context, workspaceID, issueID pgtype.UUID) (crmEmailDraftSendResult, error) {
+	var draftID pgtype.UUID
+	if err := h.DB.QueryRow(ctx, `SELECT id FROM crm_email_draft WHERE workspace_id=$1 AND issue_id=$2 AND status IN ('pending_approval','draft','scheduled','failed') AND sent_at IS NULL ORDER BY updated_at ASC LIMIT 1`, workspaceID, issueID).Scan(&draftID); err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
-	if len(attachmentsJSON) > 0 {
-		_ = json.Unmarshal(attachmentsJSON, &payload.Attachments)
+	if _, err := h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sending', scheduled_send_last_attempt_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID); err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
-	var cfg crmIMAPMailboxConfig
-	var id pgtype.UUID
-	var secretRef, ownerType, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef pgtype.Text
-	var ownerID pgtype.UUID
-	var smtpPort pgtype.Int4
-	query := `SELECT id, label, email, host, port, tls_mode, username, secret_ref, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref FROM crm_imap_setting WHERE workspace_id=$1`
-	args := []any{workspaceID}
-	if mailboxID.Valid {
-		query += ` AND id=$2`
-		args = append(args, mailboxID)
-	}
-	query += ` ORDER BY updated_at DESC LIMIT 1`
-	if err := h.DB.QueryRow(ctx, query, args...).Scan(&id, &cfg.Label, &cfg.Email, &cfg.Host, &cfg.Port, &cfg.TLSMode, &cfg.Username, &secretRef, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef); err != nil {
-		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-		return draftID, err
-	}
-	cfg.UUID = id
-	cfg.ID = uuidToString(id)
-	cfg.SecretRef = crmTextValue(secretRef)
-	cfg.OwnerType = crmTextValue(ownerType)
-	cfg.OwnerID = uuidToString(ownerID)
-	cfg.SMTPHost = crmTextValue(smtpHost)
-	if smtpPort.Valid {
-		cfg.SMTPPort = smtpPort.Int32
-	}
-	cfg.SMTPTLSMode = crmTextValue(smtpTLSMode)
-	cfg.SMTPUsername = crmTextValue(smtpUsername)
-	cfg.SMTPSecretRef = crmTextValue(smtpSecretRef)
-	messageID, rawMessage, sentAt, err := sendCRMEmailProvider(cfg, payload)
+	result, err := h.sendCRMEmailDraftCore(ctx, workspaceID, draftID)
 	if err != nil {
-		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-		return draftID, err
+		return crmEmailDraftSendResult{}, err
 	}
-	appendWarning := ""
-	if payload.AppendToSent && len(rawMessage) > 0 {
-		if err := appendCRMIMAPSentMessage(cfg, rawMessage, sentAt); err != nil {
-			appendWarning = "Sent folder append failed: " + sanitizeCRMSendError(err).Error()
-		}
+	if err := h.markCRMEmailDraftIssueSent(ctx, workspaceID, issueID, draftID, "Issue 评论确认通过，系统已自动发送绑定草稿邮件，并将 Issue 标记为 done。"); err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
-	if !threadID.Valid {
-		if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, cleanStringForDB(cfg.Email)).Scan(&threadID); err != nil {
-			_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-			return draftID, err
-		}
-	}
-	_, _ = h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
-	_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$4, sent_append_warning=$5, error_message=NULL, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, sentAt, cleanOptionalText(&appendWarning))
-	return draftID, h.markCRMEmailDraftIssueSent(ctx, workspaceID, issueID, draftID, "Issue 评论确认通过，系统已自动发送绑定草稿邮件，并将 Issue 标记为 done。")
+	return result, nil
 }
 
 func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
@@ -3502,26 +3485,71 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var mailboxID, threadID, accountID, contactID, issueID pgtype.UUID
+	result, err := h.sendCRMEmailDraftCore(r.Context(), workspaceID, draftID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "CRM email draft not found")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "failed to send CRM email draft: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": result.MessageID, "sent_append_warning": result.AppendWarning})
+}
+
+func (h *Handler) startCRMEmailDraftScheduler() {
+	if h == nil || h.DB == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			h.runCRMScheduledEmailDrafts(context.Background())
+			<-ticker.C
+		}
+	}()
+}
+
+func (h *Handler) runCRMScheduledEmailDrafts(ctx context.Context) {
+	rows, err := h.DB.Query(ctx, `SELECT workspace_id, id FROM crm_email_draft WHERE status='scheduled' AND scheduled_send_at IS NOT NULL AND scheduled_send_at <= now() ORDER BY scheduled_send_at ASC LIMIT 20`)
+	if err != nil {
+		slog.Warn("CRM scheduled email query failed", "error", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var workspaceID, draftID pgtype.UUID
+		if err := rows.Scan(&workspaceID, &draftID); err != nil {
+			continue
+		}
+		if _, err := h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sending', scheduled_send_last_attempt_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status='scheduled'`, draftID, workspaceID); err != nil {
+			continue
+		}
+		if _, err := h.sendCRMEmailDraftCore(ctx, workspaceID, draftID); err != nil {
+			slog.Warn("CRM scheduled email send failed", "draft_id", uuidToString(draftID), "workspace_id", uuidToString(workspaceID), "error", err)
+		}
+	}
+}
+
+func (h *Handler) sendCRMEmailDraftCore(ctx context.Context, workspaceID, draftID pgtype.UUID) (crmEmailDraftSendResult, error) {
+	var mailboxID, threadID, accountID, contactID pgtype.UUID
 	var payload crmEmailSendPayload
 	var attachmentsJSON []byte
-	if err := h.DB.QueryRow(r.Context(), `SELECT mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &issueID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
-		writeError(w, http.StatusNotFound, "CRM email draft not found")
-		return
+	if err := h.DB.QueryRow(ctx, `SELECT mailbox_id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, COALESCE(body_html,''), COALESCE(in_reply_to,''), reference_ids, attachments, sent_append_enabled FROM crm_email_draft WHERE id=$1 AND workspace_id=$2 AND status IN ('draft','scheduled','sending','failed')`, draftID, workspaceID).Scan(&mailboxID, &threadID, &accountID, &contactID, &payload.ToEmails, &payload.CcEmails, &payload.BccEmails, &payload.Subject, &payload.BodyText, &payload.BodyHTML, &payload.InReplyTo, &payload.ReferenceIDs, &attachmentsJSON, &payload.AppendToSent); err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
 	if len(attachmentsJSON) > 0 {
 		_ = json.Unmarshal(attachmentsJSON, &payload.Attachments)
 	}
-	mailboxIDString := uuidToString(mailboxID)
-	cfg, ok := h.loadCRMIMAPConfig(w, r, workspaceID, &mailboxIDString)
-	if !ok {
-		return
+	cfg, err := h.loadCRMIMAPConfigForSend(ctx, workspaceID, mailboxID)
+	if err != nil {
+		return crmEmailDraftSendResult{}, err
 	}
 	messageID, rawMessage, sentAt, err := sendCRMEmailProvider(cfg, payload)
 	if err != nil {
-		_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='failed', error_message=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
-		writeError(w, http.StatusBadGateway, "failed to send CRM email draft: "+err.Error())
-		return
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='failed', error_message=$3, scheduled_send_last_attempt_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, err.Error())
+		return crmEmailDraftSendResult{}, err
 	}
 	appendWarning := ""
 	if payload.AppendToSent {
@@ -3536,22 +3564,45 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if !threadID.Valid {
 		mailboxEmail := cleanStringForDB(cfg.Email)
-		if err := h.DB.QueryRow(r.Context(), `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, mailboxEmail).Scan(&threadID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create CRM sent email thread")
-			return
+		if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_thread (workspace_id, account_id, contact_id, subject, mailbox, direction, status, last_message_at, message_count) VALUES ($1,$2,$3,$4,$5,'outbound','open',now(),0) RETURNING id`, workspaceID, accountID, contactID, payload.Subject, mailboxEmail).Scan(&threadID); err != nil {
+			return crmEmailDraftSendResult{}, err
 		}
 	}
-	_, _ = h.DB.Exec(r.Context(), `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
-	_, _ = h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
-	if issueID.Valid {
-		_ = h.addCRMInternalIssueComment(r.Context(), workspaceID, issueID, "绑定邮件草稿已手动修改并发送。\n\n草稿 ID："+uuidToString(draftID)+"\n\n请负责人确认客户跟进已完成后，将此 Issue 状态改为 done。")
-	}
-	if accountID.Valid && shouldAutoRefreshCRMAccountProfile(r.Context(), h.DB, workspaceID) {
-		if _, err := h.regenerateCRMAccountProfile(r.Context(), workspaceID, accountID); err != nil {
+	_, _ = h.DB.Exec(ctx, `INSERT INTO crm_email_message (workspace_id, thread_id, account_id, contact_id, direction, external_message_id, from_email, to_emails, cc_emails, bcc_emails, subject, body_text, body_html, in_reply_to, reference_ids, attachments, sent_append_warning, sent_at) VALUES ($1,$2,$3,$4,'outbound',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17); UPDATE crm_email_thread SET direction='outbound', status='open', mailbox=$18, last_message_at=$17, message_count=message_count+1, updated_at=now() WHERE id=$2 AND workspace_id=$1`, workspaceID, threadID, accountID, contactID, messageID, cfg.Email, payload.ToEmails, payload.CcEmails, payload.BccEmails, payload.Subject, payload.BodyText, cleanOptionalText(&payload.BodyHTML), cleanOptionalText(&payload.InReplyTo), payload.ReferenceIDs, attachmentsJSON, cleanOptionalText(&appendWarning), sentAt, cleanStringForDB(cfg.Email))
+	_, _ = h.DB.Exec(ctx, `UPDATE crm_email_draft SET status='sent', thread_id=$3, sent_at=$5, sent_append_warning=$4, scheduled_send_at=NULL, updated_at=now() WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID, threadID, cleanOptionalText(&appendWarning), sentAt)
+	if accountID.Valid && shouldAutoRefreshCRMAccountProfile(ctx, h.DB, workspaceID) {
+		if _, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID); err != nil {
 			slog.Warn("CRM account profile auto refresh failed after sent email", "account_id", uuidToString(accountID), "error", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": messageID, "sent_append_warning": appendWarning})
+	return crmEmailDraftSendResult{MessageID: messageID, AppendWarning: appendWarning}, nil
+}
+
+func (h *Handler) loadCRMIMAPConfigForSend(ctx context.Context, workspaceID, mailboxID pgtype.UUID) (crmIMAPMailboxConfig, error) {
+	var cfg crmIMAPMailboxConfig
+	var secretRef, ownerType, smtpHost, smtpTLSMode, smtpUsername, smtpSecretRef pgtype.Text
+	var ownerID pgtype.UUID
+	var smtpPort pgtype.Int4
+	if err := h.DB.QueryRow(ctx, `SELECT id, label, email, host, port, tls_mode, username, secret_ref, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref FROM crm_imap_setting WHERE workspace_id=$1 AND id=$2 LIMIT 1`, workspaceID, mailboxID).Scan(&cfg.UUID, &cfg.Label, &cfg.Email, &cfg.Host, &cfg.Port, &cfg.TLSMode, &cfg.Username, &secretRef, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef); err != nil {
+		return crmIMAPMailboxConfig{}, err
+	}
+	cfg.ID = uuidToString(cfg.UUID)
+	cfg.SecretRef = crmTextValue(secretRef)
+	cfg.OwnerType = crmTextValue(ownerType)
+	cfg.OwnerID = uuidToString(ownerID)
+	cfg.SMTPHost = crmTextValue(smtpHost)
+	if smtpPort.Valid {
+		cfg.SMTPPort = smtpPort.Int32
+	}
+	cfg.SMTPTLSMode = crmTextValue(smtpTLSMode)
+	cfg.SMTPUsername = crmTextValue(smtpUsername)
+	cfg.SMTPSecretRef = crmTextValue(smtpSecretRef)
+	return cfg, nil
+}
+
+type crmEmailDraftSendResult struct {
+	MessageID     string
+	AppendWarning string
 }
 
 func crmTextValue(t pgtype.Text) string {

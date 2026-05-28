@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useNavigation } from "../../navigation";
@@ -41,7 +42,7 @@ type AssociationDraft = {
 type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
 type ComposeAttachment = { file_name: string; content_type: string; content: string; size: number };
-type ComposeDraft = { draftId?: string; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; attachments: ComposeAttachment[] };
+type ComposeDraft = { draftId?: string; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -313,6 +314,9 @@ export function CRMEmailsPage() {
     composeHelp: "先保存为草稿，确认内容后从草稿箱发送。",
     cancel: "取消",
     saveDraft: "保存草稿",
+    saveBeforeClose: "关闭前保存草稿？",
+    scheduleSend: "定时发送",
+    scheduleSendAt: "发送时间",
     mailboxSettingsTitle: "CRM 原生邮箱设置",
     mailboxSettingsHelp: "使用 ImapFlow 收信、Nodemailer 发信；Multica 自己显示邮箱工作台。",
     providerLabel: "服务：原生 IMAP/SMTP",
@@ -425,6 +429,9 @@ export function CRMEmailsPage() {
     composeHelp: "Save draft first, then send from Drafts after review.",
     cancel: "Cancel",
     saveDraft: "Save draft",
+    saveBeforeClose: "Save draft before closing?",
+    scheduleSend: "Schedule send",
+    scheduleSendAt: "Send time",
     mailboxSettingsTitle: "CRM native mailbox settings",
     mailboxSettingsHelp: "Use ImapFlow for inbox sync and Nodemailer for sending while Multica owns the mailbox workspace UI.",
     providerLabel: "Provider: native IMAP/SMTP",
@@ -584,6 +591,7 @@ export function CRMEmailsPage() {
     bcc: (draft.bcc_emails ?? []).join(", "),
     subject: draft.subject ?? "",
     body: draft.body_text ?? "",
+    scheduledSendAt: draft.scheduled_send_at ? new Date(draft.scheduled_send_at).toISOString().slice(0, 16) : "",
     attachments: Array.isArray(draft.attachments) ? draft.attachments.map((attachment: any) => ({
       file_name: attachment.file_name || attachment.filename || "attachment",
       content_type: attachment.content_type || "application/octet-stream",
@@ -1007,7 +1015,7 @@ export function CRMEmailsPage() {
   }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
 
   const saveEmailDraft = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (options?: { close?: boolean }) => {
       if (!composeDraft) throw new Error(emailCopy.noDraft);
       const mailboxId = composeDraft.mailboxId || selectedMailbox?.id || mailboxes[0]?.id;
       if (!mailboxId) throw new Error(emailCopy.createMailboxFirst);
@@ -1022,16 +1030,42 @@ export function CRMEmailsPage() {
         subject: composeDraft.subject.trim(),
         body_text: composeDraft.body,
         attachments: composeDraft.attachments.map(({ file_name, content_type, content }) => ({ file_name, content_type, content })),
+        scheduled_send_at: composeDraft.scheduledSendAt ? new Date(composeDraft.scheduledSendAt).toISOString() : null,
       };
-      return composeDraft.draftId ? api.updateCRMEmailDraft(composeDraft.draftId, payload) : api.createCRMEmailDraft(payload);
+      const result = composeDraft.draftId ? await api.updateCRMEmailDraft(composeDraft.draftId, payload) : await api.createCRMEmailDraft(payload);
+      return { ...result, close: options?.close ?? false };
     },
-    onSuccess: () => {
-      setComposeDraft(null);
+    onSuccess: (result) => {
+      if (result.close) setComposeDraft(null);
       setMailboxStatus(emailCopy.draftSaved);
       setActiveFolder("drafts");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     },
   });
+
+  const closeComposeDraft = async () => {
+    if (!composeDraft) return;
+    const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
+    if (!hasContent) {
+      setComposeDraft(null);
+      return;
+    }
+    if (window.confirm(emailCopy.saveBeforeClose ?? emailCopy.saveDraft)) {
+      await saveEmailDraft.mutateAsync({ close: true });
+    } else {
+      setComposeDraft(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!composeDraft) return;
+    const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
+    if (!hasContent || saveEmailDraft.isPending) return;
+    const timer = window.setTimeout(() => {
+      saveEmailDraft.mutate({});
+    }, 30000);
+    return () => window.clearTimeout(timer);
+  }, [composeDraft, saveEmailDraft.isPending]);
 
   const selectedMessage = useMemo<CRMEmailListItem | null>(() => {
     if (activeFolder === "drafts") return null;
@@ -1196,6 +1230,7 @@ export function CRMEmailsPage() {
       bcc: "",
       subject,
       body,
+      scheduledSendAt: "",
       attachments: forwardAttachments,
     });
   };
@@ -1483,18 +1518,21 @@ export function CRMEmailsPage() {
                     <h2 className="text-base font-semibold">{emailCopy.composeTitle}</h2>
                     <p className="mt-1 text-xs text-muted-foreground">{emailCopy.composeHelp}</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
+                  <Button variant="outline" size="sm" onClick={closeComposeDraft}>{emailCopy.cancel}</Button>
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <div className="h-full w-full space-y-3 rounded-lg border bg-card p-4">
-                  <label className="space-y-1 text-sm">
+                <div className="h-full w-full space-y-4 rounded-lg border bg-card p-4">
+                  <label className="block space-y-1.5 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">{emailCopy.mailbox}</span>
-                    <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={composeDraft.mailboxId} onChange={(event) => setComposeDraft({ ...composeDraft, mailboxId: event.target.value })}>
-                      {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.label} · {mailbox.email}</option>)}
-                    </select>
+                    <Select value={composeDraft.mailboxId || ""} onValueChange={(value) => setComposeDraft({ ...composeDraft, mailboxId: value ?? "" })}>
+                      <SelectTrigger className="w-full"><SelectValue placeholder={emailCopy.mailbox} /></SelectTrigger>
+                      <SelectContent>
+                        {mailboxes.filter((mailbox) => Boolean(mailbox.id)).map((mailbox) => <SelectItem key={mailbox.id} value={mailbox.id as string}>{mailbox.label} · {mailbox.email}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
                   </label>
-                  <div className="flex gap-2">
+                  <div className="mt-2 flex gap-2">
                     <Input aria-label={emailCopy.to} placeholder={emailCopy.to} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
                     <Button type="button" variant="outline" onClick={() => setComposeRecipientPickerOpen(true)}>{t(($) => $.emails.link_customer_contact)}</Button>
                   </div>
@@ -1503,6 +1541,10 @@ export function CRMEmailsPage() {
                     <Input aria-label={emailCopy.bcc} placeholder={emailCopy.bcc} value={composeDraft.bcc} onChange={(event) => setComposeDraft({ ...composeDraft, bcc: event.target.value })} />
                   </div>
                   <Input aria-label={emailCopy.subject} placeholder={emailCopy.subject} value={composeDraft.subject} onChange={(event) => setComposeDraft({ ...composeDraft, subject: event.target.value })} />
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-xs font-medium text-muted-foreground">{emailCopy.scheduleSendAt}</span>
+                    <Input type="datetime-local" value={composeDraft.scheduledSendAt} onChange={(event) => setComposeDraft({ ...composeDraft, scheduledSendAt: event.target.value })} />
+                  </label>
                   <div className="rounded-md border bg-blue-50/60 p-3 text-sm dark:bg-blue-950/20">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -1535,9 +1577,10 @@ export function CRMEmailsPage() {
                   </div>
                   {saveEmailDraft.isError && <p className="text-xs text-destructive">{emailCopy.saveDraftError}</p>}
                   <div className="flex justify-end gap-2 border-t pt-3">
-                    <Button variant="outline" onClick={() => setComposeDraft(null)}>{emailCopy.cancel}</Button>
-                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync(); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
-                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate()}>{emailCopy.saveDraft}</Button>
+                    <Button variant="outline" onClick={closeComposeDraft}>{emailCopy.cancel}</Button>
+                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending || sendDraft.isPending} onClick={async () => { const draft = await saveEmailDraft.mutateAsync({}); sendDraft.mutate(draft.id); }}>{emailCopy.send}</Button>
+                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || !composeDraft.scheduledSendAt || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate({ close: true })}>{emailCopy.scheduleSend}</Button>
+                    <Button disabled={!composeDraft.to.trim() || !composeDraft.subject.trim() || !composeDraft.body.trim() || saveEmailDraft.isPending} onClick={() => saveEmailDraft.mutate({ close: true })}>{emailCopy.saveDraft}</Button>
                   </div>
                 </div>
               </div>
