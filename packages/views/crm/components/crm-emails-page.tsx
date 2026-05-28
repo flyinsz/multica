@@ -1294,7 +1294,7 @@ export function CRMEmailsPage() {
       mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
       accountId: selectedThread?.account_id ?? "",
       contactId: selectedThread?.contact_id ?? "",
-      to: mode === "new" || mode === "forward" ? "" : inbound?.from_email ?? "",
+      to: mode === "forward" ? "" : inbound?.from_email ?? "",
       cc: replyAll ? (inbound?.cc_emails ?? []).join(", ") : "",
       bcc: "",
       subject,
