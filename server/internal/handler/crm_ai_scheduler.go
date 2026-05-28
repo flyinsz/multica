@@ -258,8 +258,50 @@ func (h *Handler) refreshProfilesFromRows(ctx context.Context, workspaceID pgtyp
 }
 
 func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
+	return h.runCRMPendingReplyAutomationForThreads(ctx, workspaceID, nil, limit, config)
+}
+
+func (h *Handler) triggerCRMPendingReplyAutomationForThreads(ctx context.Context, workspaceID pgtype.UUID, threadIDs []pgtype.UUID) (map[string]any, error) {
+	if len(threadIDs) == 0 {
+		return map[string]any{"automation_key": "email_pending_reply", "trigger": "imap_import", "candidates": 0, "created": 0}, nil
+	}
+	var enabled bool
+	var maxItems int
+	var config []byte
+	if err := h.DB.QueryRow(ctx, `SELECT COALESCE(enabled,true), COALESCE(max_items_per_run,5), COALESCE(config,'{}'::jsonb) FROM crm_ai_setting WHERE workspace_id=$1 AND automation_key='email_pending_reply'`, workspaceID).Scan(&enabled, &maxItems, &config); err != nil {
+		enabled = true
+		maxItems = len(threadIDs)
+		config = []byte(`{}`)
+	}
+	if !enabled {
+		return map[string]any{"automation_key": "email_pending_reply", "trigger": "imap_import", "enabled": false, "candidates": 0, "created": 0}, nil
+	}
+	if maxItems < len(threadIDs) {
+		maxItems = len(threadIDs)
+	}
+	if maxItems > 100 {
+		maxItems = 100
+	}
+	result, err := h.runCRMPendingReplyAutomationForThreads(ctx, workspaceID, threadIDs, maxItems, json.RawMessage(config))
+	if result != nil {
+		result["trigger"] = "imap_import"
+	}
+	return result, err
+}
+
+func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, workspaceID pgtype.UUID, threadIDs []pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 10
+	}
+	threadIDStrings := make([]string, 0, len(threadIDs))
+	for _, id := range threadIDs {
+		if id.Valid {
+			threadIDStrings = append(threadIDStrings, uuidToString(id))
+		}
+	}
+	var threadFilter []string
+	if len(threadIDStrings) > 0 {
+		threadFilter = threadIDStrings
 	}
 	issueActors, err := h.crmAIIssueActors(ctx, workspaceID, config)
 	if err != nil {
@@ -291,6 +333,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		JOIN latest ON latest.thread_id=t.id
 		LEFT JOIN crm_account a ON a.id=t.account_id AND a.workspace_id=t.workspace_id
 		WHERE t.workspace_id=$1
+		  AND ($3::uuid[] IS NULL OR t.id = ANY($3::uuid[]))
 		  AND COALESCE(t.is_trashed,false)=false
 		  AND COALESCE(latest.is_trashed,false)=false
 		  AND COALESCE(t.status,'open') <> 'archived'
@@ -303,7 +346,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id AND i.status <> 'cancelled'
 		  )
 		ORDER BY COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at) DESC
-		LIMIT $2`, workspaceID, limit)
+		LIMIT $2`, workspaceID, limit, threadFilter)
 	if err != nil {
 		return nil, err
 	}

@@ -3229,6 +3229,7 @@ func (h *Handler) matchCRMEmailContact(ctx context.Context, workspaceID pgtype.U
 func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.UUID, cfg crmIMAPMailboxConfig, folder string, messages []crmIMAPFetchedMessage) (int, int, error) {
 	imported := 0
 	skipped := 0
+	pendingReplyThreadMap := map[string]pgtype.UUID{}
 	for _, message := range messages {
 		externalID := cleanStringForDB(message.MessageID)
 		if externalID == "" {
@@ -3279,7 +3280,19 @@ func (h *Handler) importCRMIMAPMessages(ctx context.Context, workspaceID pgtype.
 				}
 			}
 		}
+		if direction == "inbound" && threadID.Valid {
+			pendingReplyThreadMap[uuidToString(threadID)] = threadID
+		}
 		imported++
+	}
+	if len(pendingReplyThreadMap) > 0 {
+		threadIDs := make([]pgtype.UUID, 0, len(pendingReplyThreadMap))
+		for _, id := range pendingReplyThreadMap {
+			threadIDs = append(threadIDs, id)
+		}
+		if _, err := h.triggerCRMPendingReplyAutomationForThreads(ctx, workspaceID, threadIDs); err != nil {
+			slog.Warn("CRM pending reply trigger after IMAP import failed", "workspace_id", uuidToString(workspaceID), "threads", len(threadIDs), "error", err)
+		}
 	}
 	return imported, skipped, nil
 }
