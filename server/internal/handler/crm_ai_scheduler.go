@@ -378,7 +378,7 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 		if err != nil {
 			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(candidate.AccountID), "error", err)
 		}
-		if parentIssueID.Valid && parentIssueStatus != "done" {
+		if parentIssueID.Valid && parentIssueStatus != "done" && !needsResearch {
 			created++
 			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": "merged_comment"})
 			comment := h.buildCRMPendingReplyMergeComment(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons)
@@ -399,13 +399,19 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 		if issueID.Valid {
 			created++
 			kind := "created"
-			if parentIssueID.Valid && parentIssueStatus == "done" {
-				kind = "created_child_of_done_thread_issue"
+			if parentIssueID.Valid {
+				kind = "created_child_of_active_thread_issue"
+				if parentIssueStatus == "done" {
+					kind = "created_child_of_done_thread_issue"
+				}
 			}
 			if needsResearch {
 				kind = "created_research_required"
-				if parentIssueID.Valid && parentIssueStatus == "done" {
-					kind = "created_research_required_child_of_done_thread_issue"
+				if parentIssueID.Valid {
+					kind = "created_research_required_child_of_active_thread_issue"
+					if parentIssueStatus == "done" {
+						kind = "created_research_required_child_of_done_thread_issue"
+					}
 				}
 			}
 			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": kind})
