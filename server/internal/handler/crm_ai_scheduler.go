@@ -59,6 +59,39 @@ type crmAIIssueActorConfig struct {
 	CreatorID        string `json:"issue_creator_id"`
 	TodoAssigneeType string `json:"issue_todo_assignee_type"`
 	TodoAssigneeID   string `json:"issue_todo_assignee_id"`
+	ResearcherType   string `json:"issue_researcher_assignee_type"`
+	ResearcherID     string `json:"issue_researcher_assignee_id"`
+}
+
+type crmPendingReplyCandidate struct {
+	ThreadID          pgtype.UUID
+	MessageID         pgtype.UUID
+	AccountID         pgtype.UUID
+	ContactID         pgtype.UUID
+	OwnerMemberID     pgtype.UUID
+	OwnerAgentID      pgtype.UUID
+	Subject           string
+	AccountName       string
+	OwnerType         string
+	LatestAt          pgtype.Timestamptz
+	BodyText          string
+	BodyHTML          string
+	Snippet           string
+	HasAccountProfile bool
+}
+
+func (c crmPendingReplyCandidate) missingDraftContextReasons() []string {
+	reasons := []string{}
+	if strings.TrimSpace(c.BodyText) == "" && strings.TrimSpace(c.BodyHTML) == "" && strings.TrimSpace(c.Snippet) == "" {
+		reasons = append(reasons, "未取得有效邮件正文")
+	}
+	if !c.AccountID.Valid && !c.ContactID.Valid {
+		reasons = append(reasons, "未绑定客户或联系人")
+	}
+	if c.AccountID.Valid && !c.HasAccountProfile {
+		reasons = append(reasons, "客户档案为空或未生成")
+	}
+	return reasons
 }
 
 func (s *CRMAIAutoScheduler) runOnce(parent context.Context) {
@@ -235,7 +268,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	rows, err := h.DB.Query(ctx, `
 		WITH latest AS (
 			SELECT DISTINCT ON (m.thread_id)
-				m.thread_id, m.id AS message_id, m.direction, m.subject, m.from_email, m.received_at, m.sent_at, m.created_at, m.is_read, m.is_trashed, m.folder
+				m.thread_id, m.id AS message_id, m.direction, m.subject, m.from_email, m.received_at, m.sent_at, m.created_at, m.is_read, m.is_trashed, m.folder, m.body_text, m.body_html, m.snippet
 			FROM crm_email_message m
 			WHERE m.workspace_id=$1 AND COALESCE(m.is_trashed,false)=false
 			ORDER BY m.thread_id, COALESCE(m.received_at, m.sent_at, m.created_at) DESC
@@ -245,9 +278,15 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		       t.account_id,
 		       t.contact_id,
 		       COALESCE(a.name, ''),
+		       COALESCE(a.owner_type, 'member'),
 		       (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1),
+		       a.owner_agent_id,
 		       COALESCE(latest.subject, t.subject, ''),
-		       COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at)
+		       COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at),
+		       COALESCE(latest.body_text, ''),
+		       COALESCE(latest.body_html, ''),
+		       COALESCE(latest.snippet, ''),
+		       EXISTS (SELECT 1 FROM crm_account_profile p WHERE p.workspace_id=$1 AND p.account_id=t.account_id AND (COALESCE(p.summary,'')<>'' OR p.profile_json <> '{}'::jsonb))
 		FROM crm_email_thread t
 		JOIN latest ON latest.thread_id=t.id
 		LEFT JOIN crm_account a ON a.id=t.account_id AND a.workspace_id=t.workspace_id
@@ -261,7 +300,7 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 		  AND latest.message_id IS NOT NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM issue i
-			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id
+			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id AND i.status <> 'cancelled'
 		  )
 		ORDER BY COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at) DESC
 		LIMIT $2`, workspaceID, limit)
@@ -273,44 +312,62 @@ func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID 
 	createdIssues := []map[string]string{}
 	candidates := 0
 	for rows.Next() {
-		var threadID, messageID, accountID, contactID, ownerMemberID pgtype.UUID
-		var subject, accountName string
-		var lastAt pgtype.Timestamptz
-		if err := rows.Scan(&threadID, &messageID, &accountID, &contactID, &accountName, &ownerMemberID, &subject, &lastAt); err != nil {
+		var candidate crmPendingReplyCandidate
+		if err := rows.Scan(&candidate.ThreadID, &candidate.MessageID, &candidate.AccountID, &candidate.ContactID, &candidate.AccountName, &candidate.OwnerType, &candidate.OwnerMemberID, &candidate.OwnerAgentID, &candidate.Subject, &candidate.LatestAt, &candidate.BodyText, &candidate.BodyHTML, &candidate.Snippet, &candidate.HasAccountProfile); err != nil {
 			continue
 		}
 		candidates++
-		title := stringsTrimForCRM(fmt.Sprintf("回复邮件：%s", subject), 120)
-		messageLink := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(messageID)+"&thread="+uuidToString(threadID))
-		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, ownerMemberID)
-		body := h.buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID, accountName, subject, messageLink, timestampToString(lastAt), reviewerLine)
-		parentIssueID, err := h.findCRMEmailThreadParentIssue(ctx, workspaceID, threadID)
-		if err != nil {
-			slog.Warn("CRM pending reply parent issue lookup failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
+		missingReasons := candidate.missingDraftContextReasons()
+		needsResearch := len(missingReasons) > 0
+		titlePrefix := "回复邮件"
+		if needsResearch {
+			titlePrefix = "调研后回复邮件"
 		}
-		projectID, err := h.ensureCRMAccountProject(ctx, workspaceID, accountID, accountName)
+		title := stringsTrimForCRM(fmt.Sprintf("%s：%s", titlePrefix, candidate.Subject), 120)
+		messageLink := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(candidate.MessageID)+"&thread="+uuidToString(candidate.ThreadID))
+		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, candidate.OwnerType, candidate.OwnerMemberID, candidate.OwnerAgentID)
+		body := h.buildCRMPendingReplyIssueBody(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons)
+		parentIssueID, parentIssueStatus, err := h.findCRMEmailThreadParentIssue(ctx, workspaceID, candidate.ThreadID)
 		if err != nil {
-			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(accountID), "error", err)
+			slog.Warn("CRM pending reply parent issue lookup failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
 		}
-		if parentIssueID.Valid {
+		projectID, err := h.ensureCRMAccountProject(ctx, workspaceID, candidate.AccountID, candidate.AccountName)
+		if err != nil {
+			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(candidate.AccountID), "error", err)
+		}
+		if parentIssueID.Valid && parentIssueStatus != "done" {
 			created++
-			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(threadID), "message_id": uuidToString(messageID), "kind": "merged_comment"})
-			comment := h.buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID, subject, messageLink, timestampToString(lastAt), reviewerLine)
+			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": "merged_comment"})
+			comment := h.buildCRMPendingReplyMergeComment(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons)
 			if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, comment); err != nil {
-				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(threadID), "error", err)
+				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
 			}
 			continue
 		}
-		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, threadID, messageID, parentIssueID, projectID, issueActors)
+		assigneeType, assigneeID := issueActors.TodoAssigneeType, mustParsePgUUID(issueActors.TodoAssigneeID)
+		if needsResearch && issueActors.ResearcherType != "" && issueActors.ResearcherID != "" {
+			assigneeType, assigneeID = issueActors.ResearcherType, mustParsePgUUID(issueActors.ResearcherID)
+		}
+		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, candidate.ThreadID, candidate.MessageID, parentIssueID, projectID, issueActors, assigneeType, assigneeID)
 		if err != nil {
-			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(threadID), "error", err)
+			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
 			continue
 		}
 		if issueID.Valid {
 			created++
-			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "thread_id": uuidToString(threadID), "message_id": uuidToString(messageID), "kind": "created"})
-			if accountID.Valid || contactID.Valid {
-				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$3), contact_id=COALESCE(contact_id,$4), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadID, accountID, contactID)
+			kind := "created"
+			if parentIssueID.Valid && parentIssueStatus == "done" {
+				kind = "created_child_of_done_thread_issue"
+			}
+			if needsResearch {
+				kind = "created_research_required"
+				if parentIssueID.Valid && parentIssueStatus == "done" {
+					kind = "created_research_required_child_of_done_thread_issue"
+				}
+			}
+			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": kind})
+			if candidate.AccountID.Valid || candidate.ContactID.Valid {
+				_, _ = h.DB.Exec(ctx, `UPDATE crm_email_thread SET account_id=COALESCE(account_id,$3), contact_id=COALESCE(contact_id,$4), updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, candidate.ThreadID, candidate.AccountID, candidate.ContactID)
 			}
 		}
 	}
@@ -350,7 +407,7 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		title := stringsTrimForCRM(fmt.Sprintf("跟进客户：%s", name), 120)
 		var ownerMemberID pgtype.UUID
 		_ = h.DB.QueryRow(ctx, `SELECT (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
-		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, ownerMemberID)
+		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, "member", ownerMemberID, pgtype.UUID{})
 		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n3. %s\n4. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), reviewerLine)
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), issueActors)
 		if err == nil && issueID.Valid {
@@ -373,7 +430,18 @@ func stringsTrimForCRM(value string, limit int) string {
 	return string(r[:limit])
 }
 
-func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID, reviewerMemberID pgtype.UUID) string {
+func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.UUID, ownerType string, reviewerMemberID, reviewerAgentID pgtype.UUID) string {
+	if ownerType == "agent" && reviewerAgentID.Valid {
+		var name string
+		if err := h.DB.QueryRow(ctx, `SELECT COALESCE(name,'') FROM agent WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL LIMIT 1`, workspaceID, reviewerAgentID).Scan(&name); err == nil {
+			label := strings.TrimSpace(name)
+			if label == "" {
+				label = uuidToString(reviewerAgentID)
+			}
+			return fmt.Sprintf("邮件草稿审核人：客户所有人 %s（agent:%s）。", label, uuidToString(reviewerAgentID))
+		}
+		return fmt.Sprintf("邮件草稿审核人：客户所有人 agent:%s。", uuidToString(reviewerAgentID))
+	}
 	if !reviewerMemberID.Valid {
 		ownerMemberID, ownerLabel, err := h.crmWorkspaceOwnerMember(ctx, workspaceID)
 		if err != nil || !ownerMemberID.Valid {
@@ -412,15 +480,24 @@ func (h *Handler) crmWorkspaceOwnerMember(ctx context.Context, workspaceID pgtyp
 	return memberID, label, nil
 }
 
-func (h *Handler) buildCRMPendingReplyIssueBody(threadID, messageID, accountID, contactID pgtype.UUID, accountName, subject, messageLink, latestAt, reviewerLine string) string {
+func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandidate, messageLink, latestAt, reviewerLine string, missingReasons []string) string {
+	accountName := candidate.AccountName
 	if strings.TrimSpace(accountName) == "" {
 		accountName = "未绑定客户"
 	}
-	return fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须人工审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：todo 阶段由配置负责人接手；进入审核阶段时显性转交给上述客户所有人。", accountName, subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+	base := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n", accountName, candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt)
+	if len(missingReasons) > 0 {
+		return base + fmt.Sprintf("处理类型：需要 Researcher 先补全上下文，暂不生成回复草稿。\n阻断原因：%s\n\nResearcher 任务：\n1. 基于发件人邮箱、域名、签名、历史邮件、CRM 现有资料调研客户背景。\n2. 判断是否可关联已有客户/联系人；如可关联，给出 account/contact 建议和依据。\n3. 若不能关联，判断是否应创建潜在客户。\n4. 判断是否需要回复；缺上下文不是“不需要回复”的理由。\n5. 输出草稿生成所需上下文；不直接发送邮件。\n\n后续流转：Researcher 返回足够上下文后，按 Multica 原生 issue assignee/status 机制转交 CRM-Assistant/Jarvis 生成草稿；草稿生成后转交客户所有人 review。\n%s", strings.Join(missingReasons, "；"), reviewerLine)
+	}
+	return base + fmt.Sprintf("处理类型：上下文足够，可进入回复草稿生成。\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要要求巡检程序把这些内容展开写进 Issue。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须客户所有人审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：使用 Multica 原生 issue assignee/status 自动流转；不要把全量邮件/客户档案塞进 Issue。", reviewerLine)
 }
 
-func (h *Handler) buildCRMPendingReplyMergeComment(threadID, messageID, accountID, contactID pgtype.UUID, subject, messageLink, latestAt, reviewerLine string) string {
-	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复草稿。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要把历史往来/profile 摘要展开写进 Issue。无客户/联系人绑定、客户资料为空、历史往来为空，不是“不回复”的理由；必须先按潜在客户/真实业务咨询判断。若像潜在客户，应基于当前邮件谨慎回复，不虚构上下文；只有明显 spam/no-reply/系统通知/营销群发才不建议回复。草稿必须中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", subject, uuidToString(threadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, latestAt, reviewerLine)
+func (h *Handler) buildCRMPendingReplyMergeComment(candidate crmPendingReplyCandidate, messageLink, latestAt, reviewerLine string, missingReasons []string) string {
+	contextLine := "上下文足够，可继续草稿生成或更新现有草稿。"
+	if len(missingReasons) > 0 {
+		contextLine = "上下文不足，请先转交 Researcher 补全背景；阻断原因：" + strings.Join(missingReasons, "；")
+	}
+	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复流程。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要把历史往来/profile 摘要展开写进 Issue。缺上下文不是“不回复”的理由；缺上下文时先交 Researcher 深度调研。只有明显 spam/no-reply/系统通知/营销群发才不建议回复。草稿必须中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, contextLine, reviewerLine)
 }
 
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {
@@ -442,19 +519,20 @@ func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, iss
 	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
 }
 
-func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID, threadID pgtype.UUID) (pgtype.UUID, error) {
+func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID, threadID pgtype.UUID) (pgtype.UUID, string, error) {
 	var issueID pgtype.UUID
+	var status string
 	err := h.DB.QueryRow(ctx, `
-		SELECT i.id
+		SELECT i.id, COALESCE(i.status, '')
 		FROM crm_email_thread_issue_link l
 		JOIN issue i ON i.id=l.issue_id AND i.workspace_id=$1
 		WHERE l.thread_id=$2 AND i.origin_type='crm_ai' AND i.parent_issue_id IS NULL AND i.status <> 'cancelled'
-		ORDER BY i.created_at ASC
-		LIMIT 1`, workspaceID, threadID).Scan(&issueID)
+		ORDER BY CASE WHEN i.status NOT IN ('done','cancelled') THEN 0 WHEN i.status='done' THEN 1 ELSE 2 END, i.created_at ASC
+		LIMIT 1`, workspaceID, threadID).Scan(&issueID, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return pgtype.UUID{}, nil
+		return pgtype.UUID{}, "", nil
 	}
-	return issueID, err
+	return issueID, status, err
 }
 
 func (h *Handler) crmAgentByName(ctx context.Context, workspaceID pgtype.UUID, name string) (pgtype.UUID, error) {
@@ -493,10 +571,9 @@ func (h *Handler) ensureCRMAccountProject(ctx context.Context, workspaceID, acco
 	return projectID, err
 }
 
-func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID, actors crmAIIssueActorConfig) (pgtype.UUID, error) {
+func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID, actors crmAIIssueActorConfig, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {
 	var issueID pgtype.UUID
 	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
-	assigneeType, assigneeID := actors.TodoAssigneeType, mustParsePgUUID(actors.TodoAssigneeID)
 	err := h.DB.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
@@ -540,11 +617,22 @@ func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID,
 		cfg.TodoAssigneeType = actorType
 		cfg.TodoAssigneeID = uuidToString(actorID)
 	}
+	if cfg.ResearcherType == "" || cfg.ResearcherID == "" {
+		if agentID, err := h.crmAgentByName(ctx, workspaceID, "Researcher"); err == nil && agentID.Valid {
+			cfg.ResearcherType = "agent"
+			cfg.ResearcherID = uuidToString(agentID)
+		}
+	}
 	if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.CreatorType, cfg.CreatorID); err != nil {
 		return cfg, fmt.Errorf("invalid CRM AI issue creator: %w", err)
 	}
 	if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.TodoAssigneeType, cfg.TodoAssigneeID); err != nil {
 		return cfg, fmt.Errorf("invalid CRM AI issue todo assignee: %w", err)
+	}
+	if cfg.ResearcherType != "" || cfg.ResearcherID != "" {
+		if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.ResearcherType, cfg.ResearcherID); err != nil {
+			return cfg, fmt.Errorf("invalid CRM AI issue researcher assignee: %w", err)
+		}
 	}
 	return cfg, nil
 }
