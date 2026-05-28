@@ -22,7 +22,7 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@multica/ui/components/ui/select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useNavigation } from "../../navigation";
@@ -42,7 +42,7 @@ type AssociationDraft = {
 type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
 type ComposeAttachment = { file_name: string; content_type: string; content: string; size: number };
-type ComposeDraft = { draftId?: string; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
+type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -317,6 +317,12 @@ export function CRMEmailsPage() {
     saveBeforeClose: "关闭前保存草稿？",
     scheduleSend: "定时发送",
     scheduleSendAt: "发送时间",
+    aiPromptLabel: "调整要求",
+    aiPromptPlaceholder: "例如：语气更正式、补充付款方式、用英文回复、强调交期需确认…",
+    aiSuggest: "生成建议",
+    aiGenerating: "生成中...",
+    aiAssistantTitle: "AI 回复辅助",
+    aiAssistantHelp: "可输入要求，AI 会结合客户资料和邮件往来调整建议。",
     mailboxSettingsTitle: "CRM 原生邮箱设置",
     mailboxSettingsHelp: "使用 ImapFlow 收信、Nodemailer 发信；Multica 自己显示邮箱工作台。",
     providerLabel: "服务：原生 IMAP/SMTP",
@@ -432,6 +438,12 @@ export function CRMEmailsPage() {
     saveBeforeClose: "Save draft before closing?",
     scheduleSend: "Schedule send",
     scheduleSendAt: "Send time",
+    aiPromptLabel: "Adjustment prompt",
+    aiPromptPlaceholder: "Example: make it more formal, reply in English, mention payment terms, confirm delivery needs checking…",
+    aiSuggest: "Generate suggestion",
+    aiGenerating: "Generating...",
+    aiAssistantTitle: "AI reply assistant",
+    aiAssistantHelp: "Add instructions; AI will adjust suggestions using customer profile and email history.",
     mailboxSettingsTitle: "CRM native mailbox settings",
     mailboxSettingsHelp: "Use ImapFlow for inbox sync and Nodemailer for sending while Multica owns the mailbox workspace UI.",
     providerLabel: "Provider: native IMAP/SMTP",
@@ -531,6 +543,7 @@ export function CRMEmailsPage() {
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(initialDraftId);
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
+  const [aiReplyPrompt, setAIReplyPrompt] = useState("");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
@@ -583,6 +596,7 @@ export function CRMEmailsPage() {
 
   const draftToCompose = (draft: any): ComposeDraft => ({
     draftId: draft.id,
+    threadId: draft.thread_id ?? null,
     mailboxId: draft.mailbox_id ?? selectedMailbox?.id ?? "",
     accountId: draft.account_id ?? "",
     contactId: draft.contact_id ?? "",
@@ -1021,7 +1035,7 @@ export function CRMEmailsPage() {
       if (!mailboxId) throw new Error(emailCopy.createMailboxFirst);
       const payload = {
         mailbox_id: mailboxId,
-        thread_id: selectedThread?.id ?? null,
+        thread_id: composeDraft.threadId === undefined ? (selectedThread?.id ?? null) : composeDraft.threadId,
         account_id: composeDraft.accountId || null,
         contact_id: composeDraft.contactId || null,
         to_emails: composeDraft.to.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean),
@@ -1036,26 +1050,33 @@ export function CRMEmailsPage() {
       return { ...result, close: options?.close ?? false };
     },
     onSuccess: (result) => {
-      if (result.close) setComposeDraft(null);
+      if (result.close) {
+        setComposeDraft(null);
+      } else if (result.id) {
+        setComposeDraft((draft) => draft ? { ...draft, draftId: result.id } : draft);
+      }
       setMailboxStatus(emailCopy.draftSaved);
       setActiveFolder("drafts");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     },
   });
 
-  const closeComposeDraft = async () => {
-    if (!composeDraft) return;
+  const closeComposeDraft = async (): Promise<boolean> => {
+    if (!composeDraft) return true;
     const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
     if (!hasContent) {
       setComposeDraft(null);
-      return;
+      return true;
     }
     if (window.confirm(emailCopy.saveBeforeClose ?? emailCopy.saveDraft)) {
       await saveEmailDraft.mutateAsync({ close: true });
     } else {
       setComposeDraft(null);
     }
+    return true;
   };
+
+  const leaveComposeIfNeeded = async (): Promise<boolean> => closeComposeDraft();
 
   useEffect(() => {
     if (!composeDraft) return;
@@ -1065,6 +1086,30 @@ export function CRMEmailsPage() {
       saveEmailDraft.mutate({});
     }, 30000);
     return () => window.clearTimeout(timer);
+  }, [composeDraft, saveEmailDraft.isPending]);
+
+  useEffect(() => {
+    if (!composeDraft) return;
+    const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
+    if (!hasContent) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const clickCapture = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || anchor.target === "_blank" || anchor.href === window.location.href) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void closeComposeDraft().then(() => { window.location.href = anchor.href; });
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", clickCapture, true);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      document.removeEventListener("click", clickCapture, true);
+    };
   }, [composeDraft, saveEmailDraft.isPending]);
 
   const selectedMessage = useMemo<CRMEmailListItem | null>(() => {
@@ -1171,11 +1216,12 @@ export function CRMEmailsPage() {
 
   const aiReplySuggestion = useMutation({
     mutationFn: () => api.suggestCRMEmailDraftReply({
-      thread_id: selectedThread?.id ?? null,
+      thread_id: composeDraft?.threadId === undefined ? (selectedThread?.id ?? null) : composeDraft.threadId,
       account_id: composeDraft?.accountId || selectedThread?.account_id || null,
       contact_id: composeDraft?.contactId || selectedThread?.contact_id || null,
       to_emails: composeDraft?.to.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean) ?? [],
       subject: composeDraft?.subject ?? selectedThread?.subject ?? "",
+      prompt: aiReplyPrompt.trim(),
     }),
   });
 
@@ -1189,7 +1235,29 @@ export function CRMEmailsPage() {
     });
   };
 
-  const openComposeDraft = (mode: "new" | "reply" | "reply-all" | "forward" = "reply") => {
+  const openComposeDraft = async (mode: "new" | "reply" | "reply-all" | "forward" = "reply") => {
+    if (!(await leaveComposeIfNeeded())) return;
+    setAIReplyPrompt("");
+    if (mode === "new") {
+      setSelectedThreadIds([]);
+      setSelectedMessageId(null);
+      setSelectedDraftId(null);
+      setActiveFolder("inbox");
+      setComposeDraft({
+        threadId: null,
+        mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
+        accountId: "",
+        contactId: "",
+        to: "",
+        cc: "",
+        bcc: "",
+        subject: "",
+        body: "",
+        scheduledSendAt: "",
+        attachments: [],
+      });
+      return;
+    }
     if ((mode === "reply" || mode === "reply-all") && selectedThread?.id) {
       const existing = visibleMailboxDrafts.find((draft: any) => draft.thread_id === selectedThread.id && draft.status !== "sent" && draft.status !== "discarded");
       if (existing && window.confirm("该邮件线程已有未发送回复草稿，是否从已有草稿继续编辑？")) {
@@ -1222,6 +1290,7 @@ export function CRMEmailsPage() {
         .map((a: any, index: number) => ({ file_name: a.file_name || a.filename || `attachment-${index + 1}`, content_type: a.content_type || "application/octet-stream", content: a.content, size: a.size_bytes || a.size || 0 }))
       : [];
     setComposeDraft({
+      threadId: selectedThread?.id ?? null,
       mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
       accountId: selectedThread?.account_id ?? "",
       contactId: selectedThread?.contact_id ?? "",
@@ -1402,7 +1471,8 @@ export function CRMEmailsPage() {
                 key={folder}
                 type="button"
                 className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-muted ${activeFolder === folder ? "bg-muted font-medium" : ""}`}
-                onClick={() => {
+                onClick={async () => {
+                  if (!(await leaveComposeIfNeeded())) return;
                   setActiveFolder(folder);
                   setSearch("");
                   setQuickFilter("all");
@@ -1522,13 +1592,15 @@ export function CRMEmailsPage() {
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <div className="h-full w-full space-y-4 rounded-lg border bg-card p-4">
+                <div className="min-h-full w-full space-y-4 rounded-lg border bg-card p-4">
                   <label className="block space-y-1.5 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">{emailCopy.mailbox}</span>
                     <Select value={composeDraft.mailboxId || ""} onValueChange={(value) => setComposeDraft({ ...composeDraft, mailboxId: value ?? "" })}>
-                      <SelectTrigger className="w-full"><SelectValue placeholder={emailCopy.mailbox} /></SelectTrigger>
+                      <SelectTrigger className="w-full">
+                        <span className="min-w-0 flex-1 truncate text-left">{mailboxes.find((mailbox) => mailbox.id === composeDraft.mailboxId)?.label || mailboxes.find((mailbox) => mailbox.id === composeDraft.mailboxId)?.email || emailCopy.mailbox}</span>
+                      </SelectTrigger>
                       <SelectContent>
-                        {mailboxes.filter((mailbox) => Boolean(mailbox.id)).map((mailbox) => <SelectItem key={mailbox.id} value={mailbox.id as string}>{mailbox.label} · {mailbox.email}</SelectItem>)}
+                        {mailboxes.filter((mailbox) => Boolean(mailbox.id)).map((mailbox) => <SelectItem key={mailbox.id} value={mailbox.id as string}>{mailbox.label || mailbox.email}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </label>
@@ -1548,11 +1620,15 @@ export function CRMEmailsPage() {
                   <div className="rounded-md border bg-blue-50/60 p-3 text-sm dark:bg-blue-950/20">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <div className="font-medium">AI 回复辅助</div>
-                        <div className="text-xs text-muted-foreground">自动读取客户资料和邮件往来，生成中文参考和客户语言回复。</div>
+                        <div className="font-medium">{emailCopy.aiAssistantTitle}</div>
+                        <div className="text-xs text-muted-foreground">{emailCopy.aiAssistantHelp}</div>
                       </div>
-                      <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending} onClick={() => aiReplySuggestion.mutate()}>{aiReplySuggestion.isPending ? "生成中..." : "生成建议"}</Button>
+                      <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending} onClick={() => aiReplySuggestion.mutate()}>{aiReplySuggestion.isPending ? emailCopy.aiGenerating : emailCopy.aiSuggest}</Button>
                     </div>
+                    <label className="mt-3 block space-y-1.5 text-xs font-medium text-muted-foreground">
+                      <span>{emailCopy.aiPromptLabel}</span>
+                      <textarea className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm font-normal text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.aiPromptPlaceholder} value={aiReplyPrompt} onChange={(event) => setAIReplyPrompt(event.target.value)} />
+                    </label>
                     {aiReplySuggestion.data ? (
                       <div className="mt-3 grid gap-3 lg:grid-cols-2">
                         <div className="rounded border bg-background p-3">
