@@ -630,21 +630,21 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	err := h.DB.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
-			SELECT $1, $2, $3, 'todo', 'medium', $6, $7, $8, $9, $10, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $12
+			SELECT $1, $2, $3, 'todo', 'medium', $5, $6, $7, $8, $9, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $11
 			WHERE NOT EXISTS (
 				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4
 			)
 			RETURNING id
 		), linked AS (
 			INSERT INTO crm_email_thread_issue_link (thread_id, issue_id)
-			SELECT $11, id FROM inserted
+			SELECT $10, id FROM inserted
 			ON CONFLICT DO NOTHING
 		), thread_update AS (
 			UPDATE crm_email_thread
-			SET issue_id=COALESCE(NULLIF($10, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
-			WHERE workspace_id=$1 AND id=$11 AND EXISTS (SELECT 1 FROM inserted)
+			SET issue_id=COALESCE(NULLIF($9, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
+			WHERE workspace_id=$1 AND id=$10 AND EXISTS (SELECT 1 FROM inserted)
 		)
-		SELECT id FROM inserted`, workspaceID, title, body, messageID, creatorType, assigneeType, assigneeID, creatorType, creatorID, parentIssueID, threadID, projectID).Scan(&issueID)
+		SELECT id FROM inserted`, workspaceID, title, body, messageID, assigneeType, assigneeID, creatorType, creatorID, parentIssueID, threadID, projectID).Scan(&issueID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, nil
 	}
