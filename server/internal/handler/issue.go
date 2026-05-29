@@ -1574,7 +1574,7 @@ func (h *Handler) maybeCreateCRMReplyDraftIssueAfterResearchDone(ctx context.Con
 		return nil
 	}
 	var exists bool
-	if err := h.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai_research_handoff' AND origin_id=$2 AND status <> 'cancelled')`, issue.WorkspaceID, issue.ID).Scan(&exists); err != nil {
+	if err := h.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$2 AND status <> 'cancelled')`, issue.WorkspaceID, issue.ID).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
@@ -1597,8 +1597,8 @@ func (h *Handler) maybeCreateCRMReplyDraftIssueAfterResearchDone(ctx context.Con
 	err = h.DB.QueryRow(ctx, `
 		WITH inserted AS (
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
-			SELECT $1, $2, $3, 'todo', 'medium', $4, $5, $6, $7, $8, 'crm_ai_research_handoff', $8, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $10
-			WHERE NOT EXISTS (SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai_research_handoff' AND origin_id=$8 AND status <> 'cancelled')
+			SELECT $1, $2, $3, 'todo', 'medium', $4, $5, $6, $7, $8, 'crm_ai', $8, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $10
+			WHERE NOT EXISTS (SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$8 AND status <> 'cancelled')
 			RETURNING id
 		), linked AS (
 			INSERT INTO crm_email_thread_issue_link (thread_id, issue_id)
