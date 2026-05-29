@@ -82,8 +82,8 @@ type crmPendingReplyCandidate struct {
 
 func (c crmPendingReplyCandidate) missingDraftContextReasons() []string {
 	reasons := []string{}
-	if strings.TrimSpace(c.BodyText) == "" && strings.TrimSpace(c.BodyHTML) == "" && strings.TrimSpace(c.Snippet) == "" {
-		reasons = append(reasons, "未取得有效邮件正文")
+	if strings.TrimSpace(c.BodyText) == "" && strings.TrimSpace(c.BodyHTML) == "" {
+		reasons = append(reasons, "未取得有效邮件正文（snippet/标题不足以直接生成草稿）")
 	}
 	if !c.AccountID.Valid && !c.ContactID.Valid {
 		reasons = append(reasons, "未绑定客户或联系人")
@@ -388,8 +388,12 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			continue
 		}
 		assigneeType, assigneeID := issueActors.TodoAssigneeType, mustParsePgUUID(issueActors.TodoAssigneeID)
-		if needsResearch && issueActors.ResearcherType != "" && issueActors.ResearcherID != "" {
-			assigneeType, assigneeID = issueActors.ResearcherType, mustParsePgUUID(issueActors.ResearcherID)
+		if needsResearch {
+			if issueActors.ResearcherType != "" && issueActors.ResearcherID != "" {
+				assigneeType, assigneeID = issueActors.ResearcherType, mustParsePgUUID(issueActors.ResearcherID)
+			} else if adminID, _, err := h.crmWorkspaceOwnerMember(ctx, workspaceID); err == nil && adminID.Valid {
+				assigneeType, assigneeID = "member", adminID
+			}
 		}
 		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, candidate.ThreadID, candidate.MessageID, parentIssueID, projectID, issueActors, assigneeType, assigneeID)
 		if err != nil {
@@ -496,7 +500,7 @@ func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.U
 		if err != nil || !ownerMemberID.Valid {
 			return "邮件草稿审核人：客户没有负责人，请交由工作区 owner/admin 审核。"
 		}
-		return fmt.Sprintf("邮件草稿审核人：客户没有负责人，请交由工作区 owner %s（member:%s）审核。", ownerLabel, uuidToString(ownerMemberID))
+		return fmt.Sprintf("邮件草稿审核人：客户没有负责人，必须交由工作区 owner/admin %s（member:%s）人工审核；不得交由 CRM-Assistant/Jarvis 自审。", ownerLabel, uuidToString(ownerMemberID))
 	}
 	var name, email string
 	if err := h.DB.QueryRow(ctx, `SELECT COALESCE(u.name,''), COALESCE(u.email,'') FROM member m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND m.id=$2 LIMIT 1`, workspaceID, reviewerMemberID).Scan(&name, &email); err != nil {
