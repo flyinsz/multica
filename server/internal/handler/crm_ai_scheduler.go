@@ -258,7 +258,16 @@ func (h *Handler) refreshProfilesFromRows(ctx context.Context, workspaceID pgtyp
 }
 
 func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
-	return h.runCRMPendingReplyAutomationForThreads(ctx, workspaceID, nil, limit, config)
+	result, err := h.runCRMPendingReplyAutomationForThreads(ctx, workspaceID, nil, limit, config)
+	if err != nil {
+		return result, err
+	}
+	if handoff, handoffErr := h.processCompletedCRMResearchChildIssues(ctx, workspaceID, limit); handoffErr != nil {
+		slog.Warn("CRM research child handoff scan failed", "workspace_id", uuidToString(workspaceID), "error", handoffErr)
+	} else {
+		result["research_handoffs"] = handoff
+	}
+	return result, nil
 }
 
 func (h *Handler) triggerCRMPendingReplyAutomationForThreads(ctx context.Context, workspaceID pgtype.UUID, threadIDs []pgtype.UUID) (map[string]any, error) {
@@ -361,12 +370,7 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 		}
 		candidates++
 		missingReasons := candidate.missingDraftContextReasons()
-		needsResearch := len(missingReasons) > 0
-		titlePrefix := "回复邮件"
-		if needsResearch {
-			titlePrefix = "调研后回复邮件"
-		}
-		title := stringsTrimForCRM(fmt.Sprintf("%s：%s", titlePrefix, candidate.Subject), 120)
+		title := stringsTrimForCRM(fmt.Sprintf("CRM 邮件待回复：%s", candidate.Subject), 120)
 		messageLink := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(candidate.MessageID)+"&thread="+uuidToString(candidate.ThreadID))
 		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, candidate.OwnerType, candidate.OwnerMemberID, candidate.OwnerAgentID)
 		body := h.buildCRMPendingReplyIssueBody(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons)
@@ -378,12 +382,19 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 		if err != nil {
 			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(candidate.AccountID), "error", err)
 		}
-		if parentIssueID.Valid && parentIssueStatus != "done" && !needsResearch {
+		if parentIssueID.Valid && parentIssueStatus != "done" {
 			created++
 			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": "merged_comment"})
 			comment := h.buildCRMPendingReplyMergeComment(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons)
 			if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, comment); err != nil {
 				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
+			}
+			if h.TaskService != nil {
+				if issue, err := h.Queries.GetIssue(ctx, parentIssueID); err == nil && h.shouldEnqueueOnComment(ctx, issue) {
+					if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+						slog.Warn("CRM pending reply parent enqueue failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "error", err)
+					}
+				}
 			}
 			continue
 		}
@@ -586,6 +597,67 @@ func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID
 		return pgtype.UUID{}, "", nil
 	}
 	return issueID, status, err
+}
+
+func (h *Handler) processCompletedCRMResearchChildIssues(ctx context.Context, workspaceID pgtype.UUID, limit int) (map[string]any, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := h.DB.Query(ctx, `
+		SELECT child.id, child.parent_issue_id
+		FROM issue child
+		JOIN issue parent ON parent.id=child.parent_issue_id AND parent.workspace_id=child.workspace_id
+		WHERE child.workspace_id=$1
+		  AND child.status='done'
+		  AND child.origin_type='crm_ai'
+		  AND child.parent_issue_id IS NOT NULL
+		  AND parent.origin_type='crm_ai'
+		  AND parent.parent_issue_id IS NULL
+		  AND COALESCE(child.title,'') ILIKE '调研:%'
+		  AND parent.status NOT IN ('done','cancelled')
+		  AND NOT EXISTS (
+			  SELECT 1 FROM comment c
+			  WHERE c.workspace_id=$1 AND c.issue_id=parent.id
+			    AND c.content LIKE '%' || child.id::text || '%'
+			    AND c.content LIKE '%Researcher 调研已完成%'
+		  )
+		ORDER BY child.updated_at ASC
+		LIMIT $2`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	processed := 0
+	woken := 0
+	items := []map[string]string{}
+	for rows.Next() {
+		var childID pgtype.UUID
+		var parentID pgtype.UUID
+		if err := rows.Scan(&childID, &parentID); err != nil {
+			return nil, err
+		}
+		comment := fmt.Sprintf("Researcher 调研已完成：%s\n\n请 CRM-Assistant 基于该子任务的调研结论，在邮件草稿区创建/更新同语种 reply draft。父 issue 评论区只需写草稿链接、草稿语言、草稿立场和关键取舍。", uuidToString(childID))
+		if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentID, comment); err != nil {
+			slog.Warn("CRM research handoff comment failed", "workspace_id", uuidToString(workspaceID), "parent_issue_id", uuidToString(parentID), "child_issue_id", uuidToString(childID), "error", err)
+			continue
+		}
+		processed++
+		if h.TaskService != nil {
+			if parent, err := h.Queries.GetIssue(ctx, parentID); err == nil && h.shouldEnqueueOnComment(ctx, parent) {
+				if _, err := h.TaskService.EnqueueTaskForIssue(ctx, parent); err != nil {
+					slog.Warn("CRM research handoff parent enqueue failed", "workspace_id", uuidToString(workspaceID), "parent_issue_id", uuidToString(parentID), "child_issue_id", uuidToString(childID), "error", err)
+				} else {
+					woken++
+				}
+			}
+		}
+		items = append(items, map[string]string{"parent_issue_id": uuidToString(parentID), "research_issue_id": uuidToString(childID)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"processed": processed, "woken": woken, "items": items}, nil
 }
 
 func (h *Handler) crmAgentByName(ctx context.Context, workspaceID pgtype.UUID, name string) (pgtype.UUID, error) {
