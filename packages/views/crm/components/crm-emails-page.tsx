@@ -25,6 +25,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@multica/ui/components/ui/select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
+import { IssueDetail } from "../../issues/components";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 
@@ -56,12 +57,24 @@ function inferMailboxPreset(email: string) {
   return null;
 }
 
+function decodeEmailHTML(value: string) {
+  if (!value.includes("&lt;") && !value.includes("&gt;")) return value;
+  return value
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/gi, "&");
+}
+
 function looksLikeHTML(value?: string | null) {
-  return Boolean(value && /<\s*(html|body|div|p|br|table|span|a|img|strong|em|ul|ol|li)\b/i.test(value));
+  return Boolean(value && /<\s*(html|body|div|p|br|table|span|a|img|strong|em|ul|ol|li)\b/i.test(decodeEmailHTML(value)));
 }
 
 function emailHTMLBody(message: { body_html?: string | null; body_text?: string | null }) {
-  return message.body_html || (looksLikeHTML(message.body_text) ? message.body_text || "" : "");
+  const html = message.body_html ? decodeEmailHTML(message.body_html) : "";
+  const text = message.body_text ? decodeEmailHTML(message.body_text) : "";
+  return html || (looksLikeHTML(text) ? text : "");
 }
 
 function emailHTMLBodyWithCID(message: { body_html?: string | null; body_text?: string | null; attachments?: Array<{ content_id?: string; content_type?: string; content?: string }> | null }) {
@@ -102,7 +115,7 @@ function EmailHTMLFrame({ html }: { html: string }) {
   return (
     <iframe
       title="Email HTML body"
-      sandbox=""
+      sandbox="allow-popups allow-popups-to-escape-sandbox"
       referrerPolicy="no-referrer"
       className="h-[28rem] w-full rounded-md border bg-white"
       srcDoc={emailSandboxDocument(html)}
@@ -537,6 +550,7 @@ export function CRMEmailsPage() {
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>(initialThreadId ? [initialThreadId] : []);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(initialMessageId);
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
+  const [issueDialogId, setIssueDialogId] = useState<string | null>(null);
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
@@ -1736,7 +1750,7 @@ export function CRMEmailsPage() {
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.linked_customer)} value={selectedAccount?.name ?? t(($) => $.emails.no_customer)} onClick={selectedAccount ? () => setDetailDialog({ type: "account", account: selectedAccount }) : undefined} />
                   <AssociationChip icon={<UserRound className="size-4" />} label={t(($) => $.emails.linked_contact)} value={selectedContact?.name ?? t(($) => $.emails.no_contact)} onClick={selectedContact ? () => setDetailDialog({ type: "contact", contact: selectedContact }) : undefined} />
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.related_project)} value={selectedProject?.title ?? t(($) => $.emails.no_project_link)} />
-                  <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssues.length ? selectedIssues.map((issue) => issue.identifier).join(", ") : t(($) => $.emails.no_issue_link)} />
+                  <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssues.length ? selectedIssues.map((issue) => issue.identifier).join(", ") : t(($) => $.emails.no_issue_link)} onClick={selectedIssueIds.length ? () => setIssueDialogId(selectedIssueIds[0]!) : undefined} />
                   {selectedAccount && (
                     <Button variant="ghost" size="sm" onClick={() => navigation.push(paths.crmCustomerDetail(selectedAccount.id))}>
                       {t(($) => $.emails.open_customer)} <ArrowRight className="ml-1 size-3" />
@@ -1841,7 +1855,7 @@ export function CRMEmailsPage() {
       </div>
 
       <Dialog open={detailDialog !== null} onOpenChange={(open) => !open && setDetailDialog(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           {detailDialog?.type === "account" && (
             <>
               <DialogHeader>
@@ -1853,12 +1867,19 @@ export function CRMEmailsPage() {
                 <DetailRow label={t(($) => $.customers.rating)} value={t(($) => $.ratings[detailDialog.account.rating])} />
                 <DetailRow label={t(($) => $.customers.priority)} value={t(($) => $.priorities[detailDialog.account.priority])} />
                 <DetailRow label={t(($) => $.customers.country)} value={detailDialog.account.country_name || detailDialog.account.country} />
+                <DetailRow label={t(($) => $.customers.region)} value={detailDialog.account.region} />
+                <DetailRow label={t(($) => $.customers.city)} value={detailDialog.account.city} />
+                <DetailRow label={t(($) => $.customers.industry)} value={detailDialog.account.industry} />
                 <DetailRow label={t(($) => $.customers.website)} value={detailDialog.account.website} />
+                <DetailRow label={t(($) => $.customers.last_contacted_at)} value={messageTime(detailDialog.account.last_contacted_at)} />
                 <DetailRow label={t(($) => $.customers.next_follow_up_at)} value={messageTime(detailDialog.account.next_follow_up_at)} />
+                <DetailRow label={t(($) => $.customers.source)} value={detailDialog.account.source} />
+                <DetailRow label="Contacts" value={String(detailDialog.account.contact_count ?? 0)} />
               </div>
+              {detailDialog.account.notes ? <div className="rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">{detailDialog.account.notes}</div> : null}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setDetailDialog(null)}>{t(($) => $.actions.cancel)}</Button>
-                <Button onClick={() => navigation.push(paths.crmCustomerDetail(detailDialog.account.id))}>{t(($) => $.emails.open_customer)}</Button>
+                <Button onClick={() => window.open(paths.crmCustomerDetail(detailDialog.account.id), "_blank", "noopener,noreferrer")}>客户详情</Button>
               </DialogFooter>
             </>
           )}
@@ -1875,9 +1896,25 @@ export function CRMEmailsPage() {
                 <DetailRow label={t(($) => $.contacts.job_title)} value={detailDialog.contact.job_title || detailDialog.contact.role_title} />
                 <DetailRow label={t(($) => $.contacts.department)} value={detailDialog.contact.department} />
                 <DetailRow label={t(($) => $.contacts.preferred_language)} value={detailDialog.contact.preferred_language || detailDialog.contact.language} />
+                <DetailRow label="Timezone" value={detailDialog.contact.timezone} />
+                <DetailRow label="Status" value={(detailDialog.contact as any).status} />
+                <DetailRow label="Source" value={(detailDialog.contact as any).source} />
+                <DetailRow label="Last contacted" value={messageTime(detailDialog.contact.last_contacted_at)} />
+                <DetailRow label="Next follow-up" value={messageTime((detailDialog.contact as any).next_follow_up_at)} />
               </div>
+              {detailDialog.contact.notes ? <div className="rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">{detailDialog.contact.notes}</div> : null}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDetailDialog(null)}>{t(($) => $.actions.cancel)}</Button>
+                <Button onClick={() => window.open(paths.crmCustomerDetail(detailDialog.contact.account_id || "") + `#contact-${detailDialog.contact.id}`, "_blank", "noopener,noreferrer")}>联系人详情</Button>
+              </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={issueDialogId !== null} onOpenChange={(open) => !open && setIssueDialogId(null)}>
+        <DialogContent className="h-[88vh] max-w-6xl overflow-hidden p-0">
+          {issueDialogId ? <IssueDetail issueId={issueDialogId} defaultSidebarOpen={false} /> : null}
         </DialogContent>
       </Dialog>
 

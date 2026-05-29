@@ -1402,6 +1402,18 @@ func (h *Handler) getCRMAccount(w http.ResponseWriter, r *http.Request, accountI
 	return row, true
 }
 
+func (h *Handler) defaultCRMAccountOwner(ctx context.Context, workspaceID pgtype.UUID) (pgtype.UUID, error) {
+	var owner pgtype.UUID
+	err := h.DB.QueryRow(ctx, `
+		SELECT user_id
+		FROM member
+		WHERE workspace_id = $1 AND role IN ('owner', 'admin')
+		ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, created_at ASC
+		LIMIT 1
+	`, workspaceID).Scan(&owner)
+	return owner, err
+}
+
 func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {
@@ -1451,6 +1463,12 @@ func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if ownerType == "member" {
 		ownerAgentID = pgtype.UUID{}
+		if !ownerMemberID.Valid && !ownerID.Valid {
+			if adminOwner, err := h.defaultCRMAccountOwner(r.Context(), workspaceID); err == nil && adminOwner.Valid {
+				ownerMemberID = adminOwner
+				ownerID = adminOwner
+			}
+		}
 	} else {
 		ownerMemberID = pgtype.UUID{}
 	}

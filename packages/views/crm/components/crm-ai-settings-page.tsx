@@ -180,11 +180,14 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const [limit, setLimit] = useState(20);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [...crmKeys.aiSettings(wsId), "history", automationKey, limit],
     queryFn: () => api.listCRMAIHistory({ automation_key: automationKey, days: 30, limit, offset: 0 }),
     select: (res) => ({ ...res, items: res.items as CRMAIHistoryItem[] }),
     enabled: Boolean(wsId),
+    refetchInterval: autoRefresh ? 5000 : false,
+    refetchIntervalInBackground: false,
   });
   const items = data?.items ?? [];
   const latest = items[0];
@@ -192,7 +195,13 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-10">
       <section className="rounded-lg border bg-card p-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium"><Clock className="size-4" />{info.title} · 最近一次</div>
+        <div className="mb-3 flex items-center justify-between gap-3 text-sm font-medium">
+          <span className="inline-flex items-center gap-2"><Clock className="size-4" />{info.title} · 最近一次</span>
+          <label className="inline-flex items-center gap-2 text-xs font-normal text-muted-foreground">
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
+            自动刷新
+          </label>
+        </div>
         {isLoading ? <Skeleton className="h-16 w-full" /> : latest ? (
           <a href={paths.issueDetail(latest.id)} className="block rounded-md border bg-background p-3 hover:bg-muted/40">
             <div className="flex items-center justify-between gap-3">
