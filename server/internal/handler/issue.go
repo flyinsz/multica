@@ -15,7 +15,6 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1516,103 +1515,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 	}
 
-	if statusChanged && issue.Status == "done" {
-		if err := h.maybeCreateCRMReplyDraftIssueAfterResearchDone(r.Context(), prevIssue, issue); err != nil {
-			slog.Warn("CRM research handoff trigger failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
-		}
-	}
-
 	writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) maybeCreateCRMReplyDraftIssueAfterResearchDone(ctx context.Context, prevIssue, issue db.Issue) error {
-	if prevIssue.Status == "done" || issue.OriginType.String != "crm_ai" || !issue.OriginID.Valid {
-		return nil
-	}
-	if !strings.Contains(issue.Description.String, "需要 Researcher") && !strings.Contains(issue.Description.String, "Researcher 任务") {
-		return nil
-	}
-	var linkedThreadID pgtype.UUID
-	var messageID pgtype.UUID
-	var accountID pgtype.UUID
-	var contactID pgtype.UUID
-	var accountName string
-	var ownerType string
-	var ownerMemberID pgtype.UUID
-	var ownerAgentID pgtype.UUID
-	var subject string
-	var latestAt pgtype.Timestamptz
-	err := h.DB.QueryRow(ctx, `
-		SELECT t.id,
-		       latest.id,
-		       COALESCE(t.account_id, latest.account_id) AS account_id,
-		       latest.contact_id,
-		       COALESCE(a.name,'') AS account_name,
-		       COALESCE(a.owner_type,'') AS owner_type,
-		       (SELECT m.id FROM member m WHERE m.workspace_id=t.workspace_id AND m.user_id=a.owner_member_id LIMIT 1) AS owner_member_id,
-		       a.owner_agent_id,
-		       COALESCE(NULLIF(t.subject,''), NULLIF(latest.subject,''), '(无主题)') AS subject,
-		       COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.updated_at) AS latest_at
-		FROM crm_email_thread_issue_link l
-		JOIN crm_email_thread t ON t.id=l.thread_id AND t.workspace_id=$1
-		JOIN LATERAL (
-			SELECT m.* FROM crm_email_message m
-			WHERE m.workspace_id=t.workspace_id AND m.thread_id=t.id AND COALESCE(m.is_trashed,false)=false
-			ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
-			LIMIT 1
-		) latest ON true
-		LEFT JOIN crm_account a ON a.id=COALESCE(t.account_id, latest.account_id) AND a.workspace_id=t.workspace_id
-		WHERE l.issue_id=$2 AND latest.direction='inbound'
-		LIMIT 1`, issue.WorkspaceID, issue.ID).Scan(&linkedThreadID, &messageID, &accountID, &contactID, &accountName, &ownerType, &ownerMemberID, &ownerAgentID, &subject, &latestAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if linkedThreadID == (pgtype.UUID{}) || !linkedThreadID.Valid {
-		return nil
-	}
-	var exists bool
-	if err := h.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$2 AND status <> 'cancelled')`, issue.WorkspaceID, issue.ID).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	settingConfig := json.RawMessage(`{}`)
-	_ = h.DB.QueryRow(ctx, `SELECT COALESCE(config,'{}'::jsonb) FROM crm_ai_setting WHERE workspace_id=$1 AND automation_key='email_pending_reply'`, issue.WorkspaceID).Scan(&settingConfig)
-	actors, err := h.crmAIIssueActors(ctx, issue.WorkspaceID, settingConfig)
-	if err != nil {
-		return err
-	}
-	projectID, _ := h.ensureCRMAccountProject(ctx, issue.WorkspaceID, accountID, accountName)
-	reviewerLine := h.crmDraftReviewerLine(ctx, issue.WorkspaceID, ownerType, ownerMemberID, ownerAgentID)
-	messageLink := h.crmWorkspaceAppURL(ctx, issue.WorkspaceID, "/crm/emails?message="+uuidToString(messageID)+"&thread="+uuidToString(linkedThreadID))
-	title := stringsTrimForCRM("生成回复草稿："+subject, 120)
-	body := fmt.Sprintf("Researcher 已完成客户背景调研，现在必须进入邮件回复草稿生成。\n\n来源 Researcher Issue：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n处理要求：\n1. 先阅读来源 Researcher Issue 的结论、评论和附件，再通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来。\n2. 如果 MCP 当前线程返回空消息，不得据此判定“不需要回复”；必须使用最新邮件ID、thread link、发件人、标题、签名和 Researcher 结论继续生成草稿或明确请求管理员补数据。\n3. 缺上下文不是“不回复”的理由；只有明显 spam/no-reply/系统通知/营销群发才可建议不回复。\n4. 草稿必须中文撰写，邮件正文先写正式回复，再按系统中回复邮件逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s", uuidToString(issue.ID), uuidToString(linkedThreadID), uuidToString(messageID), uuidToString(accountID), uuidToString(contactID), messageLink, timestampToString(latestAt), reviewerLine)
-	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
-	assigneeType, assigneeID := actors.TodoAssigneeType, mustParsePgUUID(actors.TodoAssigneeID)
-	var newIssueID pgtype.UUID
-	err = h.DB.QueryRow(ctx, `
-		WITH inserted AS (
-			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
-			SELECT $1, $2, $3, 'todo', 'medium', $4, $5, $6, $7, $8, 'crm_ai', $8, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $10
-			WHERE NOT EXISTS (SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$8 AND status <> 'cancelled')
-			RETURNING id
-		), linked AS (
-			INSERT INTO crm_email_thread_issue_link (thread_id, issue_id)
-			SELECT $9, id FROM inserted
-			ON CONFLICT DO NOTHING
-		)
-		SELECT id FROM inserted`, issue.WorkspaceID, title, body, assigneeType, assigneeID, creatorType, creatorID, issue.ID, linkedThreadID, projectID).Scan(&newIssueID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return h.addCRMInternalIssueComment(ctx, issue.WorkspaceID, issue.ID, fmt.Sprintf("Researcher 任务已完成，已自动创建回复草稿生成子任务：%s", uuidToString(newIssueID)))
 }
 
 // validateAssigneePair verifies the (assignee_type, assignee_id) pair refers
