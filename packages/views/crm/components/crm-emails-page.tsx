@@ -43,7 +43,9 @@ type AssociationDraft = {
 type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
 type ComposeAttachment = { file_name: string; content_type: string; content: string; size: number };
+type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
+type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -551,6 +553,7 @@ export function CRMEmailsPage() {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(initialMessageId);
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
   const [issueDialogId, setIssueDialogId] = useState<string | null>(null);
+  const [issuePickerOpen, setIssuePickerOpen] = useState(false);
   const [associationDraft, setAssociationDraft] = useState<AssociationDraft | null>(null);
   const [emailLinkDraft, setEmailLinkDraft] = useState<EmailLinkDraft | null>(null);
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | null>(null);
@@ -558,6 +561,7 @@ export function CRMEmailsPage() {
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const [aiReplyPrompt, setAIReplyPrompt] = useState("");
+  const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
@@ -1236,7 +1240,30 @@ export function CRMEmailsPage() {
       to_emails: composeDraft?.to.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean) ?? [],
       subject: composeDraft?.subject ?? selectedThread?.subject ?? "",
       prompt: aiReplyPrompt.trim(),
+      mode: composeDraft?.threadId ? "reply" : "new",
     }),
+  });
+
+  const createAIDraft = useMutation({
+    mutationFn: () => api.suggestCRMEmailDraftReply({
+      thread_id: composeDraft?.threadId === undefined ? (selectedThread?.id ?? null) : composeDraft.threadId,
+      account_id: composeDraft?.accountId || selectedThread?.account_id || null,
+      contact_id: composeDraft?.contactId || selectedThread?.contact_id || null,
+      to_emails: composeDraft?.to.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean) ?? [],
+      subject: composeDraft?.subject ?? selectedThread?.subject ?? "",
+      prompt: aiDraftDialog?.prompt.trim() ?? "",
+      mode: aiDraftDialog?.mode ?? "reply",
+    }),
+    onSuccess: (data: any) => {
+      setComposeDraft((draft) => draft ? {
+        ...draft,
+        to: Array.isArray(data.to_emails) && data.to_emails.length ? data.to_emails.join(", ") : draft.to,
+        cc: Array.isArray(data.cc_emails) && data.cc_emails.length ? data.cc_emails.join(", ") : draft.cc,
+        subject: data.subject || draft.subject,
+        body: data.customer_reply || draft.body,
+      } : draft);
+      setAIDraftDialog(null);
+    },
   });
 
   const openAssociationDialog = (suggestion?: CRMEmailThreadAssociationSuggestion) => {
@@ -1249,9 +1276,10 @@ export function CRMEmailsPage() {
     });
   };
 
-  const openComposeDraft = async (mode: "new" | "reply" | "reply-all" | "forward" = "reply") => {
+  const openComposeDraft = async (mode: ComposeMode = "reply") => {
     if (!(await leaveComposeIfNeeded())) return;
     setAIReplyPrompt("");
+    setAIDraftDialog(null);
     if (mode === "new") {
       setSelectedThreadIds([]);
       setSelectedMessageId(null);
@@ -1270,6 +1298,7 @@ export function CRMEmailsPage() {
         scheduledSendAt: "",
         attachments: [],
       });
+      setAIDraftDialog({ mode: "new", prompt: "" });
       return;
     }
     if ((mode === "reply" || mode === "reply-all") && selectedThread?.id) {
@@ -1316,6 +1345,9 @@ export function CRMEmailsPage() {
       scheduledSendAt: "",
       attachments: forwardAttachments,
     });
+    if (mode === "reply" || mode === "reply-all") {
+      setAIDraftDialog({ mode, prompt: "" });
+    }
   };
 
   const updateAssociation = useMutation({
@@ -1750,7 +1782,7 @@ export function CRMEmailsPage() {
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.linked_customer)} value={selectedAccount?.name ?? t(($) => $.emails.no_customer)} onClick={selectedAccount ? () => setDetailDialog({ type: "account", account: selectedAccount }) : undefined} />
                   <AssociationChip icon={<UserRound className="size-4" />} label={t(($) => $.emails.linked_contact)} value={selectedContact?.name ?? t(($) => $.emails.no_contact)} onClick={selectedContact ? () => setDetailDialog({ type: "contact", contact: selectedContact }) : undefined} />
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.related_project)} value={selectedProject?.title ?? t(($) => $.emails.no_project_link)} />
-                  <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssues.length ? selectedIssues.map((issue) => issue.identifier).join(", ") : t(($) => $.emails.no_issue_link)} onClick={selectedIssueIds.length ? () => setIssueDialogId(selectedIssueIds[0]!) : undefined} />
+                  <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssues.length ? selectedIssues.map((issue) => issue.identifier).join(", ") : t(($) => $.emails.no_issue_link)} onClick={selectedIssueIds.length ? () => { if (selectedIssueIds.length === 1) setIssueDialogId(selectedIssueIds[0]!); else setIssuePickerOpen(true); } : undefined} />
                   {selectedAccount && (
                     <Button variant="ghost" size="sm" onClick={() => navigation.push(paths.crmCustomerDetail(selectedAccount.id))}>
                       {t(($) => $.emails.open_customer)} <ArrowRight className="ml-1 size-3" />
@@ -1909,6 +1941,23 @@ export function CRMEmailsPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={issuePickerOpen} onOpenChange={setIssuePickerOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>选择关联 Issue</DialogTitle>
+            <DialogDescription>当前邮件同时关联多个 issue，请选择要打开的 issue。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {selectedIssues.map((issue) => (
+              <button key={issue.id} type="button" className="w-full rounded-md border bg-background p-3 text-left text-sm hover:bg-muted" onClick={() => { setIssuePickerOpen(false); setIssueDialogId(issue.id); }}>
+                <div className="font-medium">{issue.identifier || issue.title}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{issue.title}</div>
+              </button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -2181,6 +2230,33 @@ export function CRMEmailsPage() {
             <Button variant="outline" onClick={() => { setSettingsOpen(false); setMailboxStatus(null); }}>{t(($) => $.actions.cancel)}</Button>
             <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.label || !mailboxDraft.email || !mailboxDraft.host} onClick={() => testMailbox.mutate()}>{emailCopy.checkProvider}</Button>
             <Button disabled={saveMailbox.isPending || previewMailbox.isPending || importPreviewMessages.isPending || !mailboxDraft.label || !mailboxDraft.email} onClick={() => void saveAndImportMailbox()}>{emailCopy.saveAndImport}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={aiDraftDialog !== null} onOpenChange={(open) => { if (!open && !createAIDraft.isPending) setAIDraftDialog(null); }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{aiDraftDialog?.mode === "new" ? "AI 写邮件" : "AI 创建回复草稿"}</DialogTitle>
+            <DialogDescription>输入邮件要求，CRM agent 会结合客户信息、往来历史生成收件人和邮件内容。</DialogDescription>
+          </DialogHeader>
+          <textarea
+            className="min-h-32 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            placeholder="例如：用英文礼貌回复，说明我们会核对规格和交期；或：给这个客户写一封跟进报价邮件"
+            value={aiDraftDialog?.prompt ?? ""}
+            disabled={createAIDraft.isPending}
+            onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
+          />
+          {createAIDraft.isPending ? (
+            <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+              <RefreshCw className="size-4 animate-spin" />
+              正在生成收件人和邮件内容…
+            </div>
+          ) : null}
+          {createAIDraft.isError ? <p className="text-sm text-destructive">AI 草稿生成失败，请稍后重试。</p> : null}
+          <DialogFooter>
+            <Button variant="outline" disabled={createAIDraft.isPending} onClick={() => setAIDraftDialog(null)}>取消</Button>
+            <Button disabled={createAIDraft.isPending} onClick={() => createAIDraft.mutate()}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -5154,13 +5154,17 @@ type CRMEmailDraftAISuggestRequest struct {
 	ToEmails  []string `json:"to_emails"`
 	Subject   string   `json:"subject"`
 	Prompt    string   `json:"prompt"`
+	Mode      string   `json:"mode"`
 }
 
 type CRMEmailDraftAISuggestResponse struct {
-	Chinese          string `json:"chinese"`
-	CustomerLanguage string `json:"customer_language"`
-	CustomerReply    string `json:"customer_reply"`
-	Source           string `json:"source"`
+	Chinese          string   `json:"chinese"`
+	CustomerLanguage string   `json:"customer_language"`
+	CustomerReply    string   `json:"customer_reply"`
+	ToEmails         []string `json:"to_emails,omitempty"`
+	CcEmails         []string `json:"cc_emails,omitempty"`
+	Subject          string   `json:"subject,omitempty"`
+	Source           string   `json:"source"`
 }
 
 func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Request) {
@@ -5188,6 +5192,11 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	contactLanguage := ""
 	if contactID.Valid {
 		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(email,''), COALESCE(language,'') FROM crm_contact WHERE workspace_id=$1 AND id=$2`, workspaceID, contactID).Scan(&contactName, &contactEmail, &contactLanguage)
+	}
+	for _, email := range req.ToEmails {
+		if contactEmail == "" && strings.TrimSpace(email) != "" {
+			contactEmail = strings.TrimSpace(email)
+		}
 	}
 	messages := []string{}
 	if threadID.Valid {
@@ -5218,7 +5227,11 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{Chinese: zh, CustomerLanguage: language, CustomerReply: zh, Source: "fallback"})
 		return
 	}
-	prompt := "你是外贸CRM邮件回复助手。根据客户资料和邮件往来，输出JSON：{\"chinese\":\"中文回复建议\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"客户语言回复建议\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件；3) 中文建议用于内部参考；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务；6) 如果用户提供调整要求，必须按要求调整，但不得违背事实边界。\n\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n主题：" + req.Subject + "\n用户调整要求：" + strings.TrimSpace(req.Prompt) + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = "reply"
+	}
+	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件和用户要求；3) 中文参考用于内部查看；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务；6) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；7) mode=new 时主动推断收件人和主题，无法确定则留空；8) mode=reply/reply-all 时结合客户往来历史和客户信息回复。\n\n模式：" + mode + "\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
 	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
 	body, _ := json.Marshal(payload)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
@@ -5256,6 +5269,12 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	}
 	if parsed.CustomerLanguage == "" {
 		parsed.CustomerLanguage = language
+	}
+	if parsed.Subject == "" {
+		parsed.Subject = req.Subject
+	}
+	if len(parsed.ToEmails) == 0 && contactEmail != "" {
+		parsed.ToEmails = []string{contactEmail}
 	}
 	parsed.Source = source
 	writeJSON(w, http.StatusOK, parsed)
