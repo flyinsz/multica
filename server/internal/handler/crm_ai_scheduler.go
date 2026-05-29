@@ -413,15 +413,6 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 					kind = "created_child_of_done_thread_issue"
 				}
 			}
-			if needsResearch {
-				kind = "created_research_required"
-				if parentIssueID.Valid {
-					kind = "created_research_required_child_of_active_thread_issue"
-					if parentIssueStatus == "done" {
-						kind = "created_research_required_child_of_done_thread_issue"
-					}
-				}
-			}
 			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": kind})
 			if h.TaskService != nil {
 				if issue, err := h.Queries.GetIssue(ctx, issueID); err == nil && h.shouldEnqueueAgentTask(ctx, issue) {
