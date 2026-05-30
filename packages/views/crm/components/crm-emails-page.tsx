@@ -581,6 +581,7 @@ export function CRMEmailsPage() {
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const [aiReplyPrompt, setAIReplyPrompt] = useState("");
+  const [, setAIAssistantContextKey] = useState("");
   const [aiAssistantTurns, setAIAssistantTurns] = useState<AIAssistantTurn[]>([]);
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -658,12 +659,18 @@ export function CRMEmailsPage() {
     setSelectedMessageId(null);
     setSelectedDraftId(draft.id ?? null);
     setComposeDraft(null);
+    setAIAssistantContextKey("");
+    setAIAssistantTurns([]);
+    setAIReplyPrompt("");
   };
 
   const openDraftInComposer = (draft: any) => {
     setSelectedThreadIds([]);
     setSelectedMessageId(null);
     setSelectedDraftId(draft.id ?? null);
+    setAIAssistantContextKey(`draft:${draft.id ?? "new"}`);
+    setAIAssistantTurns([]);
+    setAIReplyPrompt("");
     setComposeDraft(draftToCompose(draft));
   };
 
@@ -1254,20 +1261,46 @@ export function CRMEmailsPage() {
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 
+  const summarizeAIAssistantContext = (draft = composeDraft) => {
+    const lines = [
+      selectedAccount ? `客户：${selectedAccount.name}${selectedAccount.industry ? ` · ${selectedAccount.industry}` : ""}${selectedAccount.country ? ` · ${selectedAccount.country}` : ""}` : "",
+      selectedContact ? `联系人：${selectedContact.name}${selectedContact.email ? ` <${selectedContact.email}>` : ""}` : "",
+      selectedThread ? `往来主题：${selectedThread.subject || draft?.subject || "—"}` : draft?.subject ? `主题：${draft.subject}` : "",
+      messages.length ? `往来记录：共 ${messages.length} 封，最近一封 ${messageTime((messages[messages.length - 1] as any)?.sent_at || (messages[messages.length - 1] as any)?.received_at)}` : "",
+    ].filter(Boolean);
+    return lines.join("\n");
+  };
+
+  const resetAIAssistantForContext = (key: string, draft?: ComposeDraft | null) => {
+    setAIAssistantContextKey(key);
+    setAIReplyPrompt("");
+    const summary = summarizeAIAssistantContext(draft ?? composeDraft);
+    setAIAssistantTurns(summary ? [{ id: `summary-${Date.now()}`, role: "assistant", content: summary }] : []);
+  };
+
+  const buildAIAssistantPrompt = (prompt: string) => {
+    const history = aiAssistantTurns
+      .filter((turn) => turn.role === "user" || turn.role === "assistant")
+      .map((turn) => `${turn.role === "user" ? "用户修改意见" : "上一版AI建议"}:\n${turn.content}`)
+      .join("\n\n");
+    return [history ? `请结合以下对话历史继续修改，不要割裂处理。\n${history}` : "", `本轮用户要求：\n${prompt}`].filter(Boolean).join("\n\n");
+  };
+
   const aiReplyPayload = (prompt = aiReplyPrompt.trim(), draft = composeDraft) => ({
       thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
       account_id: draft?.accountId || selectedThread?.account_id || null,
       contact_id: draft?.contactId || selectedThread?.contact_id || null,
       to_emails: splitEmailList(draft?.to),
       subject: draft?.subject ?? selectedThread?.subject ?? "",
-      prompt,
+      prompt: buildAIAssistantPrompt(prompt),
       mode: draft?.threadId ? "reply" : "new",
   });
 
   const aiReplySuggestion = useMutation({
     mutationFn: (payload?: ReturnType<typeof aiReplyPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiReplyPayload()),
     onMutate: (payload) => {
-      const text = String(payload?.prompt || aiReplyPrompt.trim() || "继续优化邮件内容");
+      const raw = String(payload?.prompt || aiReplyPrompt.trim() || "继续优化邮件内容");
+      const text = raw.includes("本轮用户要求：") ? raw.split("本轮用户要求：").pop()?.trim() || raw : raw;
       setAIAssistantTurns((items) => [...items, { id: `user-${Date.now()}`, role: "user", content: text }]);
     },
     onSuccess: (data: any) => {
@@ -1331,8 +1364,8 @@ export function CRMEmailsPage() {
         ...draft,
         to: Array.isArray(data.to_emails) && data.to_emails.length ? data.to_emails.join(", ") : draft.to,
         cc: Array.isArray(data.cc_emails) && data.cc_emails.length ? data.cc_emails.join(", ") : draft.cc,
-        subject: data.subject || draft.subject,
-        body: data.customer_reply || draft.body,
+        subject: draft.threadId ? draft.subject : (data.subject || draft.subject),
+        body: data.customer_reply ? appendMailboxSignature(data.customer_reply, mailboxes.find((mailbox) => mailbox.id === draft.mailboxId)?.signature) : draft.body,
       } : draft);
       setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese: data.chinese || "", language: data.customer_language || "" }]);
       setAIDraftDialog(null);
@@ -1362,7 +1395,6 @@ export function CRMEmailsPage() {
 
   const openComposeDraft = async (mode: ComposeMode = "reply") => {
     if (!(await leaveComposeIfNeeded())) return;
-    setAIReplyPrompt("");
     setAIDraftDialog(null);
     const activeMailbox = selectedMailbox ?? mailboxes[0] ?? null;
     if (mode === "new") {
@@ -1370,7 +1402,7 @@ export function CRMEmailsPage() {
       setSelectedMessageId(null);
       setSelectedDraftId(null);
       setActiveFolder("inbox");
-      setComposeDraft({
+      const draft: ComposeDraft = {
         threadId: null,
         mailboxId: activeMailbox?.id ?? "",
         accountId: "",
@@ -1382,7 +1414,9 @@ export function CRMEmailsPage() {
         body: appendMailboxSignature("", activeMailbox?.signature),
         scheduledSendAt: "",
         attachments: [],
-      });
+      };
+      setComposeDraft(draft);
+      resetAIAssistantForContext(`new:${Date.now()}`, draft);
       setAIDraftDialog({ mode: "new", prompt: "" });
       return;
     }
@@ -1418,7 +1452,7 @@ export function CRMEmailsPage() {
         .filter((a: any) => typeof a.content === "string" && a.content.trim().length > 0)
         .map((a: any, index: number) => ({ file_name: a.file_name || a.filename || `attachment-${index + 1}`, content_type: a.content_type || "application/octet-stream", content: a.content, size: a.size_bytes || a.size || 0 }))
       : [];
-    setComposeDraft({
+    const draft: ComposeDraft = {
       threadId: selectedThread?.id ?? null,
       mailboxId: activeMailbox?.id ?? "",
       accountId: selectedThread?.account_id ?? "",
@@ -1430,7 +1464,9 @@ export function CRMEmailsPage() {
       body: appendMailboxSignature(body, activeMailbox?.signature),
       scheduledSendAt: "",
       attachments: forwardAttachments,
-    });
+    };
+    setComposeDraft(draft);
+    resetAIAssistantForContext(`${mode}:${selectedThread?.id ?? selectedMessageId ?? Date.now()}`, draft);
     if (mode === "reply" || mode === "reply-all") {
       setAIDraftDialog({ mode, prompt: "" });
     }
@@ -1755,7 +1791,7 @@ export function CRMEmailsPage() {
                         <div className="font-medium">{emailCopy.aiAssistantTitle}</div>
                         <div className="text-xs text-muted-foreground">{emailCopy.aiAssistantHelp}</div>
                       </div>
-                      <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending || createAIDraft.isPending} onClick={() => aiReplySuggestion.mutate(aiReplyPayload())}>{aiReplySuggestion.isPending || createAIDraft.isPending ? emailCopy.aiGenerating : emailCopy.aiSuggest}</Button>
+
                     </div>
                     <div className="mt-3 max-h-80 space-y-3 overflow-y-auto rounded-md border bg-background p-3">
                       {aiAssistantTurns.length ? aiAssistantTurns.map((turn) => turn.role === "user" ? (
@@ -1764,7 +1800,7 @@ export function CRMEmailsPage() {
                         </div>
                       ) : (
                         <div key={turn.id} className="group relative mr-auto max-w-[92%] rounded-2xl border bg-muted/40 px-3 py-2 text-sm">
-                          <Button type="button" size="sm" className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setComposeDraft({ ...composeDraft, body: turn.content || composeDraft.body })}>采纳</Button>
+                          <Button type="button" size="sm" className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setComposeDraft({ ...composeDraft, body: turn.content ? appendMailboxSignature(turn.content, mailboxes.find((mailbox) => mailbox.id === composeDraft.mailboxId)?.signature) : composeDraft.body })}>采纳</Button>
                           {turn.language ? <div className="mb-1 text-[11px] text-muted-foreground">客户语言：{turn.language}</div> : null}
                           <div className="whitespace-pre-wrap pr-14 leading-6">{turn.content}</div>
                         </div>
