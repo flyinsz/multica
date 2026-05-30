@@ -1058,13 +1058,13 @@ export function CRMEmailsPage() {
   });
 
   useEffect(() => {
-    if (!wsId || composeDraft || activeFolder === "drafts" || !selectedMailbox?.id) return;
+    if (!wsId || activeFolder === "drafts" || !selectedMailbox?.id) return;
     const timer = window.setInterval(() => {
       if (refreshMailbox.isPending) return;
       refreshMailbox.mutate();
     }, 20000);
     return () => window.clearInterval(timer);
-  }, [activeFolder, composeDraft, refreshMailbox, selectedMailbox?.id, wsId]);
+  }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
 
   const saveEmailDraft = useMutation({
     mutationFn: async (options?: { close?: boolean }) => {
