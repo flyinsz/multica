@@ -9,7 +9,7 @@ import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
 import { useModalStore } from "@multica/core/modals";
 import { crmAccountListOptions, crmContactListOptions, crmEmailMessageListOptions, crmEmailThreadListOptions, crmKeys } from "@multica/core/crm/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { CRMAccount, CRMContact, CRMEmailListCounts, CRMEmailListItem, CRMEmailMessage, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPPreviewMessage, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
+import type { CRMAccount, CRMContact, CRMEmailListCounts, CRMEmailListItem, CRMEmailMessage, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { normalizeLocale } from "../geo";
@@ -566,9 +566,6 @@ export function CRMEmailsPage() {
   const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
   const [mailboxDraft, setMailboxDraft] = useState<MailboxDraft>(emptyMailboxDraft);
   const [mailboxStatus, setMailboxStatus] = useState<string | null>(null);
-  const [previewMessages, setPreviewMessages] = useState<CRMIMAPPreviewMessage[]>([]);
-  const [selectedPreviewUIDs, setSelectedPreviewUIDs] = useState<string[]>([]);
-  const [importRangeDays, setImportRangeDays] = useState(30);
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>(initialThreadId ? [initialThreadId] : []);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(initialMessageId);
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
@@ -831,38 +828,46 @@ export function CRMEmailsPage() {
     ["unlinked", "未关联", folderCounts.unlinked ?? 0],
   ];
 
+  const mailboxPayload = () => ({
+    id: mailboxDraft.id,
+    label: mailboxDraft.label,
+    email: mailboxDraft.email,
+    host: mailboxDraft.host,
+    port: Number(mailboxDraft.port) || 993,
+    tls_mode: mailboxDraft.tls_mode,
+    username: mailboxDraft.username || mailboxDraft.email,
+    secret_ref: mailboxDraft.secret_ref || null,
+    secret: mailboxDraft.secret || null,
+    sync_enabled: mailboxDraft.sync_enabled,
+    owner_type: mailboxDraft.owner_type || null,
+    owner_id: mailboxDraft.owner_id || null,
+    smtp_host: mailboxDraft.smtp_host || null,
+    smtp_port: Number(mailboxDraft.smtp_port) || null,
+    smtp_tls_mode: mailboxDraft.smtp_tls_mode || null,
+    smtp_username: mailboxDraft.smtp_username || null,
+    smtp_secret_ref: mailboxDraft.smtp_secret_ref || null,
+    smtp_secret: mailboxDraft.smtp_secret || null,
+    signature: mailboxDraft.signature,
+  });
+
   const saveMailbox = useMutation({
-    mutationFn: () => api.upsertCRMIMAPSetting({
-      id: mailboxDraft.id,
-      label: mailboxDraft.label,
-      email: mailboxDraft.email,
-      host: mailboxDraft.host,
-      port: Number(mailboxDraft.port) || 993,
-      tls_mode: mailboxDraft.tls_mode,
-      username: mailboxDraft.username || mailboxDraft.email,
-      secret_ref: mailboxDraft.secret_ref || null,
-      secret: mailboxDraft.secret || null,
-      sync_enabled: mailboxDraft.sync_enabled,
-      owner_type: mailboxDraft.owner_type || null,
-      owner_id: mailboxDraft.owner_id || null,
-      smtp_host: mailboxDraft.smtp_host || null,
-      smtp_port: Number(mailboxDraft.smtp_port) || null,
-      smtp_tls_mode: mailboxDraft.smtp_tls_mode || null,
-      smtp_username: mailboxDraft.smtp_username || null,
-      smtp_secret_ref: mailboxDraft.smtp_secret_ref || null,
-      smtp_secret: mailboxDraft.smtp_secret || null,
-      signature: mailboxDraft.signature,
-    }),
-    onSuccess: (setting) => {
+    mutationFn: () => api.upsertCRMIMAPSetting(mailboxPayload()),
+    onSuccess: async (setting) => {
       setMailboxDraft(mailboxToDraft(setting));
+      setSelectedMailboxId(setting.id);
       setMailboxStatus(t(($) => $.emails.mailbox_saved));
-      queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
+      await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
+      setSettingsOpen(false);
     },
   });
 
   const testMailbox = useMutation({
     mutationFn: async () => {
-      const setting = mailboxDraft.id ? null : await saveMailbox.mutateAsync();
+      const setting = mailboxDraft.id ? null : await api.upsertCRMIMAPSetting(mailboxPayload());
+      if (setting) {
+        setMailboxDraft(mailboxToDraft(setting));
+        setSelectedMailboxId(setting.id);
+      }
       return api.testCRMIMAPSetting(setting?.id ?? mailboxDraft.id ?? "");
     },
     onSuccess: (result) => {
@@ -877,56 +882,10 @@ export function CRMEmailsPage() {
       setMailboxStatus("Mailbox deleted.");
       setSelectedMailboxId((current) => current === mailboxId ? null : current);
       setMailboxDraft(emptyMailboxDraft);
-      setPreviewMessages([]);
-      setSelectedPreviewUIDs([]);
       await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
       await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
     },
   });
-
-  const previewMailbox = useMutation({
-    mutationFn: () => api.previewCRMIMAP({ mailbox_id: mailboxDraft.id, folder: "INBOX", limit: 500, range_days: importRangeDays }),
-    onSuccess: (result) => {
-      setPreviewMessages(result.messages);
-      setSelectedPreviewUIDs(result.messages.map((message) => message.uid));
-      setMailboxStatus(emailCopy.fetched(result.note, result.total));
-    },
-  });
-
-  const importPreviewMessages = useMutation({
-    mutationFn: () => api.importCRMIMAP({ mailbox_id: mailboxDraft.id, folder: "INBOX", uids: selectedPreviewUIDs }),
-    onSuccess: (result) => {
-      setMailboxStatus(emailCopy.imported(result.imported, result.skipped));
-      setPreviewMessages([]);
-      setSelectedPreviewUIDs([]);
-      queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
-    },
-  });
-
-  const saveAndImportMailbox = async () => {
-    setMailboxStatus(emailCopy.savingImporting);
-    try {
-      const setting = await saveMailbox.mutateAsync();
-      setSelectedMailboxId(setting.id);
-      const preview = await api.previewCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", limit: 500, range_days: importRangeDays });
-      const uids = preview.messages.map((message) => message.uid);
-      setPreviewMessages(preview.messages);
-      setSelectedPreviewUIDs(uids);
-      if (!uids.length) {
-        setMailboxStatus(emailCopy.mailboxSavedNoMessages);
-        setSettingsOpen(false);
-        return;
-      }
-      const result = await api.importCRMIMAP({ mailbox_id: setting.id, folder: "INBOX", uids });
-      setMailboxStatus(emailCopy.savedImported(result.imported, result.skipped));
-      queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
-      queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] });
-      queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-sync-runs"] });
-      setSettingsOpen(false);
-    } catch (error) {
-      setMailboxStatus(emailCopy.importFailed(mutationErrorMessage(error, emailCopy.unknownError)));
-    }
-  };
 
   const sendDraft = useMutation({
     mutationFn: (draftId: string) => api.sendCRMEmailDraft(draftId),
@@ -1057,7 +1016,7 @@ export function CRMEmailsPage() {
   });
 
   const refreshMailbox = useMutation({
-    mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 100, range_days: Math.min(importRangeDays, 7) }),
+    mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 100, range_days: 7 }),
     onSuccess: async (result) => {
       setMailboxStatus(result.status === "running" ? "同步已开始，正在后台导入…" : emailCopy.imported(result.imported ?? 0, result.skipped ?? 0));
       await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
@@ -2231,25 +2190,7 @@ export function CRMEmailsPage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{emailCopy.mailboxSettingsTitle}</DialogTitle>
-            <DialogDescription>{emailCopy.mailboxSettingsHelp}</DialogDescription>
-          </DialogHeader>
-          <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="font-medium">{emailCopy.providerLabel}</div>
-                <p className="mt-1 text-xs text-muted-foreground">{emailCopy.providerHelp}</p>
-              </div>
-            </div>
-            <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-              <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step1}</div>
-              <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step2}</div>
-              <div className="rounded-md border bg-background px-3 py-2">{emailCopy.step3}</div>
-            </div>
-          </div>
-          <div className="grid gap-3 rounded-lg border bg-background p-3 text-xs sm:grid-cols-2">
-            <DetailRow label="Account" value={mailboxes[0]?.email} />
-            <DetailRow label="Transport" value="imap_smtp" />
-          </div>
+            </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <select
               aria-label={emailCopy.crmMailboxRecord}
@@ -2277,15 +2218,6 @@ export function CRMEmailsPage() {
                 <option value=":">Unassigned</option>
                 {members.map((member: any) => <option key={`user-${member.id}`} value={`user:${member.user_id ?? member.id}`}>Member · {member.user?.name ?? member.user?.email ?? member.email ?? member.id}</option>)}
                 {agents.map((agent: any) => <option key={`agent-${agent.id}`} value={`agent:${agent.id}`}>AI agent · {agent.name}</option>)}
-              </select>
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-medium text-muted-foreground">Import range</span>
-              <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={importRangeDays} onChange={(event) => setImportRangeDays(Number(event.target.value))}>
-                <option value={7}>Recent 7 days</option>
-                <option value={30}>Recent 30 days</option>
-                <option value={90}>Recent 90 days</option>
-                <option value={365}>Recent 1 year</option>
               </select>
             </label>
             <label className="col-span-2 flex items-center gap-3 rounded-md border bg-muted/20 px-4 py-3 text-sm">
@@ -2324,37 +2256,12 @@ export function CRMEmailsPage() {
               <textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="--\nYour name" value={mailboxDraft.signature} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, signature: event.target.value }))} />
             </label>
           </div>
-          <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">{emailCopy.transportNote}</p>
           {mailboxStatus ? <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">{mailboxStatus}</p> : null}
-          {previewMessages.length > 0 ? (
-            <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border bg-muted/20 p-3">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{previewMessages.length} live IMAP messages · selected by default</span>
-              </div>
-              {previewMessages.map((message) => {
-                const checked = selectedPreviewUIDs.includes(message.uid);
-                return (
-                  <label key={message.uid} className="flex gap-2 rounded border bg-background p-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(event) => setSelectedPreviewUIDs((uids) => event.target.checked ? [...uids, message.uid] : uids.filter((uid) => uid !== message.uid))}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{message.subject || "(no subject)"}</span>
-                      <span className="block truncate text-muted-foreground">{message.from_name || message.from_email || "unknown"} · {messageTime(message.received_at)}</span>
-                      <span className="mt-1 block line-clamp-2 text-muted-foreground">{message.snippet}</span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          ) : null}
           <DialogFooter>
             {mailboxDraft.id ? <Button variant="destructive" disabled={deleteMailbox.isPending} onClick={() => { if (mailboxDraft.id) deleteMailbox.mutate(mailboxDraft.id, { onSuccess: () => setSettingsOpen(false) }); }}>Delete mailbox</Button> : null}
             <Button variant="outline" onClick={() => { setSettingsOpen(false); setMailboxStatus(null); }}>{t(($) => $.actions.cancel)}</Button>
             <Button variant="outline" disabled={testMailbox.isPending || saveMailbox.isPending || !mailboxDraft.label || !mailboxDraft.email || !mailboxDraft.host} onClick={() => testMailbox.mutate()}>{emailCopy.checkProvider}</Button>
-            <Button disabled={saveMailbox.isPending || previewMailbox.isPending || importPreviewMessages.isPending || !mailboxDraft.label || !mailboxDraft.email} onClick={() => void saveAndImportMailbox()}>{emailCopy.saveAndImport}</Button>
+            <Button disabled={saveMailbox.isPending || !mailboxDraft.label || !mailboxDraft.email || !mailboxDraft.host} onClick={() => saveMailbox.mutate()}>{saveMailbox.isPending ? "保存中…" : t(($) => $.actions.save)}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
