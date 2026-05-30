@@ -580,8 +580,11 @@ export function CRMEmailsPage() {
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const [aiReplyPrompt, setAIReplyPrompt] = useState("");
+  const [aiAssistantLog, setAIAssistantLog] = useState<string[]>([]);
+  const [aiAssistantSuggestion, setAIAssistantSuggestion] = useState<any>(null);
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const aiAssistantTimers = useRef<number[]>([]);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
@@ -1252,17 +1255,39 @@ export function CRMEmailsPage() {
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 
-  const aiReplySuggestion = useMutation({
-    mutationFn: () => api.suggestCRMEmailDraftReply({
-      thread_id: composeDraft?.threadId === undefined ? (selectedThread?.id ?? null) : composeDraft.threadId,
-      account_id: composeDraft?.accountId || selectedThread?.account_id || null,
-      contact_id: composeDraft?.contactId || selectedThread?.contact_id || null,
-      to_emails: splitEmailList(composeDraft?.to),
-      subject: composeDraft?.subject ?? selectedThread?.subject ?? "",
-      prompt: aiReplyPrompt.trim(),
-      mode: composeDraft?.threadId ? "reply" : "new",
-    }),
+  const streamAIAssistantLog = (steps: string[]) => {
+    aiAssistantTimers.current.forEach((timer) => window.clearTimeout(timer));
+    aiAssistantTimers.current = [];
+    setAIAssistantLog([]);
+    steps.forEach((step, index) => {
+      const timer = window.setTimeout(() => {
+        setAIAssistantLog((items) => [...items, step]);
+      }, index * 450);
+      aiAssistantTimers.current.push(timer);
+    });
+  };
+
+  const aiReplyPayload = (prompt = aiReplyPrompt.trim(), draft = composeDraft) => ({
+      thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
+      account_id: draft?.accountId || selectedThread?.account_id || null,
+      contact_id: draft?.contactId || selectedThread?.contact_id || null,
+      to_emails: splitEmailList(draft?.to),
+      subject: draft?.subject ?? selectedThread?.subject ?? "",
+      prompt,
+      mode: draft?.threadId ? "reply" : "new",
   });
+
+  const aiReplySuggestion = useMutation({
+    mutationFn: (payload?: ReturnType<typeof aiReplyPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiReplyPayload()),
+    onMutate: () => {
+      streamAIAssistantLog(["读取用户要求", "匹配客户/联系人信息", "整理邮件往来记录", "生成可采纳回复建议"]);
+    },
+    onSuccess: (data: any) => {
+      setAIAssistantSuggestion(data);
+      setAIAssistantLog((items) => [...items, "生成完成，可继续输入修改意见或点击采纳"]);
+    },
+  });
+
 
   const aiDraftPayload = (draft = composeDraft) => ({
     thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
@@ -1310,6 +1335,9 @@ export function CRMEmailsPage() {
 
   const createAIDraft = useMutation({
     mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
+    onMutate: () => {
+      streamAIAssistantLog(["读取用户要求", "识别收件人和客户上下文", "整理客户邮件往来", "生成草稿建议"]);
+    },
     onSuccess: (data: any) => {
       setComposeDraft((draft) => draft ? {
         ...draft,
@@ -1318,9 +1346,22 @@ export function CRMEmailsPage() {
         subject: data.subject || draft.subject,
         body: data.customer_reply || draft.body,
       } : draft);
+      setAIAssistantSuggestion(data);
+      setAIAssistantLog((items) => [...items, "生成完成，可继续输入修改意见或点击采纳"]);
       setAIDraftDialog(null);
     },
   });
+
+  const applyComposeRecipient = (contact: any) => {
+    if (!composeDraft) return;
+    const resolvedDraft = { ...composeDraft, contactId: contact.id, to: contact.email ?? composeDraft.to };
+    setComposeDraft(resolvedDraft);
+    setComposeRecipientPickerOpen(false);
+    if (aiDraftDialog?.prompt.trim()) {
+      setAIReplyPrompt(aiDraftDialog.prompt.trim());
+      createAIDraft.mutate(aiDraftPayload(resolvedDraft));
+    }
+  };
 
   const openAssociationDialog = (suggestion?: CRMEmailThreadAssociationSuggestion) => {
     const inferred = inferContactDraft(messages);
@@ -1727,28 +1768,34 @@ export function CRMEmailsPage() {
                         <div className="font-medium">{emailCopy.aiAssistantTitle}</div>
                         <div className="text-xs text-muted-foreground">{emailCopy.aiAssistantHelp}</div>
                       </div>
-                      <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending} onClick={() => aiReplySuggestion.mutate()}>{aiReplySuggestion.isPending ? emailCopy.aiGenerating : emailCopy.aiSuggest}</Button>
+                      <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending || createAIDraft.isPending} onClick={() => aiReplySuggestion.mutate(aiReplyPayload())}>{aiReplySuggestion.isPending || createAIDraft.isPending ? emailCopy.aiGenerating : emailCopy.aiSuggest}</Button>
                     </div>
                     <label className="mt-3 block space-y-1.5 text-xs font-medium text-muted-foreground">
                       <span>{emailCopy.aiPromptLabel}</span>
                       <textarea className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm font-normal text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.aiPromptPlaceholder} value={aiReplyPrompt} onChange={(event) => setAIReplyPrompt(event.target.value)} />
                     </label>
-                    {aiReplySuggestion.data ? (
+                    {aiAssistantLog.length ? (
+                      <div className="mt-3 rounded border bg-background p-3 text-xs text-muted-foreground">
+                        <div className="mb-2 font-medium text-foreground">思考过程</div>
+                        <div className="space-y-1">{aiAssistantLog.map((item, index) => <div key={`${item}-${index}`}>· {item}</div>)}</div>
+                      </div>
+                    ) : null}
+                    {aiAssistantSuggestion ? (
                       <div className="mt-3 grid gap-3 lg:grid-cols-2">
                         <div className="rounded border bg-background p-3">
                           <div className="mb-1 text-xs font-medium text-muted-foreground">中文参考</div>
-                          <div className="whitespace-pre-wrap text-xs leading-5">{aiReplySuggestion.data.chinese || "—"}</div>
+                          <div className="whitespace-pre-wrap text-xs leading-5">{aiAssistantSuggestion.chinese || "—"}</div>
                         </div>
                         <div className="rounded border bg-background p-3">
                           <div className="mb-2 flex items-center justify-between gap-2">
-                            <div className="text-xs font-medium text-muted-foreground">客户语言：{aiReplySuggestion.data.customer_language || "—"}</div>
-                            <Button type="button" size="sm" onClick={() => setComposeDraft({ ...composeDraft, body: aiReplySuggestion.data?.customer_reply || composeDraft.body })}>采纳</Button>
+                            <div className="text-xs font-medium text-muted-foreground">客户语言：{aiAssistantSuggestion.customer_language || "—"}</div>
+                            <Button type="button" size="sm" onClick={() => setComposeDraft({ ...composeDraft, body: aiAssistantSuggestion.customer_reply || composeDraft.body })}>采纳</Button>
                           </div>
-                          <div className="whitespace-pre-wrap text-xs leading-5">{aiReplySuggestion.data.customer_reply || "—"}</div>
+                          <div className="whitespace-pre-wrap text-xs leading-5">{aiAssistantSuggestion.customer_reply || "—"}</div>
                         </div>
                       </div>
                     ) : null}
-                    {aiReplySuggestion.isError ? <p className="mt-2 text-xs text-destructive">AI 建议生成失败，请稍后重试。</p> : null}
+                    {aiReplySuggestion.isError || createAIDraft.isError ? <p className="mt-2 text-xs text-destructive">AI 建议生成失败，请稍后重试。</p> : null}
                   </div>
                   <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
                   <div className="rounded-md border bg-muted/20 p-3 text-sm">
@@ -2145,7 +2192,7 @@ export function CRMEmailsPage() {
                   <div className="mb-2 text-xs font-medium text-muted-foreground">Contact</div>
                   <div className="max-h-48 space-y-2 overflow-y-auto">
                     {composeAccountContacts.map((contact: any) => (
-                      <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { setComposeDraft({ ...composeDraft, contactId: contact.id, to: contact.email ?? composeDraft.to }); setComposeRecipientPickerOpen(false); }}>
+                      <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => applyComposeRecipient(contact)}>
                         <div className="font-medium">{contact.name}</div>
                         <div className="text-xs text-muted-foreground">{contact.email || emailCopy.noEmail}</div>
                       </button>
@@ -2300,9 +2347,11 @@ export function CRMEmailsPage() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{aiDraftDialog?.mode === "new" ? "AI 写邮件" : "AI 创建回复草稿"}</DialogTitle>
+            <DialogDescription>输入你的邮件要求。Agent 会识别收件人、客户上下文和邮件意图；不明确时再让你选择联系人。</DialogDescription>
           </DialogHeader>
           <textarea
             className="min-h-36 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            placeholder="例如：给客户说明交期延后一周，并表达歉意；如果要求里有邮箱会自动填入收件人。"
             value={aiDraftDialog?.prompt ?? ""}
             disabled={createAIDraft.isPending}
             onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
@@ -2316,7 +2365,7 @@ export function CRMEmailsPage() {
           {createAIDraft.isError ? <p className="text-sm text-destructive">AI 草稿生成失败，请稍后重试。</p> : null}
           <DialogFooter>
             <Button variant="outline" disabled={createAIDraft.isPending} onClick={() => setAIDraftDialog(null)}>取消</Button>
-            <Button disabled={createAIDraft.isPending || !composeDraft || !aiDraftDialog?.prompt.trim()} onClick={() => { const payload = ensureAIDraftRecipients(); if (payload) createAIDraft.mutate(payload); }}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
+            <Button disabled={createAIDraft.isPending || !composeDraft || !aiDraftDialog?.prompt.trim()} onClick={() => { if (aiDraftDialog?.prompt.trim()) setAIReplyPrompt(aiDraftDialog.prompt.trim()); const payload = ensureAIDraftRecipients(); if (payload) createAIDraft.mutate(payload); }}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
