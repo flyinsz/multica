@@ -5246,7 +5246,7 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 			CustomerLanguage: "",
 			CustomerReply:    "",
 			ToEmails:         keywords,
-			CCEmails:         []string{},
+			CcEmails:         []string{},
 			Subject:          strings.Join(keywords, " "),
 			Source:           "local-recipient-parser",
 		})
