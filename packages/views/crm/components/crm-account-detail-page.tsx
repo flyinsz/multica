@@ -124,6 +124,8 @@ type ProfileFormState = {
   communicationPreference: string;
   riskNotes: string;
   cooperationHistory: string;
+  aliases: string;
+  searchKeywords: string;
 };
 
 type NoteFormState = {
@@ -149,6 +151,15 @@ function profileText(profileJson: Record<string, unknown> | undefined, key: (typ
   return typeof value === "string" ? value : "";
 }
 
+function profileDisplayText(profileJson: Record<string, unknown> | undefined, key: string) {
+  const value = profileJson?.[key];
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((item) => typeof item === "string" ? item : JSON.stringify(item)).join("、");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
 function profileToForm(profile: { summary?: string | null; profile_json?: Record<string, unknown> } | null | undefined): ProfileFormState {
   return {
     summary: profile?.summary ?? "",
@@ -160,6 +171,8 @@ function profileToForm(profile: { summary?: string | null; profile_json?: Record
     communicationPreference: profileText(profile?.profile_json, "communication_preference"),
     riskNotes: profileText(profile?.profile_json, "risk_notes"),
     cooperationHistory: profileText(profile?.profile_json, "cooperation_history"),
+    aliases: profileDisplayText(profile?.profile_json, "aliases"),
+    searchKeywords: profileDisplayText(profile?.profile_json, "search_keywords"),
   };
 }
 
@@ -175,6 +188,8 @@ function profilePayload(form: ProfileFormState) {
       communication_preference: form.communicationPreference,
       risk_notes: form.riskNotes,
       cooperation_history: form.cooperationHistory,
+      aliases: form.aliases,
+      search_keywords: form.searchKeywords,
     },
   };
 }
@@ -846,6 +861,10 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                     <FieldRow label={t(($) => $.profile.communication_preference)} value={profileText(profile.profile_json, "communication_preference")} />
                     <FieldRow label={t(($) => $.profile.risk_notes)} value={profileText(profile.profile_json, "risk_notes")} />
                     <FieldRow label={t(($) => $.profile.cooperation_history)} value={profileText(profile.profile_json, "cooperation_history")} />
+                    <FieldRow label="Aliases / 别名" value={profileDisplayText(profile.profile_json, "aliases")} />
+                    <FieldRow label="Search keywords / 检索关键词" value={profileDisplayText(profile.profile_json, "search_keywords")} />
+                    <FieldRow label="Source refs / 来源依据" value={profileDisplayText(profile.profile_json, "source_refs")} />
+                    <FieldRow label="Confidence / 置信度" value={profileDisplayText(profile.profile_json, "confidence")} />
                   </div>
                 </div>
               ) : (
@@ -967,6 +986,8 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 <ProfileTextarea label={t(($) => $.profile.communication_preference)} value={profileForm.communicationPreference} onChange={(value) => setProfileForm((current) => current && ({ ...current, communicationPreference: value }))} />
                 <ProfileTextarea label={t(($) => $.profile.risk_notes)} value={profileForm.riskNotes} onChange={(value) => setProfileForm((current) => current && ({ ...current, riskNotes: value }))} />
                 <ProfileTextarea label={t(($) => $.profile.cooperation_history)} value={profileForm.cooperationHistory} onChange={(value) => setProfileForm((current) => current && ({ ...current, cooperationHistory: value }))} />
+                <ProfileTextarea label="Aliases / 别名" value={profileForm.aliases} onChange={(value) => setProfileForm((current) => current && ({ ...current, aliases: value }))} />
+                <ProfileTextarea label="Search keywords / 检索关键词" value={profileForm.searchKeywords} onChange={(value) => setProfileForm((current) => current && ({ ...current, searchKeywords: value }))} />
               </div>
             </div>
           )}

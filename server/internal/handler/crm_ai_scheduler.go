@@ -556,7 +556,7 @@ func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, iss
 		return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "已创建到期跟进 Issue，但未生成邮件草稿：客户没有可用联系人邮箱。请补充联系人后手动创建草稿。")
 	}
 	reason := fmt.Sprintf("草稿思路：这是到期跟进自动化生成的跟进草稿。依据客户 next_follow_up_at 到期时间 %s、客户名称和主联系人生成，目标是礼貌重启沟通并确认下一步需求。风险：发送前请人工确认报价、交期、项目上下文和联系人是否正确。", dueText)
-	body := fmt.Sprintf("Hi %s,\n\nI hope you are doing well. I wanted to follow up with you regarding %s and check whether there are any updates or new requirements we can support.\n\nBest regards", contactName, accountName)
+	body := fmt.Sprintf("Hi %s,\n\nI hope you are doing well. I wanted to follow up with you regarding %s and check whether there are any updates or new requirements we can support.", contactName, accountName)
 	var draftID pgtype.UUID
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, account_id, contact_id, issue_id, to_emails, subject, body_text, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending_approval',true,$9) RETURNING id`, workspaceID, mailboxID, accountID, contactID, issueID, []string{email}, "Follow up: "+accountName, body, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err

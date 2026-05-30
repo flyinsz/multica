@@ -928,7 +928,7 @@ func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountN
 	if baseURL == "" || apiKey == "" || model == "" {
 		return nil, nil
 	}
-	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容。\n\n" +
+	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions,aliases,search_keywords,source_refs,confidence。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容；6) aliases/search_keywords 输出数组，包含客户简称、人名、邮箱前缀、域名、WhatsApp/微信/LinkedIn等可检索别名；7) source_refs 输出数组，记录依据类型和简短来源；8) confidence 输出0到1数字。\n\n" +
 		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
 	payload := map[string]any{
 		"model": model,
@@ -5235,6 +5235,23 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	if language == "" || language == "auto" {
 		language = inferCRMCustomerLanguage(contactEmail, strings.Join(messages, "\n"))
 	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = "reply"
+	}
+	if mode == "recipient_lookup" {
+		keywords := extractCRMRecipientLookupKeywords(req.Prompt)
+		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{
+			Chinese:          "本地解析收件人关键词：" + strings.Join(keywords, " "),
+			CustomerLanguage: "",
+			CustomerReply:    "",
+			ToEmails:         keywords,
+			CCEmails:         []string{},
+			Subject:          strings.Join(keywords, " "),
+			Source:           "local-recipient-parser",
+		})
+		return
+	}
 	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	apiKey = strings.TrimSpace(apiKey)
@@ -5243,53 +5260,11 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{Chinese: zh, CustomerLanguage: language, CustomerReply: zh, Source: "fallback"})
 		return
 	}
-	mode := strings.TrimSpace(req.Mode)
-	if mode == "" {
-		mode = "reply"
-	}
-	if mode == "recipient_lookup" {
-		prompt := "你是CRM收件人识别助手。只从用户写邮件要求中提取可用于检索客户/联系人的关键词，输出严格JSON：{\"chinese\":\"关键词说明\",\"customer_language\":\"\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"空格分隔的检索关键词\"}。关键词包括公司名、人名、邮箱、国家、网站、产品/项目词；不要写邮件正文。\n\n用户要求：" + strings.TrimSpace(req.Prompt)
-		payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.1, "response_format": map[string]string{"type": "json_object"}}
-		body, _ := json.Marshal(payload)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to build AI request")
-			return
-		}
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(httpReq)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "failed to call AI model")
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			writeError(w, http.StatusBadGateway, "AI model returned error")
-			return
-		}
-		var out struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
-			writeError(w, http.StatusBadGateway, "invalid AI model response")
-			return
-		}
-		var parsed CRMEmailDraftAISuggestResponse
-		if err := json.Unmarshal([]byte(strings.TrimSpace(out.Choices[0].Message.Content)), &parsed); err != nil {
-			writeError(w, http.StatusBadGateway, "invalid AI suggestion JSON")
-			return
-		}
-		parsed.Source = source
-		writeJSON(w, http.StatusOK, parsed)
-		return
-	}
+	contextBudget := 8
+	aiContext := h.buildCRMEmailAIContext(ctx, workspaceID, accountID, contactID, threadID, mode, contextBudget)
+
 	if mode == "context" {
-		prompt := "你是外贸CRM邮件背景分析助手。根据客户资料和邮件往来，输出严格JSON：{\"chinese\":\"给业务员看的中文背景信息和风险提示\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"\"}。要求：1) 不写可发送邮件正文；2) 提炼会影响回复内容的信息：客户背景、历史诉求、未解决问题、承诺/报价/交期/认证/附件风险、下一封邮件应避免虚构的点；3) 没有依据就写“暂无依据”；4) 结构化、简洁、中文。\n\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n当前主题：" + req.Subject + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
+		prompt := "你是外贸CRM邮件背景分析助手。根据客户资料和邮件往来，输出严格JSON：{\"chinese\":\"给业务员看的中文背景信息和风险提示\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"\"}。要求：1) 不写可发送邮件正文；2) 优先使用结构化 Customer Wiki/Profile，再使用当前线程；3) 提炼会影响回复内容的信息：客户背景、历史诉求、未解决问题、承诺/报价/交期/认证/附件风险、下一封邮件应避免虚构的点；4) 没有依据就写“暂无依据”；5) 结构化、简洁、中文。\n\n" + aiContext.String() + "\n当前主题：" + req.Subject + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
 		payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.1, "response_format": map[string]string{"type": "json_object"}}
 		body, _ := json.Marshal(payload)
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
@@ -5330,7 +5305,7 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, parsed)
 		return
 	}
-	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件和用户要求；3) 中文参考用于内部查看；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务；6) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；7) mode=new 时主动推断收件人和主题，无法确定则留空；8) mode=reply/reply-all 时结合客户往来历史和客户信息回复；9) 不要在 customer_reply 中添加邮箱签名、签名占位符、Best regards、Regards、姓名/公司署名，因为正文编辑框已经预先插入默认签名。\n\n模式：" + mode + "\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
+	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 优先使用结构化 Customer Wiki/Profile，当前线程只作为当前语境；3) 无客户资料/历史时只基于当前邮件和用户要求；4) 中文参考用于内部查看；5) customer_reply 必须是客户语言，可直接发送；6) 正式、简洁、商务；7) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；8) mode=new 时主动推断收件人和主题，无法确定则留空；9) mode=reply/reply-all 时结合共享AI上下文与当前邮件回复；10) 不要在 customer_reply 中添加邮箱签名、签名占位符、Best regards、Regards、姓名/公司署名，因为正文编辑框已经预先插入默认签名。\n\n模式：" + mode + "\n" + aiContext.String() + "\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
 	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
 	body, _ := json.Marshal(payload)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
@@ -5377,6 +5352,232 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	}
 	parsed.Source = source
 	writeJSON(w, http.StatusOK, parsed)
+}
+
+type crmEmailAIContext struct {
+	CustomerProfile    string
+	RiskNotes          []string
+	OpenIssues         []string
+	Preferences        []string
+	RecentInteractions []string
+	CurrentThread      []string
+	MissingInfo        []string
+	SourceRefs         []string
+}
+
+func (c crmEmailAIContext) String() string {
+	parts := []string{}
+	if strings.TrimSpace(c.CustomerProfile) != "" {
+		parts = append(parts, "客户画像/Customer Wiki:\n"+c.CustomerProfile)
+	}
+	add := func(label string, items []string) {
+		if len(items) > 0 {
+			parts = append(parts, label+"："+strings.Join(items, "；"))
+		}
+	}
+	add("风险提示", c.RiskNotes)
+	add("开放问题", c.OpenIssues)
+	add("偏好", c.Preferences)
+	add("近期互动", c.RecentInteractions)
+	add("当前线程", c.CurrentThread)
+	add("缺失信息", c.MissingInfo)
+	add("来源依据", c.SourceRefs)
+	return strings.Join(parts, "\n")
+}
+
+func (h *Handler) buildCRMEmailAIContext(ctx context.Context, workspaceID, accountID, contactID, threadID pgtype.UUID, functionName string, budget int) crmEmailAIContext {
+	out := crmEmailAIContext{}
+	if accountID.Valid {
+		out.CustomerProfile = h.crmAccountProfileContext(ctx, workspaceID, accountID)
+		out.RiskNotes = h.crmAccountProfileList(ctx, workspaceID, accountID, []string{"risk_notes", "risks"}, 4)
+		out.OpenIssues = h.crmAccountProfileList(ctx, workspaceID, accountID, []string{"open_issues", "next_step_suggestions"}, 4)
+		out.Preferences = h.crmAccountProfileList(ctx, workspaceID, accountID, []string{"preferences", "communication_preference"}, 4)
+		out.SourceRefs = h.crmAccountProfileList(ctx, workspaceID, accountID, []string{"source_refs"}, 4)
+	}
+	limit := budget
+	if limit <= 0 || limit > 8 {
+		limit = 6
+	}
+	if threadID.Valid {
+		out.CurrentThread = h.crmEmailInteractionSnippets(ctx, workspaceID, accountID, contactID, threadID, limit)
+	}
+	if accountID.Valid {
+		out.RecentInteractions = h.crmEmailInteractionSnippets(ctx, workspaceID, accountID, contactID, pgtype.UUID{}, min(limit, 4))
+	}
+	if strings.TrimSpace(out.CustomerProfile) == "" {
+		out.MissingInfo = append(out.MissingInfo, "缺少结构化客户画像，请先刷新/补充客户 Profile")
+	}
+	if len(out.CurrentThread) == 0 && strings.Contains(functionName, "reply") {
+		out.MissingInfo = append(out.MissingInfo, "缺少当前线程内容")
+	}
+	return out
+}
+
+func (h *Handler) crmAccountProfileList(ctx context.Context, workspaceID, accountID pgtype.UUID, keys []string, limit int) []string {
+	var profileJSON []byte
+	if err := h.DB.QueryRow(ctx, `SELECT COALESCE(profile_json, '{}'::jsonb) FROM crm_account_profile WHERE workspace_id=$1 AND account_id=$2`, workspaceID, accountID).Scan(&profileJSON); err != nil {
+		return nil
+	}
+	var profile map[string]any
+	if len(profileJSON) == 0 || json.Unmarshal(profileJSON, &profile) != nil {
+		return nil
+	}
+	items := []string{}
+	for _, key := range keys {
+		if text := strings.TrimSpace(crmProfileAnyText(profile[key])); text != "" && text != "——" {
+			items = append(items, trimCRMProfileSnippet(text, 260))
+		}
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+	}
+	return items
+}
+
+func (h *Handler) crmEmailInteractionSnippets(ctx context.Context, workspaceID, accountID, contactID, threadID pgtype.UUID, limit int) []string {
+	if limit <= 0 {
+		limit = 4
+	}
+	query := `SELECT direction, COALESCE(from_name,''), COALESCE(from_email,''), COALESCE(subject,''), COALESCE(body_text, regexp_replace(COALESCE(body_html,''), '<[^>]+>', ' ', 'g'), ''), COALESCE(received_at, sent_at, created_at) FROM crm_email_message WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	idx := 2
+	if threadID.Valid {
+		query += fmt.Sprintf(" AND thread_id=$%d", idx)
+		args = append(args, threadID)
+		idx++
+	}
+	if accountID.Valid {
+		query += fmt.Sprintf(" AND account_id=$%d", idx)
+		args = append(args, accountID)
+		idx++
+	}
+	if contactID.Valid {
+		query += fmt.Sprintf(" AND (contact_id=$%d OR $%d::uuid IS NULL)", idx, idx)
+		args = append(args, contactID)
+		idx++
+	}
+	query += fmt.Sprintf(" ORDER BY COALESCE(received_at, sent_at, created_at) DESC LIMIT $%d", idx)
+	args = append(args, limit)
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var direction, fromName, fromEmail, subject, body string
+		var at pgtype.Timestamptz
+		if rows.Scan(&direction, &fromName, &fromEmail, &subject, &body, &at) == nil {
+			items = append(items, fmt.Sprintf("[%s] %s <%s> %s %s", direction, fromName, fromEmail, subject, trimCRMProfileSnippet(strings.Join(strings.Fields(body), " "), 500)))
+		}
+	}
+	return items
+}
+
+func (h *Handler) crmAccountProfileContext(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID) string {
+	var summary pgtype.Text
+	var profileJSON []byte
+	if err := h.DB.QueryRow(ctx, `SELECT summary, COALESCE(profile_json, '{}'::jsonb) FROM crm_account_profile WHERE workspace_id=$1 AND account_id=$2`, workspaceID, accountID).Scan(&summary, &profileJSON); err != nil {
+		return ""
+	}
+	parts := []string{}
+	if summary.Valid && strings.TrimSpace(summary.String) != "" {
+		parts = append(parts, "摘要："+strings.TrimSpace(summary.String))
+	}
+	var profile map[string]any
+	if len(profileJSON) > 0 && json.Unmarshal(profileJSON, &profile) == nil {
+		for _, key := range []string{"customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions", "aliases", "search_keywords"} {
+			if value := strings.TrimSpace(crmProfileAnyText(profile[key])); value != "" && value != "——" {
+				parts = append(parts, key+"："+trimCRMProfileSnippet(value, 360))
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func crmProfileAnyText(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		items := []string{}
+		for _, item := range v {
+			if text := crmProfileAnyText(item); text != "" && text != "——" {
+				items = append(items, text)
+			}
+		}
+		return strings.Join(items, "、")
+	case map[string]any:
+		items := []string{}
+		for key, item := range v {
+			if text := crmProfileAnyText(item); text != "" && text != "——" {
+				items = append(items, key+":"+text)
+			}
+		}
+		return strings.Join(items, "；")
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func extractCRMRecipientLookupKeywords(prompt string) []string {
+	text := strings.TrimSpace(prompt)
+	if text == "" {
+		return []string{}
+	}
+	lower := strings.ToLower(text)
+	stopPhrases := []string{"发邮件", "写邮件", "邮件", "问一下", "问下", "询问", "近况", "情况", "需求", "报价", "收件人", "关键词"}
+	for _, marker := range []string{"发邮件", "写邮件", "邮件"} {
+		if idx := strings.Index(text, marker); idx > 0 {
+			prefix := strings.TrimSpace(text[:idx])
+			prefix = strings.TrimPrefix(prefix, "请")
+			prefix = strings.TrimPrefix(prefix, "帮我")
+			prefix = strings.TrimPrefix(prefix, "给")
+			prefix = strings.TrimPrefix(prefix, "发给")
+			prefix = strings.TrimSpace(prefix)
+			if prefix != "" {
+				return uniqueCRMRecipientKeywords([]string{prefix})
+			}
+		}
+	}
+	candidates := []string{}
+	for _, field := range strings.FieldsFunc(lower, func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '@' || r == '.' || r == '_' || r == '-' || r == '+')
+	}) {
+		field = strings.Trim(field, "._-+")
+		if len(field) < 2 {
+			continue
+		}
+		skip := false
+		for _, stop := range stopPhrases {
+			if field == strings.ToLower(stop) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			candidates = append(candidates, field)
+		}
+	}
+	return uniqueCRMRecipientKeywords(candidates)
+}
+
+func uniqueCRMRecipientKeywords(values []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func ptrString(v *string) string {

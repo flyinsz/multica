@@ -74,6 +74,34 @@ function looksLikeHTML(value?: string | null) {
   return Boolean(value && /<\s*(html|body|div|p|br|table|span|a|img|strong|em|ul|ol|li)\b/i.test(decodeEmailHTML(value)));
 }
 
+function normalizeCRMSearchText(value: unknown) {
+  return String(value ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").trim();
+}
+
+function crmSearchTokens(query: string) {
+  return normalizeCRMSearchText(query)
+    .split(/[\s,;，；、]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+}
+
+function crmSearchScore(values: unknown[], terms: string[]) {
+  const haystack = values.map(normalizeCRMSearchText).filter(Boolean);
+  const joined = haystack.join(" ");
+  if (!terms.length) return { score: 0, reasons: [] as string[] };
+  let score = 0;
+  const reasons: string[] = [];
+  for (const term of terms) {
+    for (const value of haystack) {
+      if (value === term) { score += 100; reasons.push(`精确匹配 ${term}`); break; }
+      if (value.split(/[^a-z0-9@._+-]+/).includes(term)) { score += 60; reasons.push(`词匹配 ${term}`); break; }
+      if (value.includes(term) || term.includes(value)) { score += 30; reasons.push(`模糊匹配 ${term}`); break; }
+    }
+  }
+  if (!score && terms.some((term) => joined.includes(term))) score += 10;
+  return { score, reasons: Array.from(new Set(reasons)).slice(0, 3) };
+}
+
 function emailHTMLBody(message: { body_html?: string | null; body_text?: string | null }) {
   const html = message.body_html ? decodeEmailHTML(message.body_html) : "";
   const text = message.body_text ? decodeEmailHTML(message.body_text) : "";
@@ -1153,23 +1181,62 @@ export function CRMEmailsPage() {
     ...crmContactListOptions(wsId, composeAccountId),
     enabled: Boolean(composeAccountId),
   });
-  const fuzzyMatch = (value: unknown, q: string) => String(value ?? "").toLowerCase().includes(q);
   const filteredComposeAccounts = useMemo(() => {
-    const q = composeAccountSearch.trim().toLowerCase();
-    if (!q) return accounts;
-    const terms = q.split(/\s+/).filter(Boolean);
-    return accounts.filter((account) => terms.some((term) => [account.name, account.website, account.industry, account.country]
-      .filter(Boolean)
-      .some((value) => fuzzyMatch(value, term))));
+    const terms = crmSearchTokens(composeAccountSearch);
+    if (!terms.length) return accounts;
+    return accounts
+      .map((account) => {
+        const score = crmSearchScore([
+          account.name,
+          account.account_code,
+          account.website,
+          account.industry,
+          account.sub_industry,
+          account.country,
+          account.country_name,
+          account.region,
+          account.city,
+          ...(account.tags ?? []),
+          account.notes,
+        ], terms);
+        return { account, ...score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => ({ ...item.account, __matchReasons: item.reasons }));
   }, [accounts, composeAccountSearch]);
   const filteredComposeContacts = useMemo(() => {
-    const q = composeAccountSearch.trim().toLowerCase();
-    if (!q) return contacts;
-    const terms = q.split(/\s+/).filter(Boolean);
-    return contacts.filter((contact: any) => terms.some((term) => [contact.name, contact.email, contact.role_title]
-      .filter(Boolean)
-      .some((value) => fuzzyMatch(value, term))));
-  }, [contacts, composeAccountSearch]);
+    const terms = crmSearchTokens(composeAccountSearch);
+    if (!terms.length) return contacts;
+    return contacts
+      .map((contact: any) => {
+        const account = accounts.find((item) => item.id === contact.account_id);
+        const emailPrefix = String(contact.email ?? "").split("@")[0];
+        const emailDomain = String(contact.email ?? "").split("@")[1];
+        const score = crmSearchScore([
+          contact.name,
+          contact.email,
+          emailPrefix,
+          emailDomain,
+          contact.whatsapp_id,
+          contact.whatsapp,
+          contact.wechat,
+          contact.linkedin_url,
+          contact.role_title,
+          contact.job_title,
+          contact.department,
+          contact.notes,
+          account?.name,
+          account?.account_code,
+          account?.website,
+          ...(account?.tags ?? []),
+        ], terms);
+        return { contact, ...score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => ({ ...item.contact, __matchReasons: item.reasons }));
+  }, [accounts, contacts, composeAccountSearch]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     ...crmEmailMessageListOptions(wsId, selectedThread?.id ?? ""),
     enabled: Boolean(selectedThread?.id),
@@ -1314,7 +1381,8 @@ export function CRMEmailsPage() {
   const recipientLookup = useMutation({
     mutationFn: () => api.suggestCRMEmailDraftReply({ ...aiDraftPayload(composeDraft), mode: "recipient_lookup" }),
     onSuccess: (data: any) => {
-      const keywords = [data.subject, data.chinese, ...(Array.isArray(data.to_emails) ? data.to_emails : [])].filter(Boolean).join(" ").trim();
+      const localTerms = Array.isArray(data.to_emails) ? data.to_emails.filter(Boolean).join(" ").trim() : "";
+      const keywords = localTerms || String(data.subject || "").trim();
       setComposeAccountSearch(keywords || aiDraftDialog?.prompt.trim() || "");
       setComposeRecipientPickerOpen(true);
     },
@@ -2176,6 +2244,7 @@ export function CRMEmailsPage() {
                   <button key={account.id} type="button" className={`block w-full border-b px-3 py-2 text-left text-sm hover:bg-muted ${composeDraft.accountId === account.id ? "bg-muted" : ""}`} onClick={() => setComposeDraft({ ...composeDraft, accountId: account.id, contactId: "", to: "" })}>
                     <div className="font-medium">{account.name}</div>
                     <div className="text-xs text-muted-foreground">{[account.website, account.country_name || account.country, account.industry].filter(Boolean).join(" · ")}</div>
+                    {Array.isArray((account as any).__matchReasons) && (account as any).__matchReasons.length > 0 && <div className="mt-1 text-[11px] text-primary/80">{(account as any).__matchReasons.join("；")}</div>}
                   </button>
                 ))}
                 {!filteredComposeAccounts.length && <div className="p-4 text-sm text-muted-foreground">No customer found.</div>}
@@ -2187,6 +2256,7 @@ export function CRMEmailsPage() {
                     <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => applyComposeRecipient(contact)}>
                       <div className="font-medium">{contact.name}</div>
                       <div className="text-xs text-muted-foreground">{contact.email || emailCopy.noEmail}</div>
+                      {Array.isArray((contact as any).__matchReasons) && (contact as any).__matchReasons.length > 0 && <div className="mt-1 text-[11px] text-primary/80">{(contact as any).__matchReasons.join("；")}</div>}
                     </button>
                   ))}
                   {!(composeDraft.accountId ? composeAccountContacts : filteredComposeContacts).length && <div className="text-xs text-muted-foreground">没有匹配联系人，可手动输入收件人。</div>}
