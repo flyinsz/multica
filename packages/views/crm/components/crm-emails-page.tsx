@@ -46,6 +46,7 @@ type ComposeAttachment = { file_name: string; content_type: string; content: str
 type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
 type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
+type AIAssistantTurn = { id: string; role: "user" | "assistant"; content: string; chinese?: string; language?: string };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string; signature: string };
 
@@ -580,11 +581,9 @@ export function CRMEmailsPage() {
   const [composeAccountSearch, setComposeAccountSearch] = useState("");
   const [composeRecipientPickerOpen, setComposeRecipientPickerOpen] = useState(false);
   const [aiReplyPrompt, setAIReplyPrompt] = useState("");
-  const [aiAssistantLog, setAIAssistantLog] = useState<string[]>([]);
-  const [aiAssistantSuggestion, setAIAssistantSuggestion] = useState<any>(null);
+  const [aiAssistantTurns, setAIAssistantTurns] = useState<AIAssistantTurn[]>([]);
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const aiAssistantTimers = useRef<number[]>([]);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
@@ -1255,18 +1254,6 @@ export function CRMEmailsPage() {
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 
-  const streamAIAssistantLog = (steps: string[]) => {
-    aiAssistantTimers.current.forEach((timer) => window.clearTimeout(timer));
-    aiAssistantTimers.current = [];
-    setAIAssistantLog([]);
-    steps.forEach((step, index) => {
-      const timer = window.setTimeout(() => {
-        setAIAssistantLog((items) => [...items, step]);
-      }, index * 450);
-      aiAssistantTimers.current.push(timer);
-    });
-  };
-
   const aiReplyPayload = (prompt = aiReplyPrompt.trim(), draft = composeDraft) => ({
       thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
       account_id: draft?.accountId || selectedThread?.account_id || null,
@@ -1279,12 +1266,12 @@ export function CRMEmailsPage() {
 
   const aiReplySuggestion = useMutation({
     mutationFn: (payload?: ReturnType<typeof aiReplyPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiReplyPayload()),
-    onMutate: () => {
-      streamAIAssistantLog(["读取用户要求", "匹配客户/联系人信息", "整理邮件往来记录", "生成可采纳回复建议"]);
+    onMutate: (payload) => {
+      const text = String(payload?.prompt || aiReplyPrompt.trim() || "继续优化邮件内容");
+      setAIAssistantTurns((items) => [...items, { id: `user-${Date.now()}`, role: "user", content: text }]);
     },
     onSuccess: (data: any) => {
-      setAIAssistantSuggestion(data);
-      setAIAssistantLog((items) => [...items, "生成完成，可继续输入修改意见或点击采纳"]);
+      setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese: data.chinese || "", language: data.customer_language || "" }]);
     },
   });
 
@@ -1335,8 +1322,9 @@ export function CRMEmailsPage() {
 
   const createAIDraft = useMutation({
     mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
-    onMutate: () => {
-      streamAIAssistantLog(["读取用户要求", "识别收件人和客户上下文", "整理客户邮件往来", "生成草稿建议"]);
+    onMutate: (payload) => {
+      const text = String(payload?.prompt || aiDraftDialog?.prompt.trim() || "创建邮件草稿");
+      setAIAssistantTurns((items) => [...items, { id: `user-${Date.now()}`, role: "user", content: text }]);
     },
     onSuccess: (data: any) => {
       setComposeDraft((draft) => draft ? {
@@ -1346,8 +1334,7 @@ export function CRMEmailsPage() {
         subject: data.subject || draft.subject,
         body: data.customer_reply || draft.body,
       } : draft);
-      setAIAssistantSuggestion(data);
-      setAIAssistantLog((items) => [...items, "生成完成，可继续输入修改意见或点击采纳"]);
+      setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese: data.chinese || "", language: data.customer_language || "" }]);
       setAIDraftDialog(null);
     },
   });
@@ -1770,31 +1757,24 @@ export function CRMEmailsPage() {
                       </div>
                       <Button type="button" size="sm" variant="outline" disabled={aiReplySuggestion.isPending || createAIDraft.isPending} onClick={() => aiReplySuggestion.mutate(aiReplyPayload())}>{aiReplySuggestion.isPending || createAIDraft.isPending ? emailCopy.aiGenerating : emailCopy.aiSuggest}</Button>
                     </div>
-                    <label className="mt-3 block space-y-1.5 text-xs font-medium text-muted-foreground">
-                      <span>{emailCopy.aiPromptLabel}</span>
-                      <textarea className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm font-normal text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.aiPromptPlaceholder} value={aiReplyPrompt} onChange={(event) => setAIReplyPrompt(event.target.value)} />
-                    </label>
-                    {aiAssistantLog.length ? (
-                      <div className="mt-3 rounded border bg-background p-3 text-xs text-muted-foreground">
-                        <div className="mb-2 font-medium text-foreground">思考过程</div>
-                        <div className="space-y-1">{aiAssistantLog.map((item, index) => <div key={`${item}-${index}`}>· {item}</div>)}</div>
-                      </div>
-                    ) : null}
-                    {aiAssistantSuggestion ? (
-                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                        <div className="rounded border bg-background p-3">
-                          <div className="mb-1 text-xs font-medium text-muted-foreground">中文参考</div>
-                          <div className="whitespace-pre-wrap text-xs leading-5">{aiAssistantSuggestion.chinese || "—"}</div>
+                    <div className="mt-3 max-h-80 space-y-3 overflow-y-auto rounded-md border bg-background p-3">
+                      {aiAssistantTurns.length ? aiAssistantTurns.map((turn) => turn.role === "user" ? (
+                        <div key={turn.id} className="ml-auto max-w-[85%] rounded-2xl bg-primary px-3 py-2 text-sm text-primary-foreground">
+                          <div className="whitespace-pre-wrap">{turn.content}</div>
                         </div>
-                        <div className="rounded border bg-background p-3">
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <div className="text-xs font-medium text-muted-foreground">客户语言：{aiAssistantSuggestion.customer_language || "—"}</div>
-                            <Button type="button" size="sm" onClick={() => setComposeDraft({ ...composeDraft, body: aiAssistantSuggestion.customer_reply || composeDraft.body })}>采纳</Button>
-                          </div>
-                          <div className="whitespace-pre-wrap text-xs leading-5">{aiAssistantSuggestion.customer_reply || "—"}</div>
+                      ) : (
+                        <div key={turn.id} className="group relative mr-auto max-w-[92%] rounded-2xl border bg-muted/40 px-3 py-2 text-sm">
+                          <Button type="button" size="sm" className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setComposeDraft({ ...composeDraft, body: turn.content || composeDraft.body })}>采纳</Button>
+                          {turn.language ? <div className="mb-1 text-[11px] text-muted-foreground">客户语言：{turn.language}</div> : null}
+                          <div className="whitespace-pre-wrap pr-14 leading-6">{turn.content}</div>
                         </div>
-                      </div>
-                    ) : null}
+                      )) : <div className="text-xs text-muted-foreground">输入修改意见后生成建议，历史会保留在这里。</div>}
+                      {aiReplySuggestion.isPending || createAIDraft.isPending ? <div className="mr-auto inline-flex items-center gap-2 rounded-2xl border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"><RefreshCw className="size-3 animate-spin" />正在生成建议…</div> : null}
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <textarea className="min-h-16 flex-1 rounded-md border bg-background px-3 py-2 text-sm font-normal text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" aria-label={emailCopy.aiPromptLabel} placeholder={emailCopy.aiPromptPlaceholder} value={aiReplyPrompt} onChange={(event) => setAIReplyPrompt(event.target.value)} />
+                      <Button type="button" disabled={aiReplySuggestion.isPending || createAIDraft.isPending} onClick={() => aiReplySuggestion.mutate(aiReplyPayload())}>{aiReplySuggestion.isPending || createAIDraft.isPending ? emailCopy.aiGenerating : emailCopy.aiSuggest}</Button>
+                    </div>
                     {aiReplySuggestion.isError || createAIDraft.isError ? <p className="mt-2 text-xs text-destructive">AI 建议生成失败，请稍后重试。</p> : null}
                   </div>
                   <textarea aria-label={emailCopy.bodyLabel} className="min-h-64 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" placeholder={emailCopy.bodyPlaceholder} value={composeDraft.body} onChange={(event) => setComposeDraft({ ...composeDraft, body: event.target.value })} />
