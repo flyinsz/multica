@@ -35,6 +35,8 @@ type CRMAIConfig = {
   issue_creator_id?: string;
   issue_todo_assignee_type?: "member" | "agent";
   issue_todo_assignee_id?: string;
+  email_default_agent_id?: string;
+  email_default_language?: string;
 };
 
 type CRMAILastResult = {
@@ -81,6 +83,8 @@ type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_a
   issue_creator_id: string;
   issue_todo_assignee_type: ActorType;
   issue_todo_assignee_id: string;
+  email_default_agent_id: string;
+  email_default_language: string;
 };
 
 const meta: Record<SettingKey, { title: string; description: string; icon: typeof Mail }> = {
@@ -173,6 +177,8 @@ function buildForm(setting: CRMAISetting): FormState {
     issue_creator_id: c.issue_creator_id || "",
     issue_todo_assignee_type: c.issue_todo_assignee_type || "agent",
     issue_todo_assignee_id: c.issue_todo_assignee_id || setting.assignee_agent_id || "",
+    email_default_agent_id: c.email_default_agent_id || "",
+    email_default_language: c.email_default_language || "zh-Hans",
   };
 }
 
@@ -275,6 +281,11 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
   const [form, setForm] = useState<FormState>(() => buildForm(setting));
 
   useEffect(() => setForm(buildForm(setting)), [setting]);
+  useEffect(() => {
+    if (form.email_default_agent_id) return;
+    const leo = agents.find((agent) => agent.name.trim().toLowerCase() === "leo");
+    if (leo) setForm((s) => s.email_default_agent_id ? s : { ...s, email_default_agent_id: leo.id });
+  }, [agents, form.email_default_agent_id]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -305,6 +316,8 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
           issue_creator_id: form.issue_creator_id || undefined,
           issue_todo_assignee_type: form.issue_todo_assignee_type,
           issue_todo_assignee_id: form.issue_todo_assignee_id || undefined,
+          email_default_agent_id: form.email_default_agent_id || undefined,
+          email_default_language: form.email_default_language || "zh-Hans",
         },
       });
     },
@@ -370,6 +383,25 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
             </select>
           </label>
         )}
+        {setting.automation_key === "email_pending_reply" ? (
+          <>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">AI邮件默认 Agent</span>
+              <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={form.email_default_agent_id || ""} onChange={(e) => setForm((s) => ({ ...s, email_default_agent_id: e.target.value }))}>
+                <option value="">Leo（默认）</option>
+                {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">邮件默认语言</span>
+              <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={form.email_default_language || "zh-Hans"} onChange={(e) => setForm((s) => ({ ...s, email_default_language: e.target.value }))}>
+                <option value="zh-Hans">中文</option>
+                <option value="en">English</option>
+                <option value="auto">跟随用户要求</option>
+              </select>
+            </label>
+          </>
+        ) : null}
         {setting.automation_key === "email_pending_reply" || setting.automation_key === "due_followup" ? (
           <>
             <label className="space-y-1 text-sm">

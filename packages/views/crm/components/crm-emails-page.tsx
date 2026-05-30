@@ -45,7 +45,7 @@ type EmailLinkDraft = { projectId: string; issueIds: string[] };
 type ComposeAttachment = { file_name: string; content_type: string; content: string; size: number };
 type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
-type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string; confirmedRecipient?: boolean } | null;
+type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
 
@@ -173,13 +173,13 @@ function splitEmailList(value?: string | null) {
   return (value ?? "").split(/[;,\n]/).map((item) => item.trim()).filter(Boolean);
 }
 
-function looksLikeEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
 function allEmailsLookValid(value?: string | null) {
   const emails = splitEmailList(value);
-  return emails.length > 0 && emails.every(looksLikeEmail);
+  return emails.length > 0 && emails.every((email) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
+}
+
+function extractEmails(value?: string | null) {
+  return Array.from(new Set((value ?? "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []));
 }
 
 function AssociationChip({ icon, label, value, onClick }: { icon: ReactNode; label: string; value?: string | null; onClick?: () => void }) {
@@ -1257,16 +1257,52 @@ export function CRMEmailsPage() {
     }),
   });
 
+  const aiDraftPayload = (draft = composeDraft) => ({
+    thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
+    account_id: draft?.accountId || selectedThread?.account_id || null,
+    contact_id: draft?.contactId || selectedThread?.contact_id || null,
+    to_emails: splitEmailList(draft?.to),
+    subject: draft?.subject ?? selectedThread?.subject ?? "",
+    prompt: aiDraftDialog?.prompt.trim() ?? "",
+    mode: aiDraftDialog?.mode ?? "reply",
+  });
+
+  const ensureAIDraftRecipients = () => {
+    if (!composeDraft || !aiDraftDialog) return null;
+    const prompt = aiDraftDialog.prompt.trim();
+    const explicitEmails = extractEmails(prompt);
+    if (explicitEmails.length > 0) {
+      const emailSet = new Set([...splitEmailList(composeDraft.to), ...explicitEmails]);
+      const matchedContact = [...contacts, ...composeAccountContacts].find((contact) => contact.email && explicitEmails.some((email) => email.toLowerCase() === String(contact.email).toLowerCase()));
+      const resolvedDraft = {
+        ...composeDraft,
+        to: Array.from(emailSet).join(", "),
+        accountId: composeDraft.accountId || selectedThread?.account_id || "",
+        contactId: composeDraft.contactId || matchedContact?.id || selectedThread?.contact_id || "",
+      };
+      setComposeDraft(resolvedDraft);
+      return aiDraftPayload(resolvedDraft);
+    }
+    if (allEmailsLookValid(composeDraft.to)) return aiDraftPayload(composeDraft);
+    if (aiDraftDialog.mode !== "new" && allEmailsLookValid(composeDraft.to || selectedContact?.email || "")) return aiDraftPayload({ ...composeDraft, to: composeDraft.to || selectedContact?.email || "" });
+
+    const q = prompt.toLowerCase();
+    const matches = accounts.filter((account) => [account.name, account.website, account.industry, account.country]
+      .filter(Boolean)
+      .some((value) => q.includes(String(value).toLowerCase())));
+    if (matches.length === 1) {
+      const match = matches[0]!;
+      setComposeDraft({ ...composeDraft, accountId: match.id, contactId: "", to: "" });
+      setComposeAccountSearch(match.name);
+    } else if (matches.length > 1) {
+      setComposeAccountSearch(prompt);
+    }
+    setComposeRecipientPickerOpen(true);
+    return null;
+  };
+
   const createAIDraft = useMutation({
-    mutationFn: () => api.suggestCRMEmailDraftReply({
-      thread_id: composeDraft?.threadId === undefined ? (selectedThread?.id ?? null) : composeDraft.threadId,
-      account_id: composeDraft?.accountId || selectedThread?.account_id || null,
-      contact_id: composeDraft?.contactId || selectedThread?.contact_id || null,
-      to_emails: splitEmailList(composeDraft?.to),
-      subject: composeDraft?.subject ?? selectedThread?.subject ?? "",
-      prompt: aiDraftDialog?.prompt.trim() ?? "",
-      mode: aiDraftDialog?.mode ?? "reply",
-    }),
+    mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
     onSuccess: (data: any) => {
       setComposeDraft((draft) => draft ? {
         ...draft,
@@ -1311,7 +1347,7 @@ export function CRMEmailsPage() {
         scheduledSendAt: "",
         attachments: [],
       });
-      setAIDraftDialog({ mode: "new", prompt: "", confirmedRecipient: false });
+      setAIDraftDialog({ mode: "new", prompt: "" });
       return;
     }
     if ((mode === "reply" || mode === "reply-all") && selectedThread?.id) {
@@ -1359,7 +1395,7 @@ export function CRMEmailsPage() {
       attachments: forwardAttachments,
     });
     if (mode === "reply" || mode === "reply-all") {
-      setAIDraftDialog({ mode, prompt: "", confirmedRecipient: allEmailsLookValid(mode === "reply" || mode === "reply-all" ? (inbound?.from_email ?? "") : "") });
+      setAIDraftDialog({ mode, prompt: "" });
     }
   };
 
@@ -2251,36 +2287,22 @@ export function CRMEmailsPage() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{aiDraftDialog?.mode === "new" ? "AI 写邮件" : "AI 创建回复草稿"}</DialogTitle>
-            <DialogDescription>像 agent 对话一样补充要求。创建前请确认收件人邮箱，取消会保留手动草稿编辑页。</DialogDescription>
+            <DialogDescription>输入你的邮件要求即可。Agent 会识别收件人；明确邮箱会直接填写，客户/联系人不明确时再让你确认。取消会保留手动草稿编辑页。</DialogDescription>
           </DialogHeader>
-          {composeDraft ? (
-            <div className="space-y-3">
-              <div className="rounded-md border bg-muted/20 p-3 text-sm">
-                <div className="mb-2 font-medium">Agent 信息检查</div>
-                <div className="space-y-1 text-xs text-muted-foreground">
-                  <div>收件人：{composeDraft.to || "未填写"}</div>
-                  <div>客户：{selectedAccount?.name || "未关联客户"}</div>
-                  <div>联系人：{selectedContact?.name || "未关联联系人"}</div>
-                  <div>邮箱校验：{allEmailsLookValid(composeDraft.to) ? "格式有效" : "请确认收件人邮箱"}</div>
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                <Input aria-label={emailCopy.to} placeholder="收件人邮箱，多个用逗号分隔" value={composeDraft.to} disabled={createAIDraft.isPending} onChange={(event) => { setComposeDraft({ ...composeDraft, to: event.target.value }); setAIDraftDialog((current) => current ? { ...current, confirmedRecipient: false } : current); }} />
-                <Button type="button" variant="outline" disabled={createAIDraft.isPending} onClick={() => setComposeRecipientPickerOpen(true)}>选择客户联系人</Button>
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={Boolean(aiDraftDialog?.confirmedRecipient) && allEmailsLookValid(composeDraft.to)} disabled={createAIDraft.isPending || !allEmailsLookValid(composeDraft.to)} onChange={(event) => setAIDraftDialog((current) => current ? { ...current, confirmedRecipient: event.target.checked } : current)} />
-                确认收件人邮箱正确
-              </label>
-              <textarea
-                className="min-h-32 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                placeholder="例如：用英文礼貌回复，说明我们会核对规格和交期；或：给这个客户写一封跟进报价邮件"
-                value={aiDraftDialog?.prompt ?? ""}
-                disabled={createAIDraft.isPending}
-                onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
-              />
+          <div className="space-y-3">
+            <textarea
+              className="min-h-36 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              placeholder="例如：给 xxx@sample.com 写封英文跟进邮件；或：给 XX 客户写邮件确认报价和交期"
+              value={aiDraftDialog?.prompt ?? ""}
+              disabled={createAIDraft.isPending}
+              onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
+            />
+            <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+              <div>当前草稿收件人：{composeDraft?.to || "Agent 将从输入中识别；若不明确会弹出客户联系人选择"}</div>
+              <div>关联客户：{selectedAccount?.name || "未关联客户"}</div>
+              <div>关联联系人：{selectedContact?.name || "未关联联系人"}</div>
             </div>
-          ) : null}
+          </div>
           {createAIDraft.isPending ? (
             <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
               <RefreshCw className="size-4 animate-spin" />
@@ -2290,7 +2312,7 @@ export function CRMEmailsPage() {
           {createAIDraft.isError ? <p className="text-sm text-destructive">AI 草稿生成失败，请稍后重试。</p> : null}
           <DialogFooter>
             <Button variant="outline" disabled={createAIDraft.isPending} onClick={() => setAIDraftDialog(null)}>取消</Button>
-            <Button disabled={createAIDraft.isPending || !composeDraft || !allEmailsLookValid(composeDraft.to) || !aiDraftDialog?.confirmedRecipient} onClick={() => createAIDraft.mutate()}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
+            <Button disabled={createAIDraft.isPending || !composeDraft || !aiDraftDialog?.prompt.trim()} onClick={() => { const payload = ensureAIDraftRecipients(); if (payload) createAIDraft.mutate(payload); }}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
