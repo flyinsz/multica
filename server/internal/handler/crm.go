@@ -5247,6 +5247,89 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	if mode == "" {
 		mode = "reply"
 	}
+	if mode == "recipient_lookup" {
+		prompt := "你是CRM收件人识别助手。只从用户写邮件要求中提取可用于检索客户/联系人的关键词，输出严格JSON：{\"chinese\":\"关键词说明\",\"customer_language\":\"\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"空格分隔的检索关键词\"}。关键词包括公司名、人名、邮箱、国家、网站、产品/项目词；不要写邮件正文。\n\n用户要求：" + strings.TrimSpace(req.Prompt)
+		payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.1, "response_format": map[string]string{"type": "json_object"}}
+		body, _ := json.Marshal(payload)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to build AI request")
+			return
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "failed to call AI model")
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			writeError(w, http.StatusBadGateway, "AI model returned error")
+			return
+		}
+		var out struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
+			writeError(w, http.StatusBadGateway, "invalid AI model response")
+			return
+		}
+		var parsed CRMEmailDraftAISuggestResponse
+		if err := json.Unmarshal([]byte(strings.TrimSpace(out.Choices[0].Message.Content)), &parsed); err != nil {
+			writeError(w, http.StatusBadGateway, "invalid AI suggestion JSON")
+			return
+		}
+		parsed.Source = source
+		writeJSON(w, http.StatusOK, parsed)
+		return
+	}
+	if mode == "context" {
+		prompt := "你是外贸CRM邮件背景分析助手。根据客户资料和邮件往来，输出严格JSON：{\"chinese\":\"给业务员看的中文背景信息和风险提示\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"\"}。要求：1) 不写可发送邮件正文；2) 提炼会影响回复内容的信息：客户背景、历史诉求、未解决问题、承诺/报价/交期/认证/附件风险、下一封邮件应避免虚构的点；3) 没有依据就写“暂无依据”；4) 结构化、简洁、中文。\n\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n当前主题：" + req.Subject + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
+		payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.1, "response_format": map[string]string{"type": "json_object"}}
+		body, _ := json.Marshal(payload)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to build AI request")
+			return
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "failed to call AI model")
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			writeError(w, http.StatusBadGateway, "AI model returned error")
+			return
+		}
+		var out struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
+			writeError(w, http.StatusBadGateway, "invalid AI model response")
+			return
+		}
+		var parsed CRMEmailDraftAISuggestResponse
+		if err := json.Unmarshal([]byte(strings.TrimSpace(out.Choices[0].Message.Content)), &parsed); err != nil {
+			writeError(w, http.StatusBadGateway, "invalid AI suggestion JSON")
+			return
+		}
+		parsed.CustomerLanguage = language
+		parsed.Source = source
+		writeJSON(w, http.StatusOK, parsed)
+		return
+	}
 	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件和用户要求；3) 中文参考用于内部查看；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务；6) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；7) mode=new 时主动推断收件人和主题，无法确定则留空；8) mode=reply/reply-all 时结合客户往来历史和客户信息回复。\n\n模式：" + mode + "\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
 	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
 	body, _ := json.Marshal(payload)

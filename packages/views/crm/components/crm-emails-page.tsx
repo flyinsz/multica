@@ -46,7 +46,7 @@ type ComposeAttachment = { file_name: string; content_type: string; content: str
 type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
 type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
-type AIAssistantTurn = { id: string; role: "user" | "assistant"; content: string; chinese?: string; language?: string };
+type AIAssistantTurn = { id: string; role: "user" | "assistant" | "system"; content: string; chinese?: string; language?: string };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string; signature: string };
 
@@ -1153,13 +1153,23 @@ export function CRMEmailsPage() {
     ...crmContactListOptions(wsId, composeAccountId),
     enabled: Boolean(composeAccountId),
   });
+  const fuzzyMatch = (value: unknown, q: string) => String(value ?? "").toLowerCase().includes(q);
   const filteredComposeAccounts = useMemo(() => {
     const q = composeAccountSearch.trim().toLowerCase();
     if (!q) return accounts;
-    return accounts.filter((account) => [account.name, account.website, account.industry, account.country]
+    const terms = q.split(/\s+/).filter(Boolean);
+    return accounts.filter((account) => terms.some((term) => [account.name, account.website, account.industry, account.country]
       .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(q)));
+      .some((value) => fuzzyMatch(value, term))));
   }, [accounts, composeAccountSearch]);
+  const filteredComposeContacts = useMemo(() => {
+    const q = composeAccountSearch.trim().toLowerCase();
+    if (!q) return contacts;
+    const terms = q.split(/\s+/).filter(Boolean);
+    return contacts.filter((contact: any) => terms.some((term) => [contact.name, contact.email, contact.role_title]
+      .filter(Boolean)
+      .some((value) => fuzzyMatch(value, term))));
+  }, [contacts, composeAccountSearch]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     ...crmEmailMessageListOptions(wsId, selectedThread?.id ?? ""),
     enabled: Boolean(selectedThread?.id),
@@ -1220,21 +1230,14 @@ export function CRMEmailsPage() {
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 
-  const summarizeAIAssistantContext = (draft = composeDraft) => {
-    const lines = [
-      selectedAccount ? `客户：${selectedAccount.name}${selectedAccount.industry ? ` · ${selectedAccount.industry}` : ""}${selectedAccount.country ? ` · ${selectedAccount.country}` : ""}` : "",
-      selectedContact ? `联系人：${selectedContact.name}${selectedContact.email ? ` <${selectedContact.email}>` : ""}` : "",
-      selectedThread ? `往来主题：${selectedThread.subject || draft?.subject || "—"}` : draft?.subject ? `主题：${draft.subject}` : "",
-      messages.length ? `往来记录：共 ${messages.length} 封，最近一封 ${messageTime((messages[messages.length - 1] as any)?.sent_at || (messages[messages.length - 1] as any)?.received_at)}` : "",
-    ].filter(Boolean);
-    return lines.join("\n");
-  };
-
   const resetAIAssistantForContext = (key: string, draft?: ComposeDraft | null) => {
     setAIAssistantContextKey(key);
     setAIReplyPrompt("");
-    const summary = summarizeAIAssistantContext(draft ?? composeDraft);
-    setAIAssistantTurns(summary ? [{ id: `summary-${Date.now()}`, role: "assistant", content: summary }] : []);
+    setAIAssistantTurns([]);
+    const currentDraft = draft ?? composeDraft;
+    if (currentDraft?.threadId || currentDraft?.accountId || currentDraft?.contactId) {
+      aiContextBrief.mutate(aiReplyPayload("生成邮件背景信息和风险提示", currentDraft));
+    }
   };
 
   const buildAIAssistantPrompt = (prompt: string) => {
@@ -1246,13 +1249,20 @@ export function CRMEmailsPage() {
   };
 
   const aiReplyPayload = (prompt = aiReplyPrompt.trim(), draft = composeDraft) => ({
-      thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
-      account_id: draft?.accountId || selectedThread?.account_id || null,
-      contact_id: draft?.contactId || selectedThread?.contact_id || null,
+      thread_id: draft?.threadId ?? null,
+      account_id: draft?.accountId || null,
+      contact_id: draft?.contactId || null,
       to_emails: splitEmailList(draft?.to),
       subject: draft?.subject ?? selectedThread?.subject ?? "",
       prompt: buildAIAssistantPrompt(prompt),
       mode: draft?.threadId ? "reply" : "new",
+  });
+
+  const aiContextBrief = useMutation({
+    mutationFn: (payload: ReturnType<typeof aiReplyPayload>) => api.suggestCRMEmailDraftReply({ ...payload, mode: "context" }),
+    onSuccess: (data: any) => {
+      setAIAssistantTurns((items) => [{ id: `context-${Date.now()}`, role: "system", content: data.chinese || data.customer_reply || "已加载邮件背景。" }, ...items.filter((turn) => turn.role !== "system")]);
+    },
   });
 
   const aiReplySuggestion = useMutation({
@@ -1269,9 +1279,9 @@ export function CRMEmailsPage() {
 
 
   const aiDraftPayload = (draft = composeDraft) => ({
-    thread_id: draft?.threadId === undefined ? (selectedThread?.id ?? null) : draft.threadId,
-    account_id: draft?.accountId || selectedThread?.account_id || null,
-    contact_id: draft?.contactId || selectedThread?.contact_id || null,
+    thread_id: draft?.threadId ?? null,
+    account_id: draft?.accountId || null,
+    contact_id: draft?.contactId || null,
     to_emails: splitEmailList(draft?.to),
     subject: draft?.subject ?? selectedThread?.subject ?? "",
     prompt: aiDraftDialog?.prompt.trim() ?? "",
@@ -1297,20 +1307,22 @@ export function CRMEmailsPage() {
     if (allEmailsLookValid(composeDraft.to)) return aiDraftPayload(composeDraft);
     if (aiDraftDialog.mode !== "new" && allEmailsLookValid(composeDraft.to || selectedContact?.email || "")) return aiDraftPayload({ ...composeDraft, to: composeDraft.to || selectedContact?.email || "" });
 
-    const q = prompt.toLowerCase();
-    const matches = accounts.filter((account) => [account.name, account.website, account.industry, account.country]
-      .filter(Boolean)
-      .some((value) => q.includes(String(value).toLowerCase())));
-    if (matches.length === 1) {
-      const match = matches[0]!;
-      setComposeDraft({ ...composeDraft, accountId: match.id, contactId: "", to: "" });
-      setComposeAccountSearch(match.name);
-    } else if (matches.length > 1) {
-      setComposeAccountSearch(prompt);
-    }
-    setComposeRecipientPickerOpen(true);
+    recipientLookup.mutate();
     return null;
   };
+
+  const recipientLookup = useMutation({
+    mutationFn: () => api.suggestCRMEmailDraftReply({ ...aiDraftPayload(composeDraft), mode: "recipient_lookup" }),
+    onSuccess: (data: any) => {
+      const keywords = [data.subject, data.chinese, ...(Array.isArray(data.to_emails) ? data.to_emails : [])].filter(Boolean).join(" ").trim();
+      setComposeAccountSearch(keywords || aiDraftDialog?.prompt.trim() || "");
+      setComposeRecipientPickerOpen(true);
+    },
+    onError: () => {
+      setComposeAccountSearch(aiDraftDialog?.prompt.trim() || "");
+      setComposeRecipientPickerOpen(true);
+    },
+  });
 
   const createAIDraft = useMutation({
     mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
@@ -1333,7 +1345,7 @@ export function CRMEmailsPage() {
 
   const applyComposeRecipient = (contact: any) => {
     if (!composeDraft) return;
-    const resolvedDraft = { ...composeDraft, contactId: contact.id, to: contact.email ?? composeDraft.to };
+    const resolvedDraft = { ...composeDraft, accountId: composeDraft.accountId || contact.account_id || "", contactId: contact.id, to: contact.email ?? composeDraft.to };
     setComposeDraft(resolvedDraft);
     setComposeRecipientPickerOpen(false);
     if (aiDraftDialog?.prompt.trim()) {
@@ -1757,6 +1769,11 @@ export function CRMEmailsPage() {
                         <div key={turn.id} className="ml-auto max-w-[85%] rounded-2xl bg-primary px-3 py-2 text-sm text-primary-foreground">
                           <div className="whitespace-pre-wrap">{turn.content}</div>
                         </div>
+                      ) : turn.role === "system" ? (
+                        <div key={turn.id} className="mr-auto max-w-[92%] rounded-2xl border bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950/20">
+                          <div className="mb-1 text-[11px] font-medium text-muted-foreground">背景信息与风险提示</div>
+                          <div className="whitespace-pre-wrap leading-6">{turn.content}</div>
+                        </div>
                       ) : (
                         <div key={turn.id} className="group relative mr-auto max-w-[92%] rounded-2xl border bg-muted/40 px-3 py-2 text-sm">
                           <Button type="button" size="sm" className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setComposeDraft({ ...composeDraft, body: turn.content ? appendMailboxSignature(turn.content, mailboxes.find((mailbox) => mailbox.id === composeDraft.mailboxId)?.signature) : composeDraft.body })}>采纳</Button>
@@ -1764,6 +1781,7 @@ export function CRMEmailsPage() {
                           <div className="whitespace-pre-wrap pr-14 leading-6">{turn.content}</div>
                         </div>
                       )) : <div className="text-xs text-muted-foreground">输入修改意见后生成建议，历史会保留在这里。</div>}
+                      {aiContextBrief.isPending ? <div className="mr-auto inline-flex items-center gap-2 rounded-2xl border bg-amber-50 px-3 py-2 text-xs text-muted-foreground dark:bg-amber-950/20"><RefreshCw className="size-3 animate-spin" />正在分析背景信息…</div> : null}
                       {aiReplySuggestion.isPending || createAIDraft.isPending ? <div className="mr-auto inline-flex items-center gap-2 rounded-2xl border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"><RefreshCw className="size-3 animate-spin" />正在生成建议…</div> : null}
                     </div>
                     <div className="mt-3 flex gap-2">
@@ -2162,20 +2180,18 @@ export function CRMEmailsPage() {
                 ))}
                 {!filteredComposeAccounts.length && <div className="p-4 text-sm text-muted-foreground">No customer found.</div>}
               </div>
-              {composeDraft.accountId && (
-                <div className="rounded-md border bg-muted/20 p-3">
-                  <div className="mb-2 text-xs font-medium text-muted-foreground">Contact</div>
-                  <div className="max-h-48 space-y-2 overflow-y-auto">
-                    {composeAccountContacts.map((contact: any) => (
-                      <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => applyComposeRecipient(contact)}>
-                        <div className="font-medium">{contact.name}</div>
-                        <div className="text-xs text-muted-foreground">{contact.email || emailCopy.noEmail}</div>
-                      </button>
-                    ))}
-                    {!composeAccountContacts.length && <div className="text-xs text-muted-foreground">No contacts. Type recipient manually.</div>}
-                  </div>
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="mb-2 text-xs font-medium text-muted-foreground">匹配联系人</div>
+                <div className="max-h-48 space-y-2 overflow-y-auto">
+                  {(composeDraft.accountId ? composeAccountContacts : filteredComposeContacts).map((contact: any) => (
+                    <button key={contact.id} type="button" className="block w-full rounded border bg-background px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => applyComposeRecipient(contact)}>
+                      <div className="font-medium">{contact.name}</div>
+                      <div className="text-xs text-muted-foreground">{contact.email || emailCopy.noEmail}</div>
+                    </button>
+                  ))}
+                  {!(composeDraft.accountId ? composeAccountContacts : filteredComposeContacts).length && <div className="text-xs text-muted-foreground">没有匹配联系人，可手动输入收件人。</div>}
                 </div>
-              )}
+              </div>
               <Input aria-label={emailCopy.to} placeholder={emailCopy.manualRecipient} value={composeDraft.to} onChange={(event) => setComposeDraft({ ...composeDraft, to: event.target.value })} />
             </div>
           )}
