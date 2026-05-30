@@ -1005,6 +1005,7 @@ type CRMIMAPSettingResponse struct {
 	SMTPTLSMode     *string `json:"smtp_tls_mode"`
 	SMTPUsername    *string `json:"smtp_username"`
 	SMTPSecretRef   *string `json:"smtp_secret_ref"`
+	Signature       string  `json:"signature"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
 }
@@ -1028,6 +1029,7 @@ type UpsertCRMIMAPSettingRequest struct {
 	SMTPUsername  *string `json:"smtp_username"`
 	SMTPSecretRef *string `json:"smtp_secret_ref"`
 	SMTPSecret    *string `json:"smtp_secret"`
+	Signature     string  `json:"signature"`
 }
 
 type CRMIMAPSyncRunResponse struct {
@@ -2737,7 +2739,7 @@ func scanCRMIMAPSetting(row pgx.Row) (CRMIMAPSettingResponse, error) {
 	var ownerID pgtype.UUID
 	var smtpPort pgtype.Int4
 	var tested, created, updated pgtype.Timestamptz
-	err := row.Scan(&id, &ws, &r.Label, &r.Email, &r.Host, &r.Port, &r.TLSMode, &r.Username, &secretRef, &r.SyncEnabled, &status, &msg, &tested, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef, &created, &updated)
+	err := row.Scan(&id, &ws, &r.Label, &r.Email, &r.Host, &r.Port, &r.TLSMode, &r.Username, &secretRef, &r.SyncEnabled, &status, &msg, &tested, &ownerType, &ownerID, &smtpHost, &smtpPort, &smtpTLSMode, &smtpUsername, &smtpSecretRef, &r.Signature, &created, &updated)
 	r.ID = uuidToString(id)
 	r.WorkspaceID = uuidToString(ws)
 	r.SecretRef = textToPtr(secretRef)
@@ -2764,7 +2766,7 @@ func (h *Handler) ListCRMIMAPSettings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.DB.Query(r.Context(), `SELECT id, workspace_id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, created_at, updated_at FROM crm_imap_setting WHERE workspace_id=$1 ORDER BY updated_at DESC`, workspaceID)
+	rows, err := h.DB.Query(r.Context(), `SELECT id, workspace_id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, COALESCE(signature,''), created_at, updated_at FROM crm_imap_setting WHERE workspace_id=$1 ORDER BY updated_at DESC`, workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM IMAP settings")
 		return
@@ -2825,6 +2827,7 @@ func (h *Handler) UpsertCRMIMAPSetting(w http.ResponseWriter, r *http.Request) {
 	smtpTLSMode := cleanOptionalText(req.SMTPTLSMode)
 	smtpUsername := cleanOptionalText(req.SMTPUsername)
 	smtpSecretRef := cleanOptionalText(req.SMTPSecretRef)
+	signature := cleanStringForDB(req.Signature)
 	if req.SMTPSecret != nil && strings.TrimSpace(*req.SMTPSecret) != "" {
 		smtpSecretRef = pgtype.Text{String: encodeCRMIMAPInlineSecret(strings.TrimSpace(*req.SMTPSecret)), Valid: true}
 	}
@@ -2834,9 +2837,9 @@ func (h *Handler) UpsertCRMIMAPSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	var row pgx.Row
 	if id.Valid {
-		row = h.DB.QueryRow(r.Context(), `UPDATE crm_imap_setting SET label=$3,email=$4,host=$5,port=$6,tls_mode=$7,username=$8,secret_ref=$9,sync_enabled=$10,owner_type=$11,owner_id=$12,smtp_host=$13,smtp_port=$14,smtp_tls_mode=$15,smtp_username=$16,smtp_secret_ref=$17,updated_at=now() WHERE id=$1 AND workspace_id=$2 RETURNING id, workspace_id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, created_at, updated_at`, id, workspaceID, label, email, host, req.Port, tlsMode, user, secretRef, req.SyncEnabled, ownerType, ownerID, smtpHost, smtpPort, smtpTLSMode, smtpUsername, smtpSecretRef)
+		row = h.DB.QueryRow(r.Context(), `UPDATE crm_imap_setting SET label=$3,email=$4,host=$5,port=$6,tls_mode=$7,username=$8,secret_ref=$9,sync_enabled=$10,owner_type=$11,owner_id=$12,smtp_host=$13,smtp_port=$14,smtp_tls_mode=$15,smtp_username=$16,smtp_secret_ref=$17,signature=$18,updated_at=now() WHERE id=$1 AND workspace_id=$2 RETURNING id, workspace_id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, COALESCE(signature,''), created_at, updated_at`, id, workspaceID, label, email, host, req.Port, tlsMode, user, secretRef, req.SyncEnabled, ownerType, ownerID, smtpHost, smtpPort, smtpTLSMode, smtpUsername, smtpSecretRef, signature)
 	} else {
-		row = h.DB.QueryRow(r.Context(), `INSERT INTO crm_imap_setting (workspace_id,label,email,host,port,tls_mode,username,secret_ref,sync_enabled,owner_type,owner_id,smtp_host,smtp_port,smtp_tls_mode,smtp_username,smtp_secret_ref) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id, workspace_id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, created_at, updated_at`, workspaceID, label, email, host, req.Port, tlsMode, user, secretRef, req.SyncEnabled, ownerType, ownerID, smtpHost, smtpPort, smtpTLSMode, smtpUsername, smtpSecretRef)
+		row = h.DB.QueryRow(r.Context(), `INSERT INTO crm_imap_setting (workspace_id,label,email,host,port,tls_mode,username,secret_ref,sync_enabled,owner_type,owner_id,smtp_host,smtp_port,smtp_tls_mode,smtp_username,smtp_secret_ref,signature) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id, workspace_id, label, email, host, port, tls_mode, username, secret_ref, sync_enabled, last_test_status, last_test_message, last_tested_at, owner_type, owner_id, smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret_ref, COALESCE(signature,''), created_at, updated_at`, workspaceID, label, email, host, req.Port, tlsMode, user, secretRef, req.SyncEnabled, ownerType, ownerID, smtpHost, smtpPort, smtpTLSMode, smtpUsername, smtpSecretRef, signature)
 	}
 	item, err := scanCRMIMAPSetting(row)
 	if err != nil {

@@ -440,6 +440,7 @@ export interface CRMIMAPSetting {
   smtp_tls_mode?: string | null;
   smtp_username?: string | null;
   smtp_secret_ref?: string | null;
+  signature?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -468,6 +469,7 @@ export interface UpsertCRMIMAPSettingRequest {
   smtp_username?: string | null;
   smtp_secret_ref?: string | null;
   smtp_secret?: string | null;
+  signature?: string | null;
 }
 
 export interface CRMIMAPTestResponse {

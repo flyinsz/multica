@@ -89,7 +89,7 @@ type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_a
 
 const meta: Record<SettingKey, { title: string; description: string; icon: typeof Mail }> = {
   email_pending_reply: {
-    title: "邮件待回复巡检",
+    title: "邮件AI配置 / 待回复巡检",
     description: "低成本 SQL 检查邮件线程；先审视是否已处理或已有 issue，再决定是否启动 AI。",
     icon: Mail,
   },
@@ -295,6 +295,8 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
         config.handled_window_hours = numberValue(form.handled_window_hours, 0, 24 * 365);
         config.stale_done_issue_days = numberValue(form.stale_done_issue_days, 0, 365);
         config.same_subject_dedupe_days = numberValue(form.same_subject_dedupe_days, 0, 365);
+        config.email_default_agent_id = form.email_default_agent_id || "";
+        config.email_default_language = form.email_default_language || "zh-Hans";
       } else if (setting.automation_key === "due_followup") {
         config.duplicate_protection_days = numberValue(form.duplicate_protection_days, 0, 365);
         config.handled_window_hours = numberValue(form.handled_window_hours, 0, 24 * 365);

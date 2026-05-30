@@ -1,0 +1,2 @@
+ALTER TABLE crm_imap_setting
+    ADD COLUMN IF NOT EXISTS signature TEXT NOT NULL DEFAULT '';

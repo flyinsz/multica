@@ -47,9 +47,9 @@ type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
 type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
 
-type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string };
+type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string; signature: string };
 
-const emptyMailboxDraft: MailboxDraft = { label: "", email: "", host: "", port: "993", tls_mode: "ssl", username: "", secret_ref: "", secret: "", sync_enabled: false, owner_type: "", owner_id: "", smtp_host: "", smtp_port: "465", smtp_tls_mode: "ssl", smtp_username: "", smtp_secret_ref: "", smtp_secret: "" };
+const emptyMailboxDraft: MailboxDraft = { label: "", email: "", host: "", port: "993", tls_mode: "ssl", username: "", secret_ref: "", secret: "", sync_enabled: false, owner_type: "", owner_id: "", smtp_host: "", smtp_port: "465", smtp_tls_mode: "ssl", smtp_username: "", smtp_secret_ref: "", smtp_secret: "", signature: "" };
 
 function inferMailboxPreset(email: string) {
   const domain = email.trim().toLowerCase().split("@")[1] ?? "";
@@ -127,7 +127,7 @@ function EmailHTMLFrame({ html }: { html: string }) {
 
 function mailboxToDraft(setting?: CRMIMAPSetting | null): MailboxDraft {
   if (!setting) return emptyMailboxDraft;
-  return { id: setting.id, label: setting.label, email: setting.email, host: setting.host, port: String(setting.port), tls_mode: setting.tls_mode, username: setting.username, secret_ref: setting.secret_ref ?? "", secret: "", sync_enabled: setting.sync_enabled, owner_type: setting.owner_type ?? "", owner_id: setting.owner_id ?? "", smtp_host: setting.smtp_host ?? "", smtp_port: String(setting.smtp_port ?? 465), smtp_tls_mode: setting.smtp_tls_mode ?? "ssl", smtp_username: setting.smtp_username ?? "", smtp_secret_ref: setting.smtp_secret_ref ?? "", smtp_secret: "" };
+  return { id: setting.id, label: setting.label, email: setting.email, host: setting.host, port: String(setting.port), tls_mode: setting.tls_mode, username: setting.username, secret_ref: setting.secret_ref ?? "", secret: "", sync_enabled: setting.sync_enabled, owner_type: setting.owner_type ?? "", owner_id: setting.owner_id ?? "", smtp_host: setting.smtp_host ?? "", smtp_port: String(setting.smtp_port ?? 465), smtp_tls_mode: setting.smtp_tls_mode ?? "ssl", smtp_username: setting.smtp_username ?? "", smtp_secret_ref: setting.smtp_secret_ref ?? "", smtp_secret: "", signature: setting.signature ?? "" };
 }
 
 function messageTime(value?: string | null) {
@@ -176,6 +176,12 @@ function splitEmailList(value?: string | null) {
 function allEmailsLookValid(value?: string | null) {
   const emails = splitEmailList(value);
   return emails.length > 0 && emails.every((email) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
+}
+
+function appendMailboxSignature(body: string, signature?: string | null) {
+  const sig = (signature ?? "").trim();
+  if (!sig) return body;
+  return `${body.replace(/\s+$/g, "")}\n\n${sig}`;
 }
 
 function extractEmails(value?: string | null) {
@@ -836,6 +842,7 @@ export function CRMEmailsPage() {
       smtp_username: mailboxDraft.smtp_username || null,
       smtp_secret_ref: mailboxDraft.smtp_secret_ref || null,
       smtp_secret: mailboxDraft.smtp_secret || null,
+      signature: mailboxDraft.signature,
     }),
     onSuccess: (setting) => {
       setMailboxDraft(mailboxToDraft(setting));
@@ -1051,13 +1058,13 @@ export function CRMEmailsPage() {
   });
 
   useEffect(() => {
-    if (!wsId || activeFolder === "drafts" || !selectedMailbox?.id) return;
+    if (!wsId || composeDraft || activeFolder === "drafts" || !selectedMailbox?.id) return;
     const timer = window.setInterval(() => {
       if (refreshMailbox.isPending) return;
       refreshMailbox.mutate();
     }, 20000);
     return () => window.clearInterval(timer);
-  }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
+  }, [activeFolder, composeDraft, refreshMailbox, selectedMailbox?.id, wsId]);
 
   const saveEmailDraft = useMutation({
     mutationFn: async (options?: { close?: boolean }) => {
@@ -1087,7 +1094,7 @@ export function CRMEmailsPage() {
         setComposeDraft((draft) => draft ? { ...draft, draftId: result.id } : draft);
       }
       setMailboxStatus(emailCopy.draftSaved);
-      setActiveFolder("drafts");
+      if (result.close) setActiveFolder("drafts");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     },
   });
@@ -1329,6 +1336,7 @@ export function CRMEmailsPage() {
     if (!(await leaveComposeIfNeeded())) return;
     setAIReplyPrompt("");
     setAIDraftDialog(null);
+    const activeMailbox = selectedMailbox ?? mailboxes[0] ?? null;
     if (mode === "new") {
       setSelectedThreadIds([]);
       setSelectedMessageId(null);
@@ -1336,14 +1344,14 @@ export function CRMEmailsPage() {
       setActiveFolder("inbox");
       setComposeDraft({
         threadId: null,
-        mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
+        mailboxId: activeMailbox?.id ?? "",
         accountId: "",
         contactId: "",
         to: "",
         cc: "",
         bcc: "",
         subject: "",
-        body: "",
+        body: appendMailboxSignature("", activeMailbox?.signature),
         scheduledSendAt: "",
         attachments: [],
       });
@@ -1357,8 +1365,9 @@ export function CRMEmailsPage() {
         return;
       }
     }
-    const inbound = messages.find((message) => message.direction === "inbound" && message.from_email);
-    const lastMsg = messages[messages.length - 1] || inbound;
+    const fallbackInbound = selectedMessage?.from_email ? selectedMessage : null;
+    const inbound: any = messages.find((message) => message.direction === "inbound" && message.from_email) ?? fallbackInbound;
+    const lastMsg: any = messages[messages.length - 1] || inbound;
     const subjectBase = selectedThread?.subject ?? "";
     const subject = mode === "forward"
       ? (subjectBase.toLowerCase().startsWith("fwd:") ? subjectBase : `Fwd: ${subjectBase}`)
@@ -1383,14 +1392,14 @@ export function CRMEmailsPage() {
       : [];
     setComposeDraft({
       threadId: selectedThread?.id ?? null,
-      mailboxId: selectedMailbox?.id ?? mailboxes[0]?.id ?? "",
+      mailboxId: activeMailbox?.id ?? "",
       accountId: selectedThread?.account_id ?? "",
       contactId: selectedThread?.contact_id ?? "",
       to: mode === "forward" ? "" : inbound?.from_email ?? "",
       cc: replyAll ? (inbound?.cc_emails ?? []).join(", ") : "",
       bcc: "",
       subject,
-      body,
+      body: appendMailboxSignature(body, activeMailbox?.signature),
       scheduledSendAt: "",
       attachments: forwardAttachments,
     });
@@ -2247,6 +2256,10 @@ export function CRMEmailsPage() {
             </select>
             <Input aria-label={emailCopy.smtpUsername} placeholder={emailCopy.smtpUsername} value={mailboxDraft.smtp_username} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, smtp_username: event.target.value }))} />
             <Input className="sm:col-span-2" aria-label={emailCopy.smtpPassword} placeholder={emailCopy.smtpPassword} value={mailboxDraft.smtp_secret} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, smtp_secret: event.target.value }))} />
+            <label className="space-y-1 text-sm sm:col-span-2">
+              <span className="text-xs font-medium text-muted-foreground">邮件签名</span>
+              <textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="--\nYour name" value={mailboxDraft.signature} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, signature: event.target.value }))} />
+            </label>
           </div>
           <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">{emailCopy.transportNote}</p>
           {mailboxStatus ? <p className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">{mailboxStatus}</p> : null}
@@ -2287,22 +2300,13 @@ export function CRMEmailsPage() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{aiDraftDialog?.mode === "new" ? "AI 写邮件" : "AI 创建回复草稿"}</DialogTitle>
-            <DialogDescription>输入你的邮件要求即可。Agent 会识别收件人；明确邮箱会直接填写，客户/联系人不明确时再让你确认。取消会保留手动草稿编辑页。</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <textarea
-              className="min-h-36 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              placeholder="例如：给 xxx@sample.com 写封英文跟进邮件；或：给 XX 客户写邮件确认报价和交期"
-              value={aiDraftDialog?.prompt ?? ""}
-              disabled={createAIDraft.isPending}
-              onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
-            />
-            <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-              <div>当前草稿收件人：{composeDraft?.to || "Agent 将从输入中识别；若不明确会弹出客户联系人选择"}</div>
-              <div>关联客户：{selectedAccount?.name || "未关联客户"}</div>
-              <div>关联联系人：{selectedContact?.name || "未关联联系人"}</div>
-            </div>
-          </div>
+          <textarea
+            className="min-h-36 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            value={aiDraftDialog?.prompt ?? ""}
+            disabled={createAIDraft.isPending}
+            onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
+          />
           {createAIDraft.isPending ? (
             <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
               <RefreshCw className="size-4 animate-spin" />
