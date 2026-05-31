@@ -1,14 +1,18 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, Flame, Mail, Plus, TrendingUp, Users } from "lucide-react";
 import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/crm/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountStatus } from "@multica/core/types";
+import { api } from "@multica/core/api";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
@@ -94,6 +98,9 @@ export function CRMDashboardPage() {
   const navigation = useNavigation();
   const { t, i18n } = useT("crm");
   const locale = normalizeLocale(i18n.language);
+  const [aiComposeOpen, setAIComposeOpen] = useState(false);
+  const [aiComposePrompt, setAIComposePrompt] = useState("");
+  const [aiComposeResult, setAIComposeResult] = useState("");
   const { data: todayFollowUps = [], isLoading: todayLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "today", sort: "next_follow_up" }));
   const { data: weekFollowUps = [], isLoading: weekLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "next_7_days", sort: "next_follow_up" }));
   const { data: overdueFollowUps = [], isLoading: overdueLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "overdue", sort: "next_follow_up" }));
@@ -127,6 +134,11 @@ export function CRMDashboardPage() {
     });
     navigation.push(`${paths.crmCustomers()}${params.size ? `?${params.toString()}` : ""}`);
   };
+
+  const generateAIEmail = useMutation({
+    mutationFn: () => api.suggestCRMEmailDraftReply({ prompt: aiComposePrompt, mode: "new", language: locale }),
+    onSuccess: (result) => setAIComposeResult(result.customer_reply || result.chinese || ""),
+  });
 
   const reportGroups = useMemo(() => {
     const statuses = countBy(allAccounts, (account) => account.status);
@@ -171,6 +183,7 @@ export function CRMDashboardPage() {
           <h1 className="text-sm font-medium">{t(($) => $.dashboard.title)}</h1>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setAIComposeOpen(true)}><Mail className="mr-1 size-4" />AI 写邮件</Button>
           <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmEmails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
           <Button size="sm" onClick={() => navigation.push(paths.crmCustomers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
@@ -259,6 +272,25 @@ export function CRMDashboardPage() {
           </section>
         </div>
       </div>
+
+      <Dialog open={aiComposeOpen} onOpenChange={setAIComposeOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>AI 写邮件</DialogTitle>
+            <DialogDescription>输入客户、主题、语气、要点，生成可复制邮件正文。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea className="min-h-28" value={aiComposePrompt} onChange={(event) => setAIComposePrompt(event.target.value)} placeholder="例如：给越南客户写英文跟进邮件，确认报价和交期，语气专业简洁。" />
+            {aiComposeResult ? <Textarea className="min-h-48" value={aiComposeResult} onChange={(event) => setAIComposeResult(event.target.value)} /> : null}
+            {generateAIEmail.isError ? <p className="text-xs text-destructive">AI 生成失败，请检查 CRM AI 配置。</p> : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAIComposeOpen(false)}>关闭</Button>
+            <Button disabled={!aiComposePrompt.trim() || generateAIEmail.isPending} onClick={() => generateAIEmail.mutate()}>{generateAIEmail.isPending ? "生成中…" : "生成"}</Button>
+            <Button variant="outline" disabled={!aiComposeResult} onClick={() => navigator.clipboard?.writeText(aiComposeResult)}>复制正文</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

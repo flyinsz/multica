@@ -161,6 +161,23 @@ function profileDisplayText(profileJson: Record<string, unknown> | undefined, ke
   return "";
 }
 
+function profileFollowUpValue(profileJson: Record<string, unknown> | undefined) {
+  const recommendation = profileJson?.follow_up_recommendation;
+  const rec = recommendation && typeof recommendation === "object" && !Array.isArray(recommendation) ? recommendation as Record<string, unknown> : null;
+  const rawDate = rec?.next_follow_up_at ?? rec?.date ?? profileJson?.next_follow_up_at;
+  const date = typeof rawDate === "string" && rawDate ? new Date(rawDate) : null;
+  const parts = [
+    date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : typeof rawDate === "string" ? rawDate : "",
+    typeof rec?.reason === "string" ? rec.reason : "",
+    typeof rec?.confidence === "string" ? `置信度：${rec.confidence}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function emailSummaryText(item: { snippet?: string | null; subject?: string | null }) {
+  return (item.snippet || item.subject || "").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
 function profileToForm(profile: { summary?: string | null; profile_json?: Record<string, unknown> } | null | undefined): ProfileFormState {
   return {
     summary: profile?.summary ?? "",
@@ -473,8 +490,10 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const { data: profile, isLoading: profileLoading } = useQuery(crmAccountProfileOptions(wsId, accountId));
   const { data: contacts = [], isLoading: contactsLoading } = useQuery(crmContactListOptions(wsId, accountId));
   const { data: notes = [], isLoading: notesLoading } = useQuery(crmCommunicationNoteListOptions(wsId, accountId));
-  const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId, "all"));
+  const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId, ""));
   const emailThreads = emailThreadData?.threads ?? [];
+  const emailMessages = emailThreadData?.messages ?? [];
+  const accountEmailItems = emailMessages.length ? emailMessages : emailThreads;
   const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
@@ -619,8 +638,19 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
 
   const refreshProfile = useMutation({
     mutationFn: () => api.refreshCRMAccountProfile(accountId),
-    onSuccess: async () => {
+    onSuccess: async (nextProfile) => {
+      await api.createCRMCommunicationNote(accountId, {
+        channel: "manual",
+        direction: "note",
+        subject: "AI 客户画像已刷新",
+        body: [
+          nextProfile.summary ? `摘要：${nextProfile.summary}` : "摘要：—",
+          profileFollowUpValue(nextProfile.profile_json) ? `下次跟进建议：${profileFollowUpValue(nextProfile.profile_json)}` : "下次跟进建议：—",
+          nextProfile.source_summary ? `来源：${nextProfile.source_summary}` : "来源：AI profile refresh",
+        ].join("\n"),
+      });
       await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.notes(wsId, accountId), refetchType: "active" });
     },
   });
 
@@ -854,7 +884,9 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 <div className="mt-4 space-y-4">
                   <FieldRow label={t(($) => $.profile.summary_title)} value={profile.summary} />
                   <FieldRow label={t(($) => $.profile.source_summary)} value={profile.source_summary} />
-                  <FieldRow label={t(($) => $.profile.updated_at)} value={profile.updated_at} />
+                  <FieldRow label={t(($) => $.profile.updated_at)} value={profile.updated_at ? new Date(profile.updated_at).toLocaleString() : null} />
+                  <FieldRow label="当前下次跟进时间" value={account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : null} />
+                  <FieldRow label="AI 建议下次跟进" value={profileFollowUpValue(profile.profile_json)} />
                   <div className="grid gap-3 sm:grid-cols-2">
                     <FieldRow label={t(($) => $.profile.business_model)} value={profileText(profile.profile_json, "business_model")} />
                     <FieldRow label={t(($) => $.profile.main_products)} value={profileText(profile.profile_json, "main_products")} />
@@ -931,7 +963,26 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
 
           <TabsContent value="emails" className="space-y-6">
             <section className="rounded-lg border bg-card">
-              {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : emailThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : <div className="divide-y">{emailThreads.map((thread) => <button key={thread.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(`${paths.crmEmails()}?thread=${encodeURIComponent(thread.id)}`)}><div className="font-medium">{thread.subject}</div><div className="mt-1 text-xs text-muted-foreground">{[thread.mailbox, thread.direction, thread.status, t(($) => $.common.count_messages, { count: thread.message_count })].filter(Boolean).join(" · ")}</div></button>)}</div>}
+              {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : accountEmailItems.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : (
+                <div className="divide-y">
+                  {accountEmailItems.map((item: any) => {
+                    const threadId = item.thread_id ?? item.id;
+                    const folder = item.folder || (item.direction === "outbound" ? "sent" : "inbox");
+                    const when = item.received_at || item.sent_at || item.last_message_at || item.updated_at;
+                    const sender = item.direction === "outbound" ? (item.to_emails || []).join(", ") : [item.from_name, item.from_email].filter(Boolean).join(" <").replace(/ <$/, "");
+                    return (
+                      <button key={item.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => window.open(`${paths.crmEmails()}?thread=${encodeURIComponent(threadId)}&folder=${encodeURIComponent(folder)}`, "_blank", "noopener,noreferrer") }>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 truncate font-medium">{item.subject || t(($) => $.notes.untitled)}</div>
+                          <Badge variant={item.direction === "outbound" ? "secondary" : "default"}>{item.direction === "outbound" ? "发件箱" : "收件箱"}</Badge>
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{emailSummaryText(item) || "—"}</div>
+                        <div className="mt-2 text-xs text-muted-foreground">{[item.mailbox, sender, when ? new Date(when).toLocaleString() : "", item.thread_message_count ? t(($) => $.common.count_messages, { count: item.thread_message_count }) : null].filter(Boolean).join(" · ")}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           </TabsContent>
 

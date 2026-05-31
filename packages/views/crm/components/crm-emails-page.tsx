@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
+import { Archive, ArrowRight, Building2, ChevronsLeft, ChevronsRight, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -611,6 +611,7 @@ export function CRMEmailsPage() {
   const [acceptedAITurnIds, setAcceptedAITurnIds] = useState<Set<string>>(() => new Set());
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [folderSidebarExpanded, setFolderSidebarExpanded] = useState(false);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
@@ -1764,9 +1765,12 @@ export function CRMEmailsPage() {
         </div>
       </PageHeader>
 
-      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-0 ${composeHidesList ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[220px_360px_minmax(0,1fr)]"}`}>
-        <aside className="flex min-h-0 flex-col border-r bg-card/80 p-3">
-          <div className="mb-3 rounded-lg border bg-background p-3">
+      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-0 ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_360px_minmax(0,1fr)]" : "lg:grid-cols-[64px_360px_minmax(0,1fr)]")}`}>
+        <aside className={`flex min-h-0 flex-col border-r bg-card/80 p-2 ${folderSidebarExpanded ? "" : "items-center"}`}>
+          <Button className="mb-2" size="icon" variant="ghost" title={folderSidebarExpanded ? "收起" : "展开"} onClick={() => setFolderSidebarExpanded((value) => !value)}>
+            {folderSidebarExpanded ? <ChevronsLeft className="size-4" /> : <ChevronsRight className="size-4" />}
+          </Button>
+          {folderSidebarExpanded ? <div className="mb-3 rounded-lg border bg-background p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t(($) => $.emails.mailboxes)}</div>
             <select
               aria-label={emailCopy.activeMailbox}
@@ -1785,7 +1789,7 @@ export function CRMEmailsPage() {
                 {refreshMailbox.isPending ? emailCopy.syncing : isEmailRefreshing ? "刷新中" : emailCopy.refreshNewMail}
               </Button>
             ) : null}
-          </div>
+          </div> : null}
           <nav className="space-y-1" aria-label={t(($) => $.emails.folder_nav)}>
             {([
               ["inbox", Inbox, t(($) => $.emails.folder_inbox)],
@@ -1800,7 +1804,8 @@ export function CRMEmailsPage() {
               <button
                 key={folder}
                 type="button"
-                className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-muted ${activeFolder === folder ? "bg-muted font-medium" : ""}`}
+                title={label}
+                className={`flex w-full items-center justify-between rounded-md py-2 text-sm hover:bg-muted ${folderSidebarExpanded ? "px-3" : "px-2"} ${activeFolder === folder ? "bg-muted font-medium" : ""}`}
                 onClick={async () => {
                   if (!(await leaveComposeIfNeeded())) return;
                   setActiveFolder(folder);
@@ -1812,12 +1817,12 @@ export function CRMEmailsPage() {
                   setComposeDraft(null);
                 }}
               >
-                <span className="flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{label}</span>
-                <Badge variant={folder === "inbox" && (folderCounts.inbox_unread ?? 0) > 0 ? "default" : "secondary"} className="tabular-nums">{folder === "inbox" ? (folderCounts.inbox_unread ?? 0) : (displayFolderCounts[folder] ?? 0)}</Badge>
+                <span className="flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{folderSidebarExpanded ? label : null}</span>
+                <Badge variant={folder === "inbox" && (folderCounts.inbox_unread ?? 0) > 0 ? "default" : "secondary"} className={folderSidebarExpanded ? "tabular-nums" : "min-w-4 px-1 text-[10px] tabular-nums"}>{folder === "inbox" ? (folderCounts.inbox_unread ?? 0) : (displayFolderCounts[folder] ?? 0)}</Badge>
               </button>
             ))}
           </nav>
-          <Button className="mt-auto" variant="outline" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{t(($) => $.emails.add_mailbox)}</Button>
+          <Button className="mt-auto" size={folderSidebarExpanded ? "default" : "icon"} variant="outline" title={t(($) => $.emails.add_mailbox)} onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{folderSidebarExpanded ? t(($) => $.emails.add_mailbox) : <Settings className="size-4" />}</Button>
         </aside>
 
         <aside className={`min-h-0 flex-col border-r bg-background ${composeHidesList ? "hidden" : "flex"}`}>
