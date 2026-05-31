@@ -954,6 +954,14 @@ func normalizeCRMCustomerWikiProfile(profile map[string]any) map[string]any {
 	setList("risks", "risk_notes")
 	setList("preferences", "communication_preference")
 	setList("buying_signals", "procurement_needs", "recent_progress")
+	if _, ok := profile["follow_up_recommendation"].(map[string]any); !ok {
+		profile["follow_up_recommendation"] = map[string]any{
+			"next_follow_up_at": "",
+			"reason":            "",
+			"confidence":        "medium",
+			"source_refs":       []any{},
+		}
+	}
 	setList("last_interactions", "recent_progress")
 	setList("aliases")
 	setList("keywords", "search_keywords")
@@ -991,7 +999,7 @@ func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountN
 	if baseURL == "" || apiKey == "" || model == "" {
 		return nil, nil
 	}
-	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions,aliases,search_keywords,source_refs,confidence。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容；6) aliases/search_keywords 输出数组，包含客户简称、人名、邮箱前缀、域名、WhatsApp/微信/LinkedIn等可检索别名；7) source_refs 输出数组，记录依据类型和简短来源；8) confidence 输出0到1数字。\n\n" +
+	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions,follow_up_recommendation,aliases,search_keywords,source_refs,confidence。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容；6) follow_up_recommendation 输出对象，字段为 next_follow_up_at（ISO8601或空字符串）、reason、confidence（high/medium/low或0到1数字）、source_refs（数组），需结合最新入站/出站状态、无回复时长、open issue、购买信号和风险判断；7) aliases/search_keywords 输出数组，包含客户简称、人名、邮箱前缀、域名、WhatsApp/微信/LinkedIn等可检索别名；8) source_refs 输出数组，记录依据类型和简短来源；9) confidence 输出0到1数字。\n\n" +
 		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
 	payload := map[string]any{
 		"model": model,

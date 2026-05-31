@@ -68,6 +68,12 @@ Target JSON contract:
   "risks": [],
   "preferences": [],
   "buying_signals": [],
+  "follow_up_recommendation": {
+    "next_follow_up_at": "",
+    "reason": "",
+    "confidence": "medium",
+    "source_refs": []
+  },
   "last_interactions": [],
   "aliases": [],
   "keywords": [],
@@ -294,7 +300,25 @@ Rules:
 
 - Avoid duplicates for same due window.
 - Existing done issues may mean stale due date already handled.
+- Do not rely only on stored `next_follow_up_at`; when profile/emails show customer already replied, paused, or needs different cadence, request LLM recommendation and update follow-up date.
+- LLM recommendation must return `next_follow_up_at`, `reason`, `confidence`, and `source_refs`; low confidence creates human-review issue instead of silently changing date.
 - Recommend channel in future: email/WhatsApp/both.
+
+### 6.4.1 LLM-assisted follow-up date recommendation
+
+Flow:
+
+```text
+profile refresh / due-followup review -> recent interactions + current follow-up state -> LLM suggests next_follow_up_at -> persist with reason/source refs
+```
+
+Rules:
+
+- Use after profile refresh and due-followup patrol review.
+- Consider latest inbound/outbound status, open issues, customer intent, buying signals, risk, and no-reply duration.
+- If customer replied recently, push `next_follow_up_at` forward or clear/adjust due state according to profile judgment.
+- If outbound follow-up was sent and no reply, choose next cadence based on context instead of fixed interval.
+- Never create customer-facing email automatically; only update CRM follow-up metadata or create internal review issue.
 
 ### 6.5 New-activity profile refresh
 
@@ -399,6 +423,8 @@ Acceptance:
 
 - Pending-reply uses profile + current thread context.
 - Due-followup uses profile + recent interactions.
+- Profile refresh/due-followup can ask LLM for `next_follow_up_at` recommendation with reason/source refs.
+- Follow-up date update respects reply/no-reply state and avoids stale due loops.
 - New-activity refresh is incremental.
 - Daily refresh is limited and budget-aware.
 
@@ -426,6 +452,10 @@ Acceptance:
 - [x] Wire compose/reply AI to context builder.
 - [x] Update pending-reply patrol context.
 - [x] Update due-followup patrol context.
+- [x] Add LLM follow-up date recommendation to profile refresh.
+- [x] Add backend path to update `next_follow_up_at` with LLM reason/source refs.
+- [x] Ensure due-followup patrol checks latest reply/no-reply state before creating issue.
+- [x] Add low-confidence follow-up recommendation human-review issue path.
 - [x] Update new-activity profile refresh.
 - [x] Update daily profile refresh.
 - [x] Add WhatsApp-ready interaction abstraction.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -255,23 +256,93 @@ func (h *Handler) runCRMFullProfileRefresh(ctx context.Context, workspaceID pgty
 func (h *Handler) refreshProfilesFromRows(ctx context.Context, workspaceID pgtype.UUID, rows pgx.Rows, key string) (map[string]any, error) {
 	refreshed := 0
 	failed := 0
+	followupUpdated := 0
 	for rows.Next() {
 		var accountID pgtype.UUID
 		if err := rows.Scan(&accountID); err != nil {
 			failed++
 			continue
 		}
-		if _, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID); err != nil {
+		profile, err := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID)
+		if err != nil {
 			failed++
 			slog.Warn("CRM account profile scheduled refresh failed", "key", key, "account_id", uuidToString(accountID), "error", err)
 			continue
+		}
+		if h.applyCRMFollowupRecommendation(ctx, workspaceID, accountID, profile, "profile_refresh:"+key) {
+			followupUpdated++
 		}
 		refreshed++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"automation_key": key, "refreshed": refreshed, "failed": failed}, nil
+	return map[string]any{"automation_key": key, "refreshed": refreshed, "failed": failed, "followup_updated": followupUpdated}, nil
+}
+
+func crmFollowupRecommendationFromProfile(profile CRMAccountProfileResponse) map[string]any {
+	if len(profile.ProfileJSON) == 0 {
+		return nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal(profile.ProfileJSON, &data); err != nil {
+		return nil
+	}
+	rec, _ := data["follow_up_recommendation"].(map[string]any)
+	return rec
+}
+
+func crmFollowupRecommendationConfidence(rec map[string]any) string {
+	value := strings.ToLower(strings.TrimSpace(crmProfileAnyText(rec["confidence"])))
+	if value == "" {
+		return "medium"
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		switch {
+		case f >= 0.75:
+			return "high"
+		case f < 0.45:
+			return "low"
+		default:
+			return "medium"
+		}
+	}
+	return value
+}
+
+func (h *Handler) applyCRMFollowupRecommendation(ctx context.Context, workspaceID, accountID pgtype.UUID, profile CRMAccountProfileResponse, source string) bool {
+	rec := crmFollowupRecommendationFromProfile(profile)
+	if len(rec) == 0 || crmFollowupRecommendationConfidence(rec) == "low" {
+		return false
+	}
+	next := strings.TrimSpace(crmProfileAnyText(rec["next_follow_up_at"]))
+	if next == "" || next == "——" {
+		return false
+	}
+	parsed, ok := parseCRMAIFollowupTime(next)
+	if !ok {
+		return false
+	}
+	reason := strings.TrimSpace(crmProfileAnyText(rec["reason"]))
+	if reason == "" {
+		reason = "LLM follow-up recommendation"
+	}
+	result, err := h.DB.Exec(ctx, `UPDATE crm_account SET next_follow_up_at=$3, notes=CONCAT_WS(E'\n', NULLIF(notes,''), $4), updated_at=now() WHERE workspace_id=$1 AND id=$2 AND next_follow_up_at IS DISTINCT FROM $3`, workspaceID, accountID, parsed, fmt.Sprintf("[%s] next_follow_up_at=%s: %s", source, parsed.UTC().Format(time.RFC3339), reason))
+	return err == nil && result.RowsAffected() > 0
+}
+
+func parseCRMAIFollowupTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	layouts := []string{time.RFC3339, "2006-01-02", "2006-01-02 15:04:05", "2006-01-02 15:04"}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func (h *Handler) runCRMPendingReplyAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
@@ -469,11 +540,28 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 			continue
 		}
 		title := stringsTrimForCRM(fmt.Sprintf("跟进客户：%s", name), 120)
+		lowConfidenceNote := ""
+		profile, profileErr := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID)
+		if profileErr == nil {
+			rec := crmFollowupRecommendationFromProfile(profile)
+			confidence := crmFollowupRecommendationConfidence(rec)
+			if confidence == "low" {
+				lowConfidenceNote = fmt.Sprintf("\n\n低置信跟进时间建议需人工确认：%s", strings.TrimSpace(crmProfileAnyText(rec["reason"])))
+			} else if next, ok := parseCRMAIFollowupTime(strings.TrimSpace(crmProfileAnyText(rec["next_follow_up_at"]))); ok && next.After(time.Now()) {
+				updated := h.applyCRMFollowupRecommendation(ctx, workspaceID, accountID, profile, "due_followup_review")
+				kind := "followup_date_already_future"
+				if updated {
+					kind = "followup_date_updated"
+				}
+				createdIssues = append(createdIssues, map[string]string{"title": title, "account_id": uuidToString(accountID), "kind": kind})
+				continue
+			}
+		}
 		var ownerMemberID pgtype.UUID
 		_ = h.DB.QueryRow(ctx, `SELECT (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
 		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, "member", ownerMemberID, pgtype.UUID{})
 		aiContext := h.buildCRMEmailAIContext(ctx, workspaceID, accountID, pgtype.UUID{}, pgtype.UUID{}, "due_followup", 6)
-		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\nAI上下文摘要（profile + 近期互动，不含全量历史）：\n%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 先检查近期邮件/未来 WhatsApp 互动，确认是否仍需跟进；若客户已回复或到期日已过期处理，请更新 next_follow_up_at 或关闭该 Issue。\n3. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n4. %s\n5. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), crmAIContextIssueSummary(aiContext), reviewerLine)
+		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\nAI上下文摘要（profile + 近期互动，不含全量历史）：\n%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 先检查近期邮件/未来 WhatsApp 互动，确认是否仍需跟进；若客户已回复或到期日已过期处理，请更新 next_follow_up_at 或关闭该 Issue。\n3. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n4. %s\n5. 审核通过后才能发送邮件。%s", name, uuidToString(accountID), timestampToString(due), crmAIContextIssueSummary(aiContext), reviewerLine, lowConfidenceNote)
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), issueActors)
 		if err == nil && issueID.Valid {
 			created++
