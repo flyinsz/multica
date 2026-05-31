@@ -1190,14 +1190,16 @@ export function CRMEmailsPage() {
     if (!composeDraft) return true;
     const hasContent = composeHasContent(composeDraft);
     if (!hasContent) {
-      clearComposeLocalCache(composeDraft);
+      clearAllComposeLocalCache();
+      clearComposeCache();
       setComposeDraft(null);
       return true;
     }
     if (window.confirm(emailCopy.saveBeforeClose ?? emailCopy.saveDraft)) {
       await saveEmailDraft.mutateAsync({ close: true });
     } else {
-      clearComposeLocalCache(composeDraft);
+      clearAllComposeLocalCache();
+      clearComposeCache();
       setComposeDraft(null);
     }
     return true;
@@ -1744,7 +1746,7 @@ export function CRMEmailsPage() {
         <div className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.emails.workspace_title)}</h1>
-          {!isInitialEmailLoading && <Badge variant="secondary" className="tabular-nums">{emailListData?.total ?? filteredMessages.length}</Badge>}
+          {!isInitialEmailLoading && <Badge variant={(folderCounts.inbox_unread ?? 0) > 0 ? "default" : "secondary"} className="tabular-nums">{folderCounts.inbox_unread ?? 0}</Badge>}
           {isEmailRefreshing ? <Badge variant="outline">刷新中</Badge> : null}
         </div>
         <div className="flex items-center gap-2">
@@ -1860,12 +1862,6 @@ export function CRMEmailsPage() {
                       </div>
                       <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
                     </button>
-                    <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-2">
-                      <Button size="sm" variant="outline" onClick={() => openDraftInComposer(draft)}>{emailCopy.edit}</Button>
-                      <Button size="sm" disabled={!draft.id || sendDraft.isPending} onClick={() => draft.id && sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
-                      <Button size="sm" variant="outline" disabled={!draft.thread_id} onClick={() => { openDraftPreview(draft); setAssociationDraft({ threadIds: [draft.thread_id!], accountId: draft.account_id ?? "", contactId: draft.contact_id ?? "", contactName: "", contactEmail: "" }); }}>{t(($) => $.emails.link_customer_contact)}</Button>
-                      <Button size="sm" variant="destructive" disabled={!draft.id || discardDraft.isPending} onClick={() => draft.id && window.confirm("丢弃该草稿？") && discardDraft.mutate(draft)}>{emailCopy.remove}</Button>
-                    </div>
                   </div>
                 );
               })}
@@ -1884,26 +1880,27 @@ export function CRMEmailsPage() {
               </pre>
             </section>
           ) : (
-            <section className="min-h-0 flex-1 overflow-y-auto">
+            <section className="min-h-0 flex-1 overflow-y-auto p-3">
               {filteredMessages.map((message) => {
                 const thread = threadById.get(message.thread_id);
                 const active = selectedMessage?.id === message.id;
                 const isUnread = message.is_read !== true;
                 const attachmentCount = message.attachment_count ?? message.attachments?.length ?? 0;
                 return (
-                  <div key={message.id} className={`flex w-full items-start gap-2 border-b px-3 py-3 text-sm hover:bg-muted/60 ${active ? "bg-muted" : ""}`}>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { selectOnlyMessage(message); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true, message_id: message.id } }); }}>
+                  <div key={message.id} className={`mb-2 rounded-lg border bg-card p-3 text-sm hover:bg-muted/60 ${active ? "ring-2 ring-primary/40" : ""}`}>
+                    <button type="button" className="block w-full text-left" onClick={() => { selectOnlyMessage(message); if (isUnread) updateThreadState.mutate({ threadId: message.thread_id, data: { is_read: true, message_id: message.id } }); }}>
                       <div className="flex items-start justify-between gap-2">
-                        <div className={`min-w-0 flex-1 truncate ${isUnread ? "font-bold text-foreground" : "font-normal text-foreground/70"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
+                        <div className="min-w-0">
+                          <div className={`truncate ${isUnread ? "font-bold text-foreground" : "font-medium text-foreground/80"}`}>{message.subject || thread?.subject || emailCopy.noSubject}</div>
+                          <div className="truncate text-xs text-muted-foreground">{[message.from_name || message.from_email, messageTime(message.sent_at || message.received_at)].filter(Boolean).join(" · ")}</div>
+                        </div>
                         <div className="flex shrink-0 items-center gap-1">
+                          {isUnread ? <Badge variant="default">未读</Badge> : null}
                           {!message.account_id && <Badge variant="outline">{t(($) => $.emails.unlinked_badge)}</Badge>}
                         </div>
                       </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {[message.from_name || message.from_email, messageTime(message.sent_at || message.received_at)].filter(Boolean).join(" · ")}
-                      </div>
-                      {message.snippet ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{message.snippet}</p> : null}
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      {message.snippet ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">{message.snippet}</p> : null}
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2 text-xs text-muted-foreground">
                         {[message.mailbox, message.folder, message.direction, message.status, t(($) => $.common.count_messages, { count: message.thread_message_count ?? thread?.message_count ?? 1 })].filter(Boolean).map((item) => <span key={String(item)}>{item}</span>)}
                         {attachmentCount > 0 ? <Badge variant="secondary" className="gap-1"><Paperclip className="size-3" />{attachmentCount}</Badge> : null}
                       </div>
@@ -2020,6 +2017,8 @@ export function CRMEmailsPage() {
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
                     <Button size="sm" onClick={() => openDraftInComposer(selectedDraft)}>{emailCopy.edit}</Button>
                     <Button size="sm" variant="default" disabled={!selectedDraft.id || sendDraft.isPending} onClick={() => selectedDraft.id && sendDraft.mutate(selectedDraft.id)}>{emailCopy.send}</Button>
+                    <Button size="sm" variant="outline" disabled={!selectedDraft.thread_id} onClick={() => setAssociationDraft({ threadIds: [selectedDraft.thread_id!], accountId: selectedDraft.account_id ?? "", contactId: selectedDraft.contact_id ?? "", contactName: "", contactEmail: "" })}>{t(($) => $.emails.link_customer_contact)}</Button>
+                    <Button size="sm" variant="destructive" disabled={!selectedDraft.id || discardDraft.isPending} onClick={() => selectedDraft.id && window.confirm("丢弃该草稿？") && discardDraft.mutate(selectedDraft)}>{emailCopy.remove}</Button>
                   </div>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-5">

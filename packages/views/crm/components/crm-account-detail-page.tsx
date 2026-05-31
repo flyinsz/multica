@@ -44,6 +44,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
@@ -474,6 +475,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const { data: notes = [], isLoading: notesLoading } = useQuery(crmCommunicationNoteListOptions(wsId, accountId));
   const { data: emailThreadData, isLoading: emailThreadsLoading } = useQuery(crmEmailThreadListOptions(wsId, accountId, "all"));
   const emailThreads = emailThreadData?.threads ?? [];
+  const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-account-detail"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
@@ -753,7 +755,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
             <TabsTrigger value="profile">{t(($) => $.tabs.profile)}</TabsTrigger>
             <TabsTrigger value="projects">{t(($) => $.tabs.projects)}</TabsTrigger>
-            <TabsTrigger value="emails">{t(($) => $.tabs.emails)}</TabsTrigger>
+            <TabsTrigger value="emails">{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</TabsTrigger>
             <TabsTrigger value="notes">{t(($) => $.tabs.notes)}</TabsTrigger>
           </TabsList>
         </div>

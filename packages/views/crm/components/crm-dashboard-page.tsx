@@ -7,6 +7,7 @@ import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountStatus } from "@multica/core/types";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
@@ -102,6 +103,7 @@ export function CRMDashboardPage() {
   const { data: allAccounts = [], isLoading: reportsLoading } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: emailThreadData, isLoading: emailLoading } = useQuery(crmEmailThreadListOptions(wsId));
   const emailThreads = emailThreadData?.threads ?? [];
+  const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
   const topTodayFollowUps = todayFollowUps.slice(0, 6);
   const topWeekFollowUps = weekFollowUps.slice(0, 6);
   const topOverdueFollowUps = overdueFollowUps.slice(0, 6);
@@ -115,8 +117,8 @@ export function CRMDashboardPage() {
     { label: t(($) => $.dashboard.total_customers), value: allAccounts.length, icon: Users, filter: {} },
     { label: t(($) => $.dashboard.overdue_followups), value: overdueFollowUps.length, icon: Flame, filter: { follow_up: "overdue" } },
     { label: t(($) => $.dashboard.hot_customers), value: hotAccounts.length, icon: Flame, filter: { rating: "hot" } },
-    { label: t(($) => $.dashboard.email_threads), value: emailThreads.length, icon: Mail, filter: null },
-  ], [allAccounts.length, emailThreads.length, overdueFollowUps.length, hotAccounts.length, t]);
+    { label: t(($) => $.dashboard.email_threads), value: unreadEmailCount, icon: Mail, filter: null },
+  ], [allAccounts.length, unreadEmailCount, overdueFollowUps.length, hotAccounts.length, t]);
 
   const navigateToCustomers = (filter: ReportFilter = {}) => {
     const params = new URLSearchParams();
@@ -169,7 +171,7 @@ export function CRMDashboardPage() {
           <h1 className="text-sm font-medium">{t(($) => $.dashboard.title)}</h1>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmEmails())}>{t(($) => $.tabs.emails)}</Button>
+          <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmEmails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
           <Button size="sm" onClick={() => navigation.push(paths.crmCustomers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
       </PageHeader>
