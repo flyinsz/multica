@@ -1196,6 +1196,7 @@ export function CRMEmailsPage() {
           account.country_name,
           account.region,
           account.city,
+          account.profile_search_text,
           ...(account.tags ?? []),
           account.notes,
         ], terms);
@@ -1229,6 +1230,7 @@ export function CRMEmailsPage() {
           account?.name,
           account?.account_code,
           account?.website,
+          account?.profile_search_text,
           ...(account?.tags ?? []),
         ], terms);
         return { contact, ...score };

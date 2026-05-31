@@ -24,70 +24,72 @@ import (
 
 // CRMAccountResponse is the JSON shape returned by the CRM account API.
 type CRMAccountResponse struct {
-	ID              string   `json:"id"`
-	WorkspaceID     string   `json:"workspace_id"`
-	Name            string   `json:"name"`
-	AccountCode     *string  `json:"account_code"`
-	AccountType     string   `json:"account_type"`
-	Website         *string  `json:"website"`
-	Country         *string  `json:"country"`
-	CountryCode     *string  `json:"country_code"`
-	CountryName     *string  `json:"country_name"`
-	Region          *string  `json:"region"`
-	City            *string  `json:"city"`
-	Industry        *string  `json:"industry"`
-	SubIndustry     *string  `json:"sub_industry"`
-	Status          string   `json:"status"`
-	OwnerID         *string  `json:"owner_id"`
-	OwnerMemberID   *string  `json:"owner_member_id"`
-	OwnerType       string   `json:"owner_type"`
-	OwnerAgentID    *string  `json:"owner_agent_id"`
-	Source          *string  `json:"source"`
-	Rating          string   `json:"rating"`
-	Priority        string   `json:"priority"`
-	AnnualRevenue   *string  `json:"annual_revenue"`
-	EmployeeCount   *string  `json:"employee_count"`
-	Tags            []string `json:"tags"`
-	Notes           *string  `json:"notes"`
-	LastContactedAt *string  `json:"last_contacted_at"`
-	NextFollowUpAt  *string  `json:"next_follow_up_at"`
-	ContactCount    int64    `json:"contact_count"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ID                string   `json:"id"`
+	WorkspaceID       string   `json:"workspace_id"`
+	Name              string   `json:"name"`
+	AccountCode       *string  `json:"account_code"`
+	AccountType       string   `json:"account_type"`
+	Website           *string  `json:"website"`
+	Country           *string  `json:"country"`
+	CountryCode       *string  `json:"country_code"`
+	CountryName       *string  `json:"country_name"`
+	Region            *string  `json:"region"`
+	City              *string  `json:"city"`
+	Industry          *string  `json:"industry"`
+	SubIndustry       *string  `json:"sub_industry"`
+	Status            string   `json:"status"`
+	OwnerID           *string  `json:"owner_id"`
+	OwnerMemberID     *string  `json:"owner_member_id"`
+	OwnerType         string   `json:"owner_type"`
+	OwnerAgentID      *string  `json:"owner_agent_id"`
+	Source            *string  `json:"source"`
+	Rating            string   `json:"rating"`
+	Priority          string   `json:"priority"`
+	AnnualRevenue     *string  `json:"annual_revenue"`
+	EmployeeCount     *string  `json:"employee_count"`
+	Tags              []string `json:"tags"`
+	Notes             *string  `json:"notes"`
+	LastContactedAt   *string  `json:"last_contacted_at"`
+	NextFollowUpAt    *string  `json:"next_follow_up_at"`
+	ProfileSearchText string   `json:"profile_search_text,omitempty"`
+	ContactCount      int64    `json:"contact_count"`
+	CreatedAt         string   `json:"created_at"`
+	UpdatedAt         string   `json:"updated_at"`
 }
 
 type crmAccountRow struct {
-	ID              pgtype.UUID
-	WorkspaceID     pgtype.UUID
-	Name            string
-	NormalizedName  string
-	AccountCode     pgtype.Text
-	AccountType     string
-	Website         pgtype.Text
-	Country         pgtype.Text
-	CountryCode     pgtype.Text
-	CountryName     pgtype.Text
-	Region          pgtype.Text
-	City            pgtype.Text
-	Industry        pgtype.Text
-	SubIndustry     pgtype.Text
-	Status          string
-	OwnerID         pgtype.UUID
-	OwnerMemberID   pgtype.UUID
-	OwnerType       string
-	OwnerAgentID    pgtype.UUID
-	Source          pgtype.Text
-	Rating          string
-	Priority        string
-	AnnualRevenue   pgtype.Text
-	EmployeeCount   pgtype.Text
-	Tags            []string
-	Notes           pgtype.Text
-	LastContactedAt pgtype.Timestamptz
-	NextFollowUpAt  pgtype.Timestamptz
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	ContactCount    int64
+	ID                pgtype.UUID
+	WorkspaceID       pgtype.UUID
+	Name              string
+	NormalizedName    string
+	AccountCode       pgtype.Text
+	AccountType       string
+	Website           pgtype.Text
+	Country           pgtype.Text
+	CountryCode       pgtype.Text
+	CountryName       pgtype.Text
+	Region            pgtype.Text
+	City              pgtype.Text
+	Industry          pgtype.Text
+	SubIndustry       pgtype.Text
+	Status            string
+	OwnerID           pgtype.UUID
+	OwnerMemberID     pgtype.UUID
+	OwnerType         string
+	OwnerAgentID      pgtype.UUID
+	Source            pgtype.Text
+	Rating            string
+	Priority          string
+	AnnualRevenue     pgtype.Text
+	EmployeeCount     pgtype.Text
+	Tags              []string
+	Notes             pgtype.Text
+	LastContactedAt   pgtype.Timestamptz
+	NextFollowUpAt    pgtype.Timestamptz
+	ProfileSearchText pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	ContactCount      int64
 }
 
 func crmAccountToResponse(row crmAccountRow) CRMAccountResponse {
@@ -96,36 +98,37 @@ func crmAccountToResponse(row crmAccountRow) CRMAccountResponse {
 		tags = []string{}
 	}
 	return CRMAccountResponse{
-		ID:              uuidToString(row.ID),
-		WorkspaceID:     uuidToString(row.WorkspaceID),
-		Name:            row.Name,
-		AccountCode:     textToPtr(row.AccountCode),
-		AccountType:     row.AccountType,
-		Website:         textToPtr(row.Website),
-		Country:         textToPtr(row.Country),
-		CountryCode:     textToPtr(row.CountryCode),
-		CountryName:     textToPtr(row.CountryName),
-		Region:          textToPtr(row.Region),
-		City:            textToPtr(row.City),
-		Industry:        textToPtr(row.Industry),
-		SubIndustry:     textToPtr(row.SubIndustry),
-		Status:          row.Status,
-		OwnerID:         uuidToPtr(row.OwnerID),
-		OwnerMemberID:   uuidToPtr(row.OwnerMemberID),
-		OwnerType:       row.OwnerType,
-		OwnerAgentID:    uuidToPtr(row.OwnerAgentID),
-		Source:          textToPtr(row.Source),
-		Rating:          row.Rating,
-		Priority:        row.Priority,
-		AnnualRevenue:   textToPtr(row.AnnualRevenue),
-		EmployeeCount:   textToPtr(row.EmployeeCount),
-		Tags:            tags,
-		Notes:           textToPtr(row.Notes),
-		LastContactedAt: timestampToPtr(row.LastContactedAt),
-		NextFollowUpAt:  timestampToPtr(row.NextFollowUpAt),
-		ContactCount:    row.ContactCount,
-		CreatedAt:       timestampToString(row.CreatedAt),
-		UpdatedAt:       timestampToString(row.UpdatedAt),
+		ID:                uuidToString(row.ID),
+		WorkspaceID:       uuidToString(row.WorkspaceID),
+		Name:              row.Name,
+		AccountCode:       textToPtr(row.AccountCode),
+		AccountType:       row.AccountType,
+		Website:           textToPtr(row.Website),
+		Country:           textToPtr(row.Country),
+		CountryCode:       textToPtr(row.CountryCode),
+		CountryName:       textToPtr(row.CountryName),
+		Region:            textToPtr(row.Region),
+		City:              textToPtr(row.City),
+		Industry:          textToPtr(row.Industry),
+		SubIndustry:       textToPtr(row.SubIndustry),
+		Status:            row.Status,
+		OwnerID:           uuidToPtr(row.OwnerID),
+		OwnerMemberID:     uuidToPtr(row.OwnerMemberID),
+		OwnerType:         row.OwnerType,
+		OwnerAgentID:      uuidToPtr(row.OwnerAgentID),
+		Source:            textToPtr(row.Source),
+		Rating:            row.Rating,
+		Priority:          row.Priority,
+		AnnualRevenue:     textToPtr(row.AnnualRevenue),
+		EmployeeCount:     textToPtr(row.EmployeeCount),
+		Tags:              tags,
+		Notes:             textToPtr(row.Notes),
+		LastContactedAt:   timestampToPtr(row.LastContactedAt),
+		NextFollowUpAt:    timestampToPtr(row.NextFollowUpAt),
+		ProfileSearchText: strings.TrimSpace(row.ProfileSearchText.String),
+		ContactCount:      row.ContactCount,
+		CreatedAt:         timestampToString(row.CreatedAt),
+		UpdatedAt:         timestampToString(row.UpdatedAt),
 	}
 }
 
@@ -1374,7 +1377,7 @@ func (h *Handler) scanCRMAccount(row pgx.Row) (crmAccountRow, error) {
 		&account.Industry, &account.SubIndustry, &account.Status, &account.OwnerID,
 		&account.OwnerMemberID, &account.OwnerType, &account.OwnerAgentID, &account.Source, &account.Rating, &account.Priority,
 		&account.AnnualRevenue, &account.EmployeeCount, &account.Tags, &account.Notes,
-		&account.LastContactedAt, &account.NextFollowUpAt, &account.CreatedAt, &account.UpdatedAt,
+		&account.LastContactedAt, &account.NextFollowUpAt, &account.ProfileSearchText, &account.CreatedAt, &account.UpdatedAt,
 		&account.ContactCount,
 	)
 	return account, err
@@ -1387,11 +1390,13 @@ func (h *Handler) getCRMAccount(w http.ResponseWriter, r *http.Request, accountI
 		       a.industry, a.sub_industry, a.status, a.owner_id, a.owner_member_id,
 		       COALESCE(a.owner_type, 'member'), a.owner_agent_id, a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
 		       a.tags, a.notes, a.last_contacted_at, a.next_follow_up_at,
+		       COALESCE(p.summary,'') || ' ' || COALESCE(p.profile_json->>'aliases','') || ' ' || COALESCE(p.profile_json->>'search_keywords',''),
 		       a.created_at, a.updated_at, COUNT(c.id)::bigint AS contact_count
 		FROM crm_account a
 		LEFT JOIN crm_contact c ON c.account_id = a.id AND c.workspace_id = a.workspace_id
+		LEFT JOIN crm_account_profile p ON p.account_id = a.id AND p.workspace_id = a.workspace_id
 		WHERE a.id = $1 AND a.workspace_id = $2
-		GROUP BY a.id
+		GROUP BY a.id, p.id
 	`, accountID, workspaceID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1583,12 +1588,13 @@ func (h *Handler) ListCRMAccounts(w http.ResponseWriter, r *http.Request) {
 		       a.industry, a.sub_industry, a.status, a.owner_id, a.owner_member_id,
 		       COALESCE(a.owner_type, 'member'), a.owner_agent_id, a.source, a.rating, a.priority, a.annual_revenue, a.employee_count,
 		       a.tags, a.notes, a.last_contacted_at, a.next_follow_up_at,
+		       COALESCE(p.summary,'') || ' ' || COALESCE(p.profile_json->>'aliases','') || ' ' || COALESCE(p.profile_json->>'search_keywords',''),
 		       a.created_at, a.updated_at, COUNT(c.id)::bigint AS contact_count
 		FROM crm_account a
 		LEFT JOIN crm_contact c ON c.account_id = a.id AND c.workspace_id = a.workspace_id
+		LEFT JOIN crm_account_profile p ON p.account_id = a.id AND p.workspace_id = a.workspace_id
 		WHERE a.workspace_id = $1
 		  AND ($2::text IS NULL OR a.status = $2::text)
-		  AND ($3::text IS NULL OR a.normalized_name LIKE '%' || $3::text || '%')
 		  AND ($4::text IS NULL OR a.rating = $4::text)
 		  AND ($5::text IS NULL OR a.priority = $5::text)
 		  AND ($6::text IS NULL OR a.country_code = $6::text OR a.country = $6::text)
@@ -1601,7 +1607,8 @@ func (h *Handler) ListCRMAccounts(w http.ResponseWriter, r *http.Request) {
 		    OR ($9::text = 'overdue' AND a.next_follow_up_at < now())
 		    OR ($9::text = 'none' AND a.next_follow_up_at IS NULL)
 		  )
-		GROUP BY a.id
+		  AND ($3::text IS NULL OR a.normalized_name LIKE '%' || $3::text || '%' OR LOWER(COALESCE(p.summary,'') || ' ' || COALESCE(p.profile_json->>'aliases','') || ' ' || COALESCE(p.profile_json->>'search_keywords','')) LIKE '%' || $3::text || '%')
+		GROUP BY a.id, p.id
 		ORDER BY `+orderBy+`
 		LIMIT 100
 	`, workspaceID, textArg(status), searchArg, textArg(rating), textArg(priority), textArg(countryCode), textArg(industry), textArg(source), textArg(followUpBucket))

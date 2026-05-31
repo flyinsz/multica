@@ -34,6 +34,7 @@ export interface CRMAccount {
   notes?: string | null;
   last_contacted_at?: string | null;
   next_follow_up_at?: string | null;
+  profile_search_text?: string;
   contact_count: number;
   created_at: string;
   updated_at: string;
