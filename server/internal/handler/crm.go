@@ -4196,7 +4196,7 @@ func (h *Handler) syncCRMCustomerAliasesFromProfile(ctx context.Context, workspa
 	aliases := crmProfileAliasValues(raw)
 	_, _ = h.DB.Exec(ctx, `DELETE FROM crm_customer_alias WHERE workspace_id=$1 AND account_id=$2 AND source_type='profile'`, workspaceID, accountID)
 	for _, alias := range aliases {
-		_, _ = h.DB.Exec(ctx, `INSERT INTO crm_customer_alias (workspace_id, account_id, alias, alias_normalized, alias_type, weight, source_type, confidence) VALUES ($1,$2,$3,$4,'ai_extracted',70,'profile',0.750) ON CONFLICT DO NOTHING`, workspaceID, accountID, alias, strings.ToLower(alias))
+		_, _ = h.DB.Exec(ctx, `INSERT INTO crm_customer_alias (workspace_id, account_id, alias, alias_normalized, alias_type, weight, source_type, confidence) VALUES ($1,$2,$3,$4,'ai_extracted',70,'profile','medium') ON CONFLICT DO NOTHING`, workspaceID, accountID, alias, strings.ToLower(alias))
 	}
 }
 
