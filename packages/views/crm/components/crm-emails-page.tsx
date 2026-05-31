@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { Archive, ArrowRight, Building2, Inbox, Link2, Mail, MailOpen, Paperclip, Search, Send, Settings, Star, Trash2, Undo2, UserRound, Wrench, Activity, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -1181,11 +1181,26 @@ export function CRMEmailsPage() {
     ...crmContactListOptions(wsId, composeAccountId),
     enabled: Boolean(composeAccountId),
   });
+  const composeContactQueries = useQueries({
+    queries: accounts.map((account) => ({
+      ...crmContactListOptions(wsId, account.id),
+      enabled: composeRecipientPickerOpen,
+    })),
+  });
+  const composeContactsByAccount = useMemo(() => {
+    const map = new Map<string, CRMContact[]>();
+    accounts.forEach((account, index) => {
+      map.set(account.id, composeContactQueries[index]?.data ?? []);
+    });
+    return map;
+  }, [accounts, composeContactQueries]);
+  const composeAllContacts = useMemo(() => accounts.flatMap((account) => composeContactsByAccount.get(account.id) ?? []), [accounts, composeContactsByAccount]);
   const filteredComposeAccounts = useMemo(() => {
     const terms = crmSearchTokens(composeAccountSearch);
     if (!terms.length) return accounts;
     return accounts
       .map((account) => {
+        const contactsForAccount = composeContactsByAccount.get(account.id) ?? [];
         const score = crmSearchScore([
           account.name,
           account.account_code,
@@ -1199,17 +1214,28 @@ export function CRMEmailsPage() {
           account.profile_search_text,
           ...(account.tags ?? []),
           account.notes,
+          ...contactsForAccount.flatMap((contact) => [
+            contact.name,
+            contact.email,
+            contact.whatsapp_id,
+            contact.whatsapp,
+            contact.wechat,
+            contact.role_title,
+            contact.job_title,
+            contact.department,
+            contact.notes,
+          ]),
         ], terms);
         return { account, ...score };
       })
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((item) => ({ ...item.account, __matchReasons: item.reasons }));
-  }, [accounts, composeAccountSearch]);
+  }, [accounts, composeAccountSearch, composeContactsByAccount]);
   const filteredComposeContacts = useMemo(() => {
     const terms = crmSearchTokens(composeAccountSearch);
-    if (!terms.length) return contacts;
-    return contacts
+    if (!terms.length) return composeAllContacts;
+    return composeAllContacts
       .map((contact: any) => {
         const account = accounts.find((item) => item.id === contact.account_id);
         const emailPrefix = String(contact.email ?? "").split("@")[0];
@@ -1238,7 +1264,7 @@ export function CRMEmailsPage() {
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((item) => ({ ...item.contact, __matchReasons: item.reasons }));
-  }, [accounts, contacts, composeAccountSearch]);
+  }, [accounts, composeAllContacts, composeAccountSearch]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     ...crmEmailMessageListOptions(wsId, selectedThread?.id ?? ""),
     enabled: Boolean(selectedThread?.id),
