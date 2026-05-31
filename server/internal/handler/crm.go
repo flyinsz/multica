@@ -899,11 +899,70 @@ func isVagueCRMProfileFragment(part string) bool {
 }
 
 func cleanCRMProfile(profile map[string]any) map[string]any {
-	for _, key := range []string{"customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions"} {
+	for _, key := range []string{"summary", "business_background", "communication_summary", "customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions"} {
 		if value, ok := profile[key].(string); ok {
 			profile[key] = cleanCRMProfileValue(value)
 		}
 	}
+	return normalizeCRMCustomerWikiProfile(profile)
+}
+
+func normalizeCRMCustomerWikiProfile(profile map[string]any) map[string]any {
+	if profile == nil {
+		profile = map[string]any{}
+	}
+	setText := func(key string, fallbackKeys ...string) {
+		if strings.TrimSpace(crmProfileAnyText(profile[key])) != "" && strings.TrimSpace(crmProfileAnyText(profile[key])) != "——" {
+			return
+		}
+		for _, fallbackKey := range fallbackKeys {
+			if text := strings.TrimSpace(crmProfileAnyText(profile[fallbackKey])); text != "" && text != "——" {
+				profile[key] = text
+				return
+			}
+		}
+		if _, ok := profile[key]; !ok {
+			profile[key] = ""
+		}
+	}
+	setList := func(key string, fallbackKeys ...string) {
+		if _, ok := profile[key].([]any); ok {
+			return
+		}
+		items := []any{}
+		for _, fallbackKey := range append([]string{key}, fallbackKeys...) {
+			value := profile[fallbackKey]
+			switch v := value.(type) {
+			case []any:
+				for _, item := range v {
+					if text := strings.TrimSpace(crmProfileAnyText(item)); text != "" && text != "——" {
+						items = append(items, item)
+					}
+				}
+			case string:
+				if text := strings.TrimSpace(v); text != "" && text != "——" {
+					items = append(items, text)
+				}
+			}
+		}
+		profile[key] = items
+	}
+	setText("summary", "customer_summary")
+	setText("business_background", "business_model", "main_products", "procurement_needs", "cooperation_history")
+	setText("communication_summary", "communication_preference", "recent_progress")
+	setList("open_issues", "pain_points", "next_step_suggestions")
+	setList("risks", "risk_notes")
+	setList("preferences", "communication_preference")
+	setList("buying_signals", "procurement_needs", "recent_progress")
+	setList("last_interactions", "recent_progress")
+	setList("aliases")
+	setList("keywords", "search_keywords")
+	setList("contacts")
+	setList("source_refs")
+	if strings.TrimSpace(crmProfileAnyText(profile["confidence"])) == "" {
+		profile["confidence"] = "medium"
+	}
+	profile["last_refreshed_at"] = time.Now().UTC().Format(time.RFC3339)
 	return profile
 }
 
@@ -3780,7 +3839,60 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_account_profile (workspace_id, account_id, summary, profile_json, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (account_id) DO UPDATE SET summary=EXCLUDED.summary, profile_json=EXCLUDED.profile_json, updated_at=now() RETURNING id, profile_json, created_at, updated_at`, workspaceID, accountID, summary, profileJSON).Scan(&id, &rawProfile, &createdAt, &updatedAt); err != nil {
 		return CRMAccountProfileResponse{}, err
 	}
+	h.syncCRMCustomerAliases(ctx, workspaceID, accountID, profile)
 	return CRMAccountProfileResponse{ID: uuidToString(id), WorkspaceID: uuidToString(workspaceID), AccountID: uuidToString(accountID), Summary: &summary, ProfileJSON: rawProfile, SourceSummary: buildCRMProfileSourceSummary(trimCRMProfileList(communicationSnippets, 5, 160), trimCRMProfileList(projectTitles, 5, 120), trimCRMProfileList(issueTitles, 5, 120)), CreatedAt: timestampToString(createdAt), UpdatedAt: timestampToString(updatedAt)}, nil
+}
+
+func (h *Handler) syncCRMCustomerAliases(ctx context.Context, workspaceID, accountID pgtype.UUID, profile map[string]any) {
+	if !accountID.Valid {
+		return
+	}
+	aliases := []string{}
+	for _, key := range []string{"aliases", "keywords", "search_keywords"} {
+		for _, item := range strings.Split(crmProfileAnyText(profile[key]), "、") {
+			if text := strings.TrimSpace(item); text != "" && text != "——" {
+				aliases = append(aliases, text)
+			}
+		}
+	}
+	var accountName, website string
+	_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(website,'') FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&accountName, &website)
+	aliases = append(aliases, accountName)
+	if u, err := url.Parse(website); err == nil && strings.TrimSpace(u.Hostname()) != "" {
+		aliases = append(aliases, u.Hostname())
+	}
+	rows, err := h.DB.Query(ctx, `SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(phone,''), COALESCE(whatsapp_id,'') FROM crm_contact WHERE workspace_id=$1 AND account_id=$2`, workspaceID, accountID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var contactID pgtype.UUID
+			var name, email, phone, whatsapp string
+			if rows.Scan(&contactID, &name, &email, &phone, &whatsapp) == nil {
+				h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, contactID, name, "contact_name", 80, "contact", contactID)
+				h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, contactID, email, "email", 100, "contact", contactID)
+				if prefix := strings.Split(email, "@")[0]; prefix != email {
+					h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, contactID, prefix, "email_prefix", 70, "contact", contactID)
+				}
+				h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, contactID, phone, "whatsapp_number", 70, "contact", contactID)
+				h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, contactID, whatsapp, "whatsapp_name", 75, "contact", contactID)
+			}
+		}
+	}
+	for _, alias := range uniqueCRMRecipientKeywords(aliases) {
+		h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, pgtype.UUID{}, alias, "ai_extracted", 55, "profile", pgtype.UUID{})
+	}
+}
+
+func (h *Handler) upsertCRMCustomerAlias(ctx context.Context, workspaceID, accountID, contactID pgtype.UUID, alias, aliasType string, weight int, sourceType string, sourceID pgtype.UUID) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return
+	}
+	normalized := strings.ToLower(strings.Trim(alias, " ._-+，,。；;：:！!？?"))
+	if normalized == "" {
+		return
+	}
+	_, _ = h.DB.Exec(ctx, `INSERT INTO crm_customer_alias (workspace_id, account_id, contact_id, alias, alias_normalized, alias_type, weight, source_type, source_id, confidence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'medium') ON CONFLICT DO NOTHING`, workspaceID, accountID, contactID, alias, normalized, aliasType, weight, sourceType, sourceID)
 }
 
 func (h *Handler) SuggestCRMAccountProfile(w http.ResponseWriter, r *http.Request) {
@@ -5448,7 +5560,7 @@ func (h *Handler) crmEmailInteractionSnippets(ctx context.Context, workspaceID, 
 	if limit <= 0 {
 		limit = 4
 	}
-	query := `SELECT direction, COALESCE(from_name,''), COALESCE(from_email,''), COALESCE(subject,''), COALESCE(body_text, regexp_replace(COALESCE(body_html,''), '<[^>]+>', ' ', 'g'), ''), COALESCE(received_at, sent_at, created_at) FROM crm_email_message WHERE workspace_id=$1`
+	query := `SELECT direction, channel, '', COALESCE(subject,''), COALESCE(NULLIF(body_summary,''), body_text, ''), occurred_at FROM crm_interaction WHERE workspace_id=$1`
 	args := []any{workspaceID}
 	idx := 2
 	if threadID.Valid {
@@ -5496,7 +5608,7 @@ func (h *Handler) crmAccountProfileContext(ctx context.Context, workspaceID pgty
 	}
 	var profile map[string]any
 	if len(profileJSON) > 0 && json.Unmarshal(profileJSON, &profile) == nil {
-		for _, key := range []string{"customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions", "aliases", "search_keywords"} {
+		for _, key := range []string{"summary", "business_background", "communication_summary", "open_issues", "risks", "preferences", "buying_signals", "last_interactions", "aliases", "keywords", "source_refs", "customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions", "search_keywords"} {
 			if value := strings.TrimSpace(crmProfileAnyText(profile[key])); value != "" && value != "——" {
 				parts = append(parts, key+"："+trimCRMProfileSnippet(value, 360))
 			}

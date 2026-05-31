@@ -422,12 +422,12 @@ Acceptance:
 - [x] Remove recipient lookup LLM path.
 - [x] Add structured profile schema helpers.
 - [x] Add/extend profile UI display.
-- [ ] Add context builder service.
-- [ ] Wire compose/reply AI to context builder.
-- [ ] Update pending-reply patrol context.
-- [ ] Update due-followup patrol context.
-- [ ] Update new-activity profile refresh.
-- [ ] Update daily profile refresh.
-- [ ] Add WhatsApp-ready interaction abstraction.
-- [ ] Run lightweight checks only (`git diff --check`, static inspection).
+- [x] Add context builder service.
+- [x] Wire compose/reply AI to context builder.
+- [x] Update pending-reply patrol context.
+- [x] Update due-followup patrol context.
+- [x] Update new-activity profile refresh.
+- [x] Update daily profile refresh.
+- [x] Add WhatsApp-ready interaction abstraction.
+- [x] Run lightweight checks only (`git diff --check`, static inspection).
 - [ ] Push branch and use GitHub Actions/GHCR for verification.

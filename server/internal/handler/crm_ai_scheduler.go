@@ -210,14 +210,14 @@ func (h *Handler) runCRMRecentActivityProfileRefresh(ctx context.Context, worksp
 		limit = 20
 	}
 	rows, err := h.DB.Query(ctx, `
-		SELECT DISTINCT t.account_id
-		FROM crm_email_thread t
-		LEFT JOIN crm_account_profile p ON p.workspace_id=t.workspace_id AND p.account_id=t.account_id
-		WHERE t.workspace_id=$1
-		  AND t.account_id IS NOT NULL
-		  AND t.updated_at > now() - interval '24 hours'
-		  AND (p.account_id IS NULL OR p.updated_at < t.updated_at OR p.updated_at < now() - interval '6 hours')
-		ORDER BY t.account_id
+		SELECT DISTINCT i.account_id
+		FROM crm_interaction i
+		LEFT JOIN crm_account_profile p ON p.workspace_id=i.workspace_id AND p.account_id=i.account_id
+		WHERE i.workspace_id=$1
+		  AND i.account_id IS NOT NULL
+		  AND i.occurred_at > now() - interval '24 hours'
+		  AND (p.updated_at IS NULL OR p.updated_at < i.occurred_at OR p.updated_at < now() - interval '1 hour')
+		ORDER BY i.account_id
 		LIMIT $2`, workspaceID, limit)
 	if err != nil {
 		return nil, err
@@ -234,13 +234,16 @@ func (h *Handler) runCRMFullProfileRefresh(ctx context.Context, workspaceID pgty
 		SELECT a.id
 		FROM crm_account a
 		LEFT JOIN crm_account_profile p ON p.workspace_id=a.workspace_id AND p.account_id=a.id
-		WHERE a.workspace_id=$1
-		  AND a.status <> 'inactive'
-		  AND (p.account_id IS NULL
-		       OR p.updated_at < now() - interval '7 days'
-		       OR a.next_follow_up_at IS NOT NULL
-		       OR EXISTS (SELECT 1 FROM issue i WHERE i.workspace_id=a.workspace_id AND i.origin_type='crm_ai' AND i.origin_id=a.id AND i.status NOT IN ('done','cancelled')))
-		ORDER BY CASE WHEN p.account_id IS NULL THEN 0 WHEN a.next_follow_up_at IS NOT NULL THEN 1 ELSE 2 END, COALESCE(a.next_follow_up_at, a.updated_at) ASC
+		WHERE a.workspace_id=$1 AND a.status <> 'inactive'
+		  AND (
+			p.account_id IS NULL
+			OR p.updated_at < now() - interval '7 days'
+			OR a.next_follow_up_at <= now()
+			OR COALESCE(p.profile_json->>'confidence','medium') IN ('low','0','0.0')
+			OR EXISTS (SELECT 1 FROM issue i WHERE i.workspace_id=a.workspace_id AND i.origin_type='crm_ai' AND i.origin_id=a.id AND i.status NOT IN ('done','cancelled'))
+			OR EXISTS (SELECT 1 FROM crm_interaction ci WHERE ci.workspace_id=a.workspace_id AND ci.account_id=a.id AND ci.occurred_at > COALESCE(p.updated_at, now() - interval '30 days'))
+		  )
+		ORDER BY CASE WHEN p.account_id IS NULL THEN 0 WHEN a.next_follow_up_at <= now() THEN 1 ELSE 2 END, COALESCE(a.next_follow_up_at, p.updated_at, a.updated_at) ASC
 		LIMIT $2`, workspaceID, limit)
 	if err != nil {
 		return nil, err
