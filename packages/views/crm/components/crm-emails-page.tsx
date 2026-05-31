@@ -1062,6 +1062,32 @@ export function CRMEmailsPage() {
     return () => window.clearInterval(timer);
   }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
 
+  const composeCacheKey = `crm-compose-cache:${wsId || "workspace"}:${selectedMailbox?.id || "mailbox"}`;
+  const saveComposeCache = (draft: ComposeDraft) => {
+    try {
+      window.localStorage.setItem(composeCacheKey, JSON.stringify({ ...draft, cachedAt: new Date().toISOString() }));
+      setMailboxStatus(locale === "zh-Hans" ? "草稿已暂存到本地缓存。" : "Draft cached locally.");
+    } catch {
+      setMailboxStatus(locale === "zh-Hans" ? "本地暂存失败，请手动保存草稿。" : "Local cache failed. Save draft manually.");
+    }
+  };
+  const clearComposeCache = () => {
+    try { window.localStorage.removeItem(composeCacheKey); } catch {}
+  };
+
+  useEffect(() => {
+    if (composeDraft || !wsId) return;
+    try {
+      const raw = window.localStorage.getItem(composeCacheKey);
+      if (!raw) return;
+      const cached = JSON.parse(raw) as ComposeDraft & { cachedAt?: string };
+      const hasContent = [cached.to, cached.cc, cached.bcc, cached.subject, cached.body].some((value) => (value || "").trim()) || (cached.attachments ?? []).length > 0;
+      if (hasContent && window.confirm(locale === "zh-Hans" ? "检测到本地暂存草稿，是否恢复？" : "Restore locally cached draft?")) {
+        setComposeDraft({ ...cached, attachments: cached.attachments ?? [] });
+      }
+    } catch {}
+  }, [composeCacheKey, composeDraft, locale, wsId]);
+
   const saveEmailDraft = useMutation({
     mutationFn: async (options?: { close?: boolean }) => {
       if (!composeDraft) throw new Error(emailCopy.noDraft);
@@ -1089,6 +1115,7 @@ export function CRMEmailsPage() {
       } else if (result.id) {
         setComposeDraft((draft) => draft ? { ...draft, draftId: result.id } : draft);
       }
+      clearComposeCache();
       setMailboxStatus(emailCopy.draftSaved);
       if (result.close) setActiveFolder("drafts");
       queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
@@ -1117,7 +1144,7 @@ export function CRMEmailsPage() {
     const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
     if (!hasContent || saveEmailDraft.isPending) return;
     const timer = window.setTimeout(() => {
-      saveEmailDraft.mutate({});
+      saveComposeCache(composeDraft);
     }, 30000);
     return () => window.clearTimeout(timer);
   }, [composeDraft, saveEmailDraft.isPending]);
