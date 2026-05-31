@@ -1503,6 +1503,7 @@ func (h *Handler) CreateCRMAccount(w http.ResponseWriter, r *http.Request) {
 		          industry, sub_industry, status, owner_id, owner_member_id,
 		          owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count,
 		          tags, notes, last_contacted_at, next_follow_up_at,
+		          ''::text,
 		          created_at, updated_at, 0::bigint
 	`, workspaceID, name, normalizedCRMKey(name), cleanOptionalText(req.AccountCode), cleanDefault(req.AccountType, "prospect"),
 		cleanOptionalText(req.Website), countryName, countryCode, countryName,
@@ -1748,6 +1749,7 @@ func (h *Handler) UpdateCRMAccount(w http.ResponseWriter, r *http.Request) {
 		          industry, sub_industry, status, owner_id, owner_member_id,
 		          owner_type, owner_agent_id, source, rating, priority, annual_revenue, employee_count,
 		          tags, notes, last_contacted_at, next_follow_up_at,
+		          (SELECT COALESCE(p.summary,'') || ' ' || COALESCE(p.profile_json->>'aliases','') || ' ' || COALESCE(p.profile_json->>'search_keywords','') FROM crm_account_profile p WHERE p.account_id = crm_account.id AND p.workspace_id = crm_account.workspace_id LIMIT 1),
 		          created_at, updated_at,
 		          (SELECT COUNT(*)::bigint FROM crm_contact c WHERE c.account_id = crm_account.id AND c.workspace_id = crm_account.workspace_id)
 	`, accountID, workspaceID, name, normalizedCRMKey(name), cleanOptionalText(req.AccountCode), cleanDefault(req.AccountType, "prospect"),
