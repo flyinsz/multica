@@ -212,7 +212,11 @@ func (h *Handler) runCRMRecentActivityProfileRefresh(ctx context.Context, worksp
 	rows, err := h.DB.Query(ctx, `
 		SELECT DISTINCT t.account_id
 		FROM crm_email_thread t
-		WHERE t.workspace_id=$1 AND t.account_id IS NOT NULL AND t.updated_at > now() - interval '24 hours'
+		LEFT JOIN crm_account_profile p ON p.workspace_id=t.workspace_id AND p.account_id=t.account_id
+		WHERE t.workspace_id=$1
+		  AND t.account_id IS NOT NULL
+		  AND t.updated_at > now() - interval '24 hours'
+		  AND (p.account_id IS NULL OR p.updated_at < t.updated_at OR p.updated_at < now() - interval '6 hours')
 		ORDER BY t.account_id
 		LIMIT $2`, workspaceID, limit)
 	if err != nil {
@@ -227,7 +231,17 @@ func (h *Handler) runCRMFullProfileRefresh(ctx context.Context, workspaceID pgty
 		limit = 100
 	}
 	rows, err := h.DB.Query(ctx, `
-		SELECT id FROM crm_account WHERE workspace_id=$1 ORDER BY updated_at DESC LIMIT $2`, workspaceID, limit)
+		SELECT a.id
+		FROM crm_account a
+		LEFT JOIN crm_account_profile p ON p.workspace_id=a.workspace_id AND p.account_id=a.id
+		WHERE a.workspace_id=$1
+		  AND a.status <> 'inactive'
+		  AND (p.account_id IS NULL
+		       OR p.updated_at < now() - interval '7 days'
+		       OR a.next_follow_up_at IS NOT NULL
+		       OR EXISTS (SELECT 1 FROM issue i WHERE i.workspace_id=a.workspace_id AND i.origin_type='crm_ai' AND i.origin_id=a.id AND i.status NOT IN ('done','cancelled')))
+		ORDER BY CASE WHEN p.account_id IS NULL THEN 0 WHEN a.next_follow_up_at IS NOT NULL THEN 1 ELSE 2 END, COALESCE(a.next_follow_up_at, a.updated_at) ASC
+		LIMIT $2`, workspaceID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +469,8 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		var ownerMemberID pgtype.UUID
 		_ = h.DB.QueryRow(ctx, `SELECT (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
 		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, "member", ownerMemberID, pgtype.UUID{})
-		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n3. %s\n4. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), reviewerLine)
+		aiContext := h.buildCRMEmailAIContext(ctx, workspaceID, accountID, pgtype.UUID{}, pgtype.UUID{}, "due_followup", 6)
+		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\nAI上下文摘要（profile + 近期互动，不含全量历史）：\n%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 先检查近期邮件/未来 WhatsApp 互动，确认是否仍需跟进；若客户已回复或到期日已过期处理，请更新 next_follow_up_at 或关闭该 Issue。\n3. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n4. %s\n5. 审核通过后才能发送邮件。", name, uuidToString(accountID), timestampToString(due), crmAIContextIssueSummary(aiContext), reviewerLine)
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), issueActors)
 		if err == nil && issueID.Valid {
 			created++
@@ -532,11 +547,8 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 	if strings.TrimSpace(accountName) == "" {
 		accountName = "未绑定客户"
 	}
-	wikiContext := strings.TrimSpace(aiContext.String())
-	if wikiContext == "" {
-		wikiContext = "Customer Wiki 暂无可用内容；生成草稿前请先刷新/补充客户 Profile。"
-	}
-	base := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\nCustomer Wiki 上下文：\n%s\n\n", accountName, candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, wikiContext)
+	contextSummary := crmAIContextIssueSummary(aiContext)
+	base := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\nCustomer Wiki 上下文（不含全量历史）：\n%s\n\n", accountName, candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, contextSummary)
 	if len(missingReasons) > 0 {
 		return base + fmt.Sprintf("处理类型：需要 Researcher 先补全上下文，暂不生成回复草稿。\n阻断原因：%s\n\nResearcher 任务：\n1. 先刷新/补充 Customer Wiki，再基于发件人邮箱、域名、签名、历史邮件、CRM 现有资料调研客户背景。\n2. 判断是否可关联已有客户/联系人；如可关联，给出 account/contact 建议和依据。\n3. 若不能关联，判断是否应创建潜在客户。\n4. 判断是否需要回复；缺上下文不是“不需要回复”的理由。\n5. 输出草稿生成所需上下文；不直接发送邮件。\n\n后续流转：Researcher 返回足够上下文后，按 Multica 原生 issue assignee/status 机制转交 CRM-Assistant/Jarvis 生成草稿；草稿生成后转交客户所有人 review。\n%s", strings.Join(missingReasons, "；"), reviewerLine)
 	}
@@ -549,6 +561,29 @@ func (h *Handler) buildCRMPendingReplyMergeComment(candidate crmPendingReplyCand
 		contextLine = "上下文不足，请先转交 Researcher 补全背景；阻断原因：" + strings.Join(missingReasons, "；")
 	}
 	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复流程。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要把历史往来/profile 摘要展开写进 Issue。缺上下文不是“不回复”的理由；缺上下文时先交 Researcher 深度调研。只有明显 spam/no-reply/系统通知/营销群发才不建议回复。草稿必须中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, contextLine, reviewerLine)
+}
+
+func crmAIContextIssueSummary(aiContext crmEmailAIContext) string {
+	items := []string{}
+	if strings.TrimSpace(aiContext.CustomerProfile) != "" {
+		items = append(items, "客户画像："+stringsTrimForCRM(strings.Join(strings.Fields(aiContext.CustomerProfile), " "), 420))
+	}
+	add := func(label string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		items = append(items, label+"："+stringsTrimForCRM(strings.Join(values, "；"), 420))
+	}
+	add("风险", aiContext.RiskNotes)
+	add("开放问题", aiContext.OpenIssues)
+	add("偏好", aiContext.Preferences)
+	add("近期互动", aiContext.RecentInteractions)
+	add("当前线程", aiContext.CurrentThread)
+	add("来源", aiContext.SourceRefs)
+	if len(items) == 0 {
+		return "暂无结构化上下文；请通过 CRM MCP 查询 customer profile、当前线程和近期互动。"
+	}
+	return strings.Join(items, "\n")
 }
 
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {

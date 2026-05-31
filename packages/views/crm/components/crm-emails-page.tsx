@@ -44,7 +44,7 @@ type EmailLinkDraft = { projectId: string; issueIds: string[] };
 
 type ComposeAttachment = { file_name: string; content_type: string; content: string; size: number };
 type ComposeMode = "new" | "reply" | "reply-all" | "forward";
-type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[] };
+type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[]; localCacheKey?: string; source?: "local" | "server" };
 type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
 type AIAssistantTurn = { id: string; role: "user" | "assistant" | "system"; content: string; chinese?: string; language?: string };
 
@@ -613,6 +613,12 @@ export function CRMEmailsPage() {
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
+  const composeCachePrefix = `multica:crm-email-compose:${wsId || "workspace"}:`;
+  const composeHasContent = (draft: ComposeDraft | null | undefined) => Boolean(draft && ([draft.to, draft.cc, draft.bcc, draft.subject, draft.body].some((value) => value.trim()) || draft.attachments.length > 0));
+  const clearComposeLocalCache = (draft: ComposeDraft | null | undefined) => {
+    if (typeof window === "undefined" || !draft?.localCacheKey) return;
+    window.localStorage.removeItem(draft.localCacheKey);
+  };
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
   const { data: mailboxData } = useQuery({
     queryKey: ["crm", wsId, "imap-settings"],
@@ -677,6 +683,7 @@ export function CRMEmailsPage() {
       content: attachment.content || "",
       size: attachment.size || attachment.size_bytes || 0,
     })) : [],
+    source: "server",
   });
 
   const openDraftPreview = (draft: any) => {
@@ -703,6 +710,28 @@ export function CRMEmailsPage() {
     const cutoff = Date.now() - 2 * 60 * 1000;
     return syncRuns.filter((run: any) => run.status === "running" && (!run.started_at || new Date(run.started_at).getTime() > cutoff));
   }, [syncRuns]);
+
+  useEffect(() => {
+    if (!wsId || composeDraft || typeof window === "undefined") return;
+    const keys = Object.keys(window.localStorage).filter((key) => key.startsWith(composeCachePrefix));
+    if (!keys.length) return;
+    const key = keys.sort()[keys.length - 1];
+    if (!key) return;
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(key) || "null") as ComposeDraft | null;
+      if (!composeHasContent(cached)) {
+        window.localStorage.removeItem(key);
+        return;
+      }
+      if (window.confirm("检测到本地暂存草稿，是否恢复？")) {
+        setComposeDraft({ ...cached!, localCacheKey: key, source: "local" });
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      window.localStorage.removeItem(key);
+    }
+  }, [wsId]);
 
   const lastCompletedSyncRunRef = useRef<string | null>(null);
   useEffect(() => {
@@ -919,6 +948,7 @@ export function CRMEmailsPage() {
     mutationFn: (draftId: string) => api.sendCRMEmailDraft(draftId),
     onSuccess: async () => {
       setMailboxStatus(emailCopy.draftSent);
+      clearComposeLocalCache(composeDraft);
       setComposeDraft(null);
       setSelectedDraftId(null);
       setActiveFolder("sent");
@@ -1063,14 +1093,6 @@ export function CRMEmailsPage() {
   }, [activeFolder, refreshMailbox, selectedMailbox?.id, wsId]);
 
   const composeCacheKey = `crm-compose-cache:${wsId || "workspace"}:${selectedMailbox?.id || "mailbox"}`;
-  const saveComposeCache = (draft: ComposeDraft) => {
-    try {
-      window.localStorage.setItem(composeCacheKey, JSON.stringify({ ...draft, cachedAt: new Date().toISOString() }));
-      setMailboxStatus(locale === "zh-Hans" ? "草稿已暂存到本地缓存。" : "Draft cached locally.");
-    } catch {
-      setMailboxStatus(locale === "zh-Hans" ? "本地暂存失败，请手动保存草稿。" : "Local cache failed. Save draft manually.");
-    }
-  };
   const clearComposeCache = () => {
     try { window.localStorage.removeItem(composeCacheKey); } catch {}
   };
@@ -1089,7 +1111,7 @@ export function CRMEmailsPage() {
   }, [composeCacheKey, composeDraft, locale, wsId]);
 
   const saveEmailDraft = useMutation({
-    mutationFn: async (options?: { close?: boolean }) => {
+    mutationFn: async (options?: { close?: boolean; autosave?: boolean }) => {
       if (!composeDraft) throw new Error(emailCopy.noDraft);
       const mailboxId = composeDraft.mailboxId || selectedMailbox?.id || mailboxes[0]?.id;
       if (!mailboxId) throw new Error(emailCopy.createMailboxFirst);
@@ -1106,14 +1128,24 @@ export function CRMEmailsPage() {
         attachments: composeDraft.attachments.map(({ file_name, content_type, content }) => ({ file_name, content_type, content })),
         scheduled_send_at: composeDraft.scheduledSendAt ? new Date(composeDraft.scheduledSendAt).toISOString() : null,
       };
+      if (options?.autosave && !composeDraft.draftId) {
+        const key = composeDraft.localCacheKey || `${composeCachePrefix}${composeDraft.threadId || "new"}:${Date.now()}`;
+        window.localStorage.setItem(key, JSON.stringify({ ...composeDraft, localCacheKey: key, source: "local", updatedAt: new Date().toISOString() }));
+        return { id: "", close: false, localOnly: true, localCacheKey: key };
+      }
       const result = composeDraft.draftId ? await api.updateCRMEmailDraft(composeDraft.draftId, payload) : await api.createCRMEmailDraft(payload);
-      return { ...result, close: options?.close ?? false };
+      return { ...result, close: options?.close ?? false, localOnly: false };
     },
     onSuccess: (result) => {
+      if ((result as any).localOnly) {
+        setComposeDraft((draft) => draft ? { ...draft, localCacheKey: (result as any).localCacheKey, source: "local" } : draft);
+        return;
+      }
+      clearComposeLocalCache(composeDraft);
       if (result.close) {
         setComposeDraft(null);
       } else if (result.id) {
-        setComposeDraft((draft) => draft ? { ...draft, draftId: result.id } : draft);
+        setComposeDraft((draft) => draft ? { ...draft, draftId: result.id, source: "server", localCacheKey: undefined } : draft);
       }
       clearComposeCache();
       setMailboxStatus(emailCopy.draftSaved);
@@ -1124,14 +1156,16 @@ export function CRMEmailsPage() {
 
   const closeComposeDraft = async (): Promise<boolean> => {
     if (!composeDraft) return true;
-    const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
+    const hasContent = composeHasContent(composeDraft);
     if (!hasContent) {
+      clearComposeLocalCache(composeDraft);
       setComposeDraft(null);
       return true;
     }
     if (window.confirm(emailCopy.saveBeforeClose ?? emailCopy.saveDraft)) {
       await saveEmailDraft.mutateAsync({ close: true });
     } else {
+      clearComposeLocalCache(composeDraft);
       setComposeDraft(null);
     }
     return true;
@@ -1141,10 +1175,9 @@ export function CRMEmailsPage() {
 
   useEffect(() => {
     if (!composeDraft) return;
-    const hasContent = [composeDraft.to, composeDraft.cc, composeDraft.bcc, composeDraft.subject, composeDraft.body].some((value) => value.trim()) || composeDraft.attachments.length > 0;
-    if (!hasContent || saveEmailDraft.isPending) return;
+    if (!composeHasContent(composeDraft) || saveEmailDraft.isPending) return;
     const timer = window.setTimeout(() => {
-      saveComposeCache(composeDraft);
+      saveEmailDraft.mutate({ autosave: true });
     }, 30000);
     return () => window.clearTimeout(timer);
   }, [composeDraft, saveEmailDraft.isPending]);
