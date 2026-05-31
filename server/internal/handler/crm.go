@@ -5537,9 +5537,9 @@ func extractCRMRecipientLookupKeywords(prompt string) []string {
 	}
 	stopPhrases := []string{"帮我", "请", "发邮件", "写邮件", "邮件", "发", "写", "给", "问一下", "问下", "询问", "近况", "情况", "需求", "报价", "收件人", "关键词"}
 	recipientPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(?:发邮件|写邮件|邮件)\s*(?:给|to)\s*([\p{L}\p{N}._%+\-@]+)`),
-		regexp.MustCompile(`(?i)(?:给|to)\s*([\p{L}\p{N}._%+\-@]+)\s*(?:发邮件|写邮件|邮件|问一下|问下|询问)`),
-		regexp.MustCompile(`(?i)(?:给|to)\s*([\p{L}\p{N}._%+\-@]+)`),
+		regexp.MustCompile(`(?i)(?:发邮件|写邮件|邮件)\s*(?:给|to)\s*([A-Z0-9._%+\-@]+)`),
+		regexp.MustCompile(`(?i)(?:给|to)\s*([A-Z0-9._%+\-@]+)\s*(?:发邮件|写邮件|邮件|问一下|问下|询问)`),
+		regexp.MustCompile(`(?i)(?:给|to)\s*([A-Z0-9._%+\-@]+)`),
 	}
 	candidates := []string{}
 	for _, pattern := range recipientPatterns {
