@@ -608,6 +608,7 @@ export function CRMEmailsPage() {
   const [aiReplyPrompt, setAIReplyPrompt] = useState("");
   const [, setAIAssistantContextKey] = useState("");
   const [aiAssistantTurns, setAIAssistantTurns] = useState<AIAssistantTurn[]>([]);
+  const [acceptedAITurnIds, setAcceptedAITurnIds] = useState<Set<string>>(() => new Set());
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
@@ -618,6 +619,12 @@ export function CRMEmailsPage() {
   const clearComposeLocalCache = (draft: ComposeDraft | null | undefined) => {
     if (typeof window === "undefined" || !draft?.localCacheKey) return;
     window.localStorage.removeItem(draft.localCacheKey);
+  };
+  const clearAllComposeLocalCache = () => {
+    if (typeof window === "undefined") return;
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith(composeCachePrefix))
+      .forEach((key) => window.localStorage.removeItem(key));
   };
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
   const { data: mailboxData } = useQuery({
@@ -693,6 +700,7 @@ export function CRMEmailsPage() {
     setComposeDraft(null);
     setAIAssistantContextKey("");
     setAIAssistantTurns([]);
+    setAcceptedAITurnIds(new Set());
     setAIReplyPrompt("");
   };
 
@@ -726,7 +734,7 @@ export function CRMEmailsPage() {
       if (window.confirm("检测到本地暂存草稿，是否恢复？")) {
         setComposeDraft({ ...cached!, localCacheKey: key, source: "local" });
       } else {
-        window.localStorage.removeItem(key);
+        clearAllComposeLocalCache();
       }
     } catch {
       window.localStorage.removeItem(key);
@@ -958,6 +966,30 @@ export function CRMEmailsPage() {
     onError: (error) => {
       setMailboxStatus(emailCopy.smtpSendFailed(mutationErrorMessage(error, emailCopy.unknownError)));
     },
+  });
+
+  const discardDraft = useMutation({
+    mutationFn: (draft: any) => api.updateCRMEmailDraft(draft.id, {
+      mailbox_id: draft.mailbox_id ?? selectedMailbox?.id ?? mailboxes[0]?.id,
+      thread_id: draft.thread_id ?? null,
+      account_id: draft.account_id ?? null,
+      contact_id: draft.contact_id ?? null,
+      to_emails: draft.to_emails ?? [],
+      cc_emails: draft.cc_emails ?? [],
+      bcc_emails: draft.bcc_emails ?? [],
+      subject: draft.subject ?? "",
+      body_text: draft.body_text ?? "",
+      attachments: [],
+      scheduled_send_at: null,
+      status: "discarded",
+    } as any),
+    onSuccess: async (_result, draft) => {
+      setMailboxStatus("草稿已丢弃。");
+      setSelectedDraftId((current) => current === draft.id ? null : current);
+      setComposeDraft((current) => current?.draftId === draft.id ? null : current);
+      await queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
+    },
+    onError: (error) => setMailboxStatus(emailCopy.deleteFailed(mutationErrorMessage(error, emailCopy.unknownError))),
   });
 
   const updateCachedThread = (thread: CRMEmailThread) => {
@@ -1389,6 +1421,7 @@ export function CRMEmailsPage() {
     setAIAssistantContextKey(key);
     setAIReplyPrompt("");
     setAIAssistantTurns([]);
+    setAcceptedAITurnIds(new Set());
     const currentDraft = draft ?? composeDraft;
     if (currentDraft?.threadId || currentDraft?.accountId || currentDraft?.contactId) {
       aiContextBrief.mutate(aiReplyPayload("生成邮件背景信息和风险提示", currentDraft));
@@ -1778,7 +1811,7 @@ export function CRMEmailsPage() {
                 }}
               >
                 <span className="flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{label}</span>
-                <Badge variant="secondary" className="tabular-nums">{displayFolderCounts[folder] ?? 0}</Badge>
+                <Badge variant={folder === "inbox" && (folderCounts.inbox_unread ?? 0) > 0 ? "default" : "secondary"} className="tabular-nums">{folder === "inbox" ? (folderCounts.inbox_unread ?? 0) : (displayFolderCounts[folder] ?? 0)}</Badge>
               </button>
             ))}
           </nav>
@@ -1816,16 +1849,24 @@ export function CRMEmailsPage() {
               {visibleMailboxDrafts.length === 0 ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{emailCopy.noDrafts}</div> : visibleMailboxDrafts.map((draft: any) => {
                 const active = selectedDraftId === draft.id;
                 return (
-                  <button key={draft.id} type="button" className={`mb-2 block w-full rounded-lg border bg-card p-3 text-left text-sm hover:bg-muted/60 ${active ? "ring-2 ring-primary/40" : ""}`} onClick={() => openDraftPreview(draft)}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate font-medium">{draft.subject || emailCopy.noSubject}</div>
-                        <div className="truncate text-xs text-muted-foreground">{emailCopy.to}: {(draft.to_emails ?? []).join(", ") || "—"}</div>
+                  <div key={draft.id} className={`mb-2 rounded-lg border bg-card p-3 text-sm hover:bg-muted/60 ${active ? "ring-2 ring-primary/40" : ""}`}>
+                    <button type="button" className="block w-full text-left" onClick={() => openDraftPreview(draft)}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{draft.subject || emailCopy.noSubject}</div>
+                          <div className="truncate text-xs text-muted-foreground">{emailCopy.to}: {(draft.to_emails ?? []).join(", ") || "—"}</div>
+                        </div>
+                        <Badge variant="outline">{draft.status}</Badge>
                       </div>
-                      <Badge variant="outline">{draft.status}</Badge>
+                      <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
+                    </button>
+                    <div className="mt-3 flex flex-wrap gap-1.5 border-t pt-2">
+                      <Button size="sm" variant="outline" onClick={() => openDraftInComposer(draft)}>{emailCopy.edit}</Button>
+                      <Button size="sm" disabled={!draft.id || sendDraft.isPending} onClick={() => draft.id && sendDraft.mutate(draft.id)}>{emailCopy.send}</Button>
+                      <Button size="sm" variant="outline" disabled={!draft.thread_id} onClick={() => { openDraftPreview(draft); setAssociationDraft({ threadIds: [draft.thread_id!], accountId: draft.account_id ?? "", contactId: draft.contact_id ?? "", contactName: "", contactEmail: "" }); }}>{t(($) => $.emails.link_customer_contact)}</Button>
+                      <Button size="sm" variant="destructive" disabled={!draft.id || discardDraft.isPending} onClick={() => draft.id && window.confirm("丢弃该草稿？") && discardDraft.mutate(draft)}>{emailCopy.remove}</Button>
                     </div>
-                    <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{draft.body_text}</p>
-                  </button>
+                  </div>
                 );
               })}
             </section>
@@ -1931,8 +1972,12 @@ export function CRMEmailsPage() {
                           <div className="whitespace-pre-wrap leading-6">{turn.content}</div>
                         </div>
                       ) : (
-                        <div key={turn.id} className="group relative mr-auto max-w-[92%] rounded-2xl border bg-muted/40 px-3 py-2 text-sm">
-                          <Button type="button" size="sm" className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setComposeDraft({ ...composeDraft, body: turn.content ? appendMailboxSignature(turn.content, mailboxes.find((mailbox) => mailbox.id === composeDraft.mailboxId)?.signature) : composeDraft.body })}>采纳</Button>
+                        <div key={turn.id} className={`group relative mr-auto max-w-[92%] rounded-2xl border px-3 py-2 text-sm ${acceptedAITurnIds.has(turn.id) ? "bg-muted/30 text-muted-foreground" : "bg-muted/40"}`}>
+                          {acceptedAITurnIds.has(turn.id) ? (
+                            <Badge variant="secondary" className="absolute right-2 top-2 text-muted-foreground">已采纳</Badge>
+                          ) : (
+                            <Button type="button" size="sm" className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => { setComposeDraft({ ...composeDraft, body: turn.content ? appendMailboxSignature(turn.content, mailboxes.find((mailbox) => mailbox.id === composeDraft.mailboxId)?.signature) : composeDraft.body }); setAcceptedAITurnIds((items) => new Set(items).add(turn.id)); }}>采纳</Button>
+                          )}
                           {turn.language ? <div className="mb-1 text-[11px] text-muted-foreground">客户语言：{turn.language}</div> : null}
                           <div className="whitespace-pre-wrap pr-14 leading-6">{turn.content}</div>
                         </div>

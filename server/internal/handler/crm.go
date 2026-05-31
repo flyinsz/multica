@@ -1175,6 +1175,7 @@ type CreateCRMEmailDraftRequest struct {
 	Attachments       []crmEmailAttachment `json:"attachments"`
 	SentAppendEnabled *bool                `json:"sent_append_enabled"`
 	ScheduledSendAt   *string              `json:"scheduled_send_at"`
+	Status            string               `json:"status"`
 	AIGenerated       bool                 `json:"ai_generated"`
 	ApprovalReason    *string              `json:"approval_reason"`
 }
@@ -3554,6 +3555,10 @@ func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(req.Status) == "discarded" {
+		draftStatus = "discarded"
+		scheduledSendAt = pgtype.Timestamptz{}
+	}
 	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET mailbox_id=$3, thread_id=$4, account_id=$5, contact_id=$6, issue_id=$7, to_emails=$8, cc_emails=$9, bcc_emails=$10, subject=$11, body_text=$12, body_html=$13, in_reply_to=$14, reference_ids=$15, attachments=$16, scheduled_send_at=$17, status=$18, approval_reason=$19, updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status <> 'sent'`, draftID, workspaceID, mailboxID, threadID, accountID, contactID, issueID, req.ToEmails, req.CcEmails, req.BccEmails, req.Subject, req.BodyText, cleanOptionalText(&req.BodyHTML), cleanOptionalText(&req.InReplyTo), req.ReferenceIDs, attachmentsJSON, scheduledSendAt, draftStatus, cleanOptionalText(req.ApprovalReason)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update CRM email draft")
 		return
@@ -4148,6 +4153,53 @@ func (h *Handler) GetCRMAccountProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func crmProfileAliasValues(raw json.RawMessage) []string {
+	var profile map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &profile) != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 12)
+	for _, key := range []string{"aliases", "search_keywords", "keywords"} {
+		value, ok := profile[key]
+		if !ok {
+			continue
+		}
+		candidates := []string{}
+		switch v := value.(type) {
+		case string:
+			candidates = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == '，' || r == '、' || r == '\n' || r == '\t' })
+		case []any:
+			for _, item := range v {
+				if text, ok := item.(string); ok {
+					candidates = append(candidates, text)
+				}
+			}
+		}
+		for _, item := range candidates {
+			alias := strings.TrimSpace(item)
+			normalized := strings.ToLower(alias)
+			if alias == "" || alias == "——" || len([]rune(alias)) > 180 {
+				continue
+			}
+			if _, exists := seen[normalized]; exists {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			out = append(out, alias)
+		}
+	}
+	return out
+}
+
+func (h *Handler) syncCRMCustomerAliasesFromProfile(ctx context.Context, workspaceID, accountID pgtype.UUID, raw json.RawMessage) {
+	aliases := crmProfileAliasValues(raw)
+	_, _ = h.DB.Exec(ctx, `DELETE FROM crm_customer_alias WHERE workspace_id=$1 AND account_id=$2 AND source_type='profile'`, workspaceID, accountID)
+	for _, alias := range aliases {
+		_, _ = h.DB.Exec(ctx, `INSERT INTO crm_customer_alias (workspace_id, account_id, alias, alias_normalized, alias_type, weight, source_type, confidence) VALUES ($1,$2,$3,$4,'ai_extracted',70,'profile',0.750) ON CONFLICT DO NOTHING`, workspaceID, accountID, alias, strings.ToLower(alias))
+	}
+}
+
 func (h *Handler) UpsertCRMAccountProfile(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {
@@ -4193,6 +4245,7 @@ func (h *Handler) UpsertCRMAccountProfile(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to save CRM account profile")
 		return
 	}
+	h.syncCRMCustomerAliasesFromProfile(r.Context(), workspaceID, accountID, json.RawMessage(rawProfile))
 	writeJSON(w, http.StatusOK, CRMAccountProfileResponse{ID: uuidToString(id), WorkspaceID: uuidToString(workspaceID), AccountID: uuidToString(accountID), Summary: textToPtr(summary), ProfileJSON: json.RawMessage(rawProfile), UpdatedBy: uuidToPtr(updatedByOut), CreatedAt: timestampToString(createdAt), UpdatedAt: timestampToString(updatedAt)})
 }
 

@@ -176,10 +176,11 @@ function profileToForm(profile: { summary?: string | null; profile_json?: Record
   };
 }
 
-function profilePayload(form: ProfileFormState) {
+function profilePayload(form: ProfileFormState, current?: { profile_json?: Record<string, unknown> } | null) {
   return {
     summary: form.summary || null,
     profile_json: {
+      ...(current?.profile_json ?? {}),
       business_model: form.businessModel,
       main_products: form.mainProducts,
       procurement_needs: form.procurementNeeds,
@@ -188,8 +189,8 @@ function profilePayload(form: ProfileFormState) {
       communication_preference: form.communicationPreference,
       risk_notes: form.riskNotes,
       cooperation_history: form.cooperationHistory,
-      aliases: form.aliases,
-      search_keywords: form.searchKeywords,
+      aliases: form.aliases.split(/[\n,，、]+/).map((item) => item.trim()).filter(Boolean),
+      search_keywords: form.searchKeywords.split(/[\n,，、]+/).map((item) => item.trim()).filter(Boolean),
     },
   };
 }
@@ -606,7 +607,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const saveProfile = useMutation({
     mutationFn: () => {
       if (!profileForm) throw new Error("missing profile form");
-      return api.upsertCRMAccountProfile(accountId, profilePayload(profileForm));
+      return api.upsertCRMAccountProfile(accountId, profilePayload(profileForm, profile));
     },
     onSuccess: async () => {
       setProfileForm(null);

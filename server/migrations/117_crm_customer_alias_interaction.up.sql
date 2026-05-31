@@ -42,4 +42,23 @@ SELECT
     ''::text AS sentiment,
     ''::text AS intent,
     jsonb_build_array(jsonb_build_object('channel','email','message_id',m.id,'thread_id',m.thread_id)) AS source_refs
-FROM crm_email_message m;
+FROM crm_email_message m
+UNION ALL
+SELECT
+    n.id,
+    n.workspace_id,
+    n.account_id,
+    n.contact_id,
+    'manual_note'::text AS channel,
+    n.id AS source_id,
+    NULL::uuid AS thread_id,
+    n.direction,
+    n.occurred_at,
+    COALESCE(n.subject, '') AS subject,
+    COALESCE(n.body, '') AS body_text,
+    LEFT(regexp_replace(COALESCE(n.body, ''), '\s+', ' ', 'g'), 500) AS body_summary,
+    ''::text AS language,
+    ''::text AS sentiment,
+    ''::text AS intent,
+    jsonb_build_array(jsonb_build_object('channel','manual_note','note_id',n.id)) AS source_refs
+FROM crm_communication_note n;
