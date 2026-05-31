@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -5534,22 +5535,25 @@ func extractCRMRecipientLookupKeywords(prompt string) []string {
 	if text == "" {
 		return []string{}
 	}
-	lower := strings.ToLower(text)
-	stopPhrases := []string{"发邮件", "写邮件", "邮件", "问一下", "问下", "询问", "近况", "情况", "需求", "报价", "收件人", "关键词"}
-	for _, marker := range []string{"发邮件", "写邮件", "邮件"} {
-		if idx := strings.Index(text, marker); idx > 0 {
-			prefix := strings.TrimSpace(text[:idx])
-			prefix = strings.TrimPrefix(prefix, "请")
-			prefix = strings.TrimPrefix(prefix, "帮我")
-			prefix = strings.TrimPrefix(prefix, "给")
-			prefix = strings.TrimPrefix(prefix, "发给")
-			prefix = strings.TrimSpace(prefix)
-			if prefix != "" {
-				return uniqueCRMRecipientKeywords([]string{prefix})
-			}
-		}
+	stopPhrases := []string{"帮我", "请", "发邮件", "写邮件", "邮件", "发", "写", "给", "问一下", "问下", "询问", "近况", "情况", "需求", "报价", "收件人", "关键词"}
+	recipientPatterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(?:发邮件|写邮件|邮件)\s*(?:给|to)\s*([\p{L}\p{N}._%+\-@]+)`),
+		regexp.MustCompile(`(?i)(?:给|to)\s*([\p{L}\p{N}._%+\-@]+)\s*(?:发邮件|写邮件|邮件|问一下|问下|询问)`),
+		regexp.MustCompile(`(?i)(?:给|to)\s*([\p{L}\p{N}._%+\-@]+)`),
 	}
 	candidates := []string{}
+	for _, pattern := range recipientPatterns {
+		matches := pattern.FindAllStringSubmatch(text, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				candidates = append(candidates, strings.Trim(match[1], "._-+，,。；;：:！!？?"))
+			}
+		}
+		if len(candidates) > 0 {
+			return uniqueCRMRecipientKeywords(candidates)
+		}
+	}
+	lower := strings.ToLower(text)
 	for _, field := range strings.FieldsFunc(lower, func(r rune) bool {
 		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '@' || r == '.' || r == '_' || r == '-' || r == '+')
 	}) {
