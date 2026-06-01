@@ -3089,6 +3089,9 @@ func (h *Handler) startCRMEmailDraftScheduler() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
+			if h == nil || h.DB == nil {
+				return
+			}
 			h.processDueCRMEmailDrafts(context.Background())
 			<-ticker.C
 		}

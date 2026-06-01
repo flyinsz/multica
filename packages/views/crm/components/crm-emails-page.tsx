@@ -149,7 +149,8 @@ function AssociationChip({ icon, label, value, onClick }: { icon: ReactNode; lab
 }
 
 function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { t } = useT("crm");
+  const { t: rawT } = useT("crm");
+  const t = rawT as (key: string, options?: Record<string, unknown>) => string;
   const diagnostics = useQuery({
     queryKey: ["crm", wsId, "imap-diagnostics"],
     queryFn: () => api.getCRMIMAPDiagnostics(wsId),

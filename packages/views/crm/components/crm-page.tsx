@@ -95,17 +95,6 @@ const tagSuggestions = (accounts: Array<{ tags?: string[] | null }>) => {
     .slice(0, 12);
 };
 
-function isCRMAccountFollowUpBucket(value: string | null): value is CRMAccountFollowUpBucket {
-  return value === "today" || value === "next_7_days" || value === "overdue" || value === "none";
-}
-
-function isCRMAccountPriority(value: string | null): value is CRMAccountPriority {
-  return value === "high" || value === "medium" || value === "low";
-}
-
-function isCRMAccountSort(value: string | null): value is CRMAccountSort {
-  return value === "name" || value === "updated" || value === "next_follow_up" || value === "priority_rating";
-}
 
 function AccountStatusLabel({ status, t }: { status: CRMAccountStatus; t: Translation }) {
   const labels: Record<CRMAccountStatus, string> = {
