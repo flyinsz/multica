@@ -39,7 +39,6 @@
     "account_code": "Account code",
     "owner": "Owner",
     "account_type": "Account type",
-    "account_code": "Account code",
     "rating": "Rating",
     "priority": "Priority",
     "city": "City",
@@ -325,5 +324,17 @@
     "today_followups": "Due today",
     "week_followups": "Due this week",
     "high_priority": "High priority"
+  },
+  "imapDiagnostics": {
+    "title": "IMAP Diagnostics",
+    "description": "Connection status, sync errors, and mailbox diagnostics",
+    "loadFailed": "Failed to load diagnostics",
+    "mailboxFallback": "Mailbox {{count}}",
+    "errorPrefix": "Error: {{error}}",
+    "latency": "Latency: {{ms}}ms",
+    "testConnection": "Test Connection",
+    "noMailboxes": "No mailbox diagnostics found.",
+    "recentSyncErrors": "Recent Sync Errors",
+    "noSyncErrors": "No sync errors found."
   }
 }

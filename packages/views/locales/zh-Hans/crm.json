@@ -39,7 +39,6 @@
     "account_code": "客户编码",
     "owner": "客户所有人",
     "account_type": "客户类型",
-    "account_code": "客户编码",
     "rating": "评级",
     "priority": "优先级",
     "city": "城市",
@@ -325,5 +324,17 @@
     "today_followups": "今日跟进",
     "week_followups": "本周跟进",
     "high_priority": "高优先级"
+  },
+  "imapDiagnostics": {
+    "title": "IMAP 诊断",
+    "description": "连接状态、同步错误和邮箱诊断",
+    "loadFailed": "加载诊断失败",
+    "mailboxFallback": "邮箱 {{count}}",
+    "errorPrefix": "错误：{{error}}",
+    "latency": "延迟：{{ms}}ms",
+    "testConnection": "测试连接",
+    "noMailboxes": "暂无邮箱诊断。",
+    "recentSyncErrors": "最近同步错误",
+    "noSyncErrors": "暂无同步错误。"
   }
 }

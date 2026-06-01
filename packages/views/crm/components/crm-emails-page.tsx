@@ -235,6 +235,7 @@ function AssociationChip({ icon, label, value, onClick }: { icon: ReactNode; lab
 }
 
 function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { t } = useT("crm");
   const diagnostics = useQuery({
     queryKey: ["crm", wsId, "imap-diagnostics"],
     queryFn: () => api.getCRMIMAPDiagnostics(wsId),
@@ -262,19 +263,19 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle><Wrench className="mr-2 inline size-4" />IMAP Diagnostics</DialogTitle>
-          <DialogDescription>Connection status, sync errors, and mailbox diagnostics</DialogDescription>
+          <DialogTitle><Wrench className="mr-2 inline size-4" />{t("imapDiagnostics.title")}</DialogTitle>
+          <DialogDescription>{t("imapDiagnostics.description")}</DialogDescription>
         </DialogHeader>
         {diagnostics.isLoading ? (
           <Skeleton className="h-32 w-full" />
         ) : diagnostics.error ? (
-          <p className="text-sm text-destructive">Failed to load diagnostics</p>
+          <p className="text-sm text-destructive">{t("imapDiagnostics.loadFailed")}</p>
         ) : (
           <div className="space-y-3">
             {diagnosticMailboxes.length ? diagnosticMailboxes.map((mailbox: any, i: number) => (
               <div key={mailbox.id || i} className="rounded-lg border bg-card p-4 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium">{mailbox.email || mailbox.label || `Mailbox ${i + 1}`}</span>
+                  <span className="font-medium">{mailbox.email || mailbox.label || t("imapDiagnostics.mailboxFallback", { count: i + 1 })}</span>
                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
                     mailbox.connected || mailbox.connection_status === "ok" ? "bg-green-100 text-green-700" :
                     mailbox.last_error || mailbox.connection_status === "error" ? "bg-red-100 text-red-700" :
@@ -284,8 +285,8 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
                     {mailbox.connected ? "ok" : mailbox.connection_status || "unknown"}
                   </span>
                 </div>
-                {mailbox.last_error && <p className="mt-1 text-xs text-red-600">Error: {mailbox.last_error}</p>}
-                {mailbox.latency_ms != null && <p className="mt-1 text-xs text-muted-foreground">Latency: {mailbox.latency_ms}ms</p>}
+                {mailbox.last_error && <p className="mt-1 text-xs text-red-600">{t("imapDiagnostics.errorPrefix", { error: mailbox.last_error })}</p>}
+                {mailbox.latency_ms != null && <p className="mt-1 text-xs text-muted-foreground">{t("imapDiagnostics.latency", { ms: mailbox.latency_ms })}</p>}
                 <Button
                   variant="outline"
                   size="sm"
@@ -293,16 +294,16 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
                   disabled={testConnection.isPending}
                   onClick={() => testConnection.mutate(mailbox)}
                 >
-                  Test Connection
+                  {t("imapDiagnostics.testConnection")}
                 </Button>
               </div>
             )) : (
-              <p className="text-sm text-muted-foreground">No mailbox diagnostics found.</p>
+              <p className="text-sm text-muted-foreground">{t("imapDiagnostics.noMailboxes")}</p>
             )}
           </div>
         )}
         <div className="mt-4">
-          <h4 className="mb-2 text-sm font-semibold">Recent Sync Errors</h4>
+          <h4 className="mb-2 text-sm font-semibold">{t("imapDiagnostics.recentSyncErrors")}</h4>
           {syncErrors.isLoading ? (
             <Skeleton className="h-20 w-full" />
           ) : syncErrorItems.length > 0 ? (
@@ -316,7 +317,7 @@ function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: b
               ))}
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">No sync errors found.</p>
+            <p className="text-xs text-muted-foreground">{t("imapDiagnostics.noSyncErrors")}</p>
           )}
         </div>
       </DialogContent>
