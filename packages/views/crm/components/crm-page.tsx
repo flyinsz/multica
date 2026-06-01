@@ -104,6 +104,7 @@ const tagSuggestions = (accounts: Array<{ tags?: string[] | null }>) => {
     .slice(0, 12);
 };
 
+
 function AccountStatusLabel({ status, t }: { status: CRMAccountStatus; t: Translation }) {
   const labels: Record<CRMAccountStatus, string> = {
     active: t(($) => $.statuses.active),

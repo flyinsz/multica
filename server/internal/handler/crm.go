@@ -3621,6 +3621,9 @@ func (h *Handler) startCRMEmailDraftScheduler() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
+			if h == nil || h.DB == nil {
+				return
+			}
 			h.runCRMScheduledEmailDrafts(context.Background())
 			<-ticker.C
 		}
@@ -3628,6 +3631,9 @@ func (h *Handler) startCRMEmailDraftScheduler() {
 }
 
 func (h *Handler) runCRMScheduledEmailDrafts(ctx context.Context) {
+	if h == nil || h.DB == nil {
+		return
+	}
 	rows, err := h.DB.Query(ctx, `SELECT workspace_id, id FROM crm_email_draft WHERE status='scheduled' AND scheduled_send_at IS NOT NULL AND scheduled_send_at <= now() ORDER BY scheduled_send_at ASC LIMIT 20`)
 	if err != nil {
 		slog.Warn("CRM scheduled email query failed", "error", err)
