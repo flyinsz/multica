@@ -61,6 +61,13 @@ const {
 }));
 
 vi.mock("@multica/core/api", () => ({
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(status: number, message?: string) {
+      super(message);
+      this.status = status;
+    }
+  },
   api: {
     searchIssues: mockSearchIssues,
     searchProjects: mockSearchProjects,
@@ -82,6 +89,7 @@ vi.mock("@multica/core/paths", () => ({
   paths: {
     workspace: (slug: string) => ({
       issues: () => `/${slug}/issues`,
+      crm: () => `/${slug}/crm/dashboard`,
     }),
   },
   useCurrentWorkspace: () => mockCurrentWorkspace.current,
@@ -90,6 +98,10 @@ vi.mock("@multica/core/paths", () => ({
     myIssues: () => "/ws-test/my-issues",
     issues: () => "/ws-test/issues",
     projects: () => "/ws-test/projects",
+    crm: () => "/ws-test/crm/dashboard",
+    crmCustomers: () => "/ws-test/crm/customers",
+    crmEmails: () => "/ws-test/crm/emails",
+    crmAISettings: () => "/ws-test/crm/ai-settings",
     agents: () => "/ws-test/agents",
     runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",

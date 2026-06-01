@@ -84,16 +84,17 @@ vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "user-1" } }),
 }));
 vi.mock("@multica/core/paths", () => ({
-  paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
+  paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues`, crm: () => `/${slug}/crm/dashboard` }) },
   useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
-    crm: () => "/acme/crm",
+    crm: () => "/acme/crm/dashboard",
     crmCustomers: () => "/acme/crm/customers",
     crmEmails: () => "/acme/crm/emails",
+    crmAISettings: () => "/acme/crm/ai-settings",
     autopilots: () => "/acme/autopilots",
     agents: () => "/acme/agents",
     runtimes: () => "/acme/runtimes",
