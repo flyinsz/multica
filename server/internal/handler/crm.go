@@ -3058,6 +3058,9 @@ func (h *Handler) sendCRMEmailDraftCore(ctx context.Context, workspaceID, draftI
 }
 
 func (h *Handler) processDueCRMEmailDrafts(ctx context.Context) {
+	if h == nil || h.DB == nil {
+		return
+	}
 	rows, err := h.DB.Query(ctx, `SELECT workspace_id, id FROM crm_email_draft WHERE status='scheduled' AND scheduled_send_at IS NOT NULL AND scheduled_send_at <= now() ORDER BY scheduled_send_at ASC LIMIT 20`)
 	if err != nil {
 		slog.Warn("CRM scheduled email query failed", "error", err)
