@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -75,7 +76,7 @@ type Handler struct {
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
 	var executor dbExecutor
-	if candidate, ok := txStarter.(dbExecutor); ok {
+	if candidate, ok := txStarter.(dbExecutor); ok && !isNilDBExecutor(candidate) {
 		executor = candidate
 	}
 
@@ -112,6 +113,19 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	h.startCRMEmailDraftScheduler()
 	return h
+}
+
+func isNilDBExecutor(executor dbExecutor) bool {
+	if executor == nil {
+		return true
+	}
+	v := reflect.ValueOf(executor)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
