@@ -1,13 +1,16 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -1295,7 +1298,22 @@ func (h *Handler) ListCRMAccounts(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN crm_contact c ON c.account_id = a.id AND c.workspace_id = a.workspace_id
 		WHERE a.workspace_id = $1
 		  AND ($2::text IS NULL OR a.status = $2::text)
-		  AND ($3::text IS NULL OR a.normalized_name LIKE '%' || $3::text || '%')
+		  AND ($3::text IS NULL OR (
+		    a.normalized_name LIKE '%' || $3::text || '%'
+		    OR lower(COALESCE(a.account_code,'')) LIKE '%' || $3::text || '%'
+		    OR EXISTS (
+		      SELECT 1 FROM crm_contact sc
+		      WHERE sc.workspace_id=a.workspace_id AND sc.account_id=a.id
+		        AND (
+		          lower(COALESCE(sc.name,'')) LIKE '%' || $3::text || '%'
+		          OR lower(COALESCE(sc.email,'')) LIKE '%' || $3::text || '%'
+		          OR lower(COALESCE(sc.phone,'')) LIKE '%' || $3::text || '%'
+		          OR lower(COALESCE(sc.mobile,'')) LIKE '%' || $3::text || '%'
+		          OR lower(COALESCE(sc.whatsapp_id,'')) LIKE '%' || $3::text || '%'
+		          OR lower(COALESCE(sc.whatsapp,'')) LIKE '%' || $3::text || '%'
+		        )
+		    )
+		  ))
 		  AND ($4::text IS NULL OR a.rating = $4::text)
 		  AND ($5::text IS NULL OR a.priority = $5::text)
 		  AND ($6::text IS NULL OR a.country_code = $6::text OR a.country = $6::text)
@@ -4399,4 +4417,314 @@ func (h *Handler) SetCRMIMAPSyncCron(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sync_enabled": req.SyncEnabled})
+}
+
+type CRMAIHistoryItemResponse struct {
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	Status        string    `json:"status"`
+	OriginID      *string   `json:"origin_id"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	AutomationKey string    `json:"automation_key"`
+}
+
+func (h *Handler) ListCRMAIHistory(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	limit := parsePositiveIntQuery(r, "limit", 20, 100)
+	offset := parsePositiveIntQuery(r, "offset", 0, 10000)
+	days := parsePositiveIntQuery(r, "days", 30, 365)
+	automationKey := strings.TrimSpace(r.URL.Query().Get("automation_key"))
+	rows, err := h.DB.Query(r.Context(), `
+		WITH history AS (
+			SELECT id, title, status, origin_id, created_at, updated_at,
+				CASE
+					WHEN title LIKE '回复邮件：%' OR title LIKE 'CRM 邮件待回复：%' THEN 'email_pending_reply'
+					WHEN title LIKE '跟进客户：%' THEN 'due_followup'
+					ELSE 'other'
+				END AS automation_key
+			FROM issue
+			WHERE workspace_id=$1
+			  AND (origin_type='crm_ai' OR title LIKE 'CRM 邮件待回复：%' OR title LIKE '回复邮件：%' OR title LIKE '跟进客户：%')
+			  AND created_at >= now() - ($4::int * interval '1 day')
+		)
+		SELECT id, title, status, origin_id, created_at, updated_at, automation_key
+		FROM history
+		WHERE ($5 = '' OR automation_key = $5)
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, workspaceID, limit, offset, days, automationKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list CRM AI history")
+		return
+	}
+	defer rows.Close()
+	items := []CRMAIHistoryItemResponse{}
+	for rows.Next() {
+		var item CRMAIHistoryItemResponse
+		var id, originID pgtype.UUID
+		if err := rows.Scan(&id, &item.Title, &item.Status, &originID, &item.CreatedAt, &item.UpdatedAt, &item.AutomationKey); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scan CRM AI history")
+			return
+		}
+		item.ID = uuidToString(id)
+		if originID.Valid {
+			s := uuidToString(originID)
+			item.OriginID = &s
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset, "days": days, "has_more": len(items) == limit})
+}
+
+func parsePositiveIntQuery(r *http.Request, key string, fallback, max int) int {
+	value, err := strconv.Atoi(r.URL.Query().Get(key))
+	if err != nil || value < 0 {
+		return fallback
+	}
+	if max > 0 && value > max {
+		return max
+	}
+	return value
+}
+
+func (h *Handler) withRecentCRMAIIssues(ctx context.Context, workspaceID pgtype.UUID, automationKey string, lastResult []byte) json.RawMessage {
+	payload := map[string]any{}
+	if len(lastResult) > 0 {
+		_ = json.Unmarshal(lastResult, &payload)
+	}
+	if existing, ok := payload["created_issues"].([]any); ok && len(existing) > 0 {
+		out, _ := json.Marshal(payload)
+		return json.RawMessage(out)
+	}
+	prefix := ""
+	switch automationKey {
+	case "email_pending_reply":
+		prefix = "回复邮件：%"
+	case "due_followup":
+		prefix = "跟进客户：%"
+	default:
+		out, _ := json.Marshal(payload)
+		return json.RawMessage(out)
+	}
+	rows, err := h.DB.Query(ctx, `
+		SELECT id, title
+		FROM issue
+		WHERE workspace_id=$1 AND origin_type='crm_ai' AND title LIKE $2
+		ORDER BY created_at DESC
+		LIMIT 10`, workspaceID, prefix)
+	if err != nil {
+		out, _ := json.Marshal(payload)
+		return json.RawMessage(out)
+	}
+	defer rows.Close()
+	issues := []map[string]string{}
+	for rows.Next() {
+		var id pgtype.UUID
+		var title string
+		if err := rows.Scan(&id, &title); err == nil && id.Valid {
+			issues = append(issues, map[string]string{"id": uuidToString(id), "title": title, "kind": "recent"})
+		}
+	}
+	if len(issues) > 0 {
+		payload["created_issues"] = issues
+	}
+	out, _ := json.Marshal(payload)
+	return json.RawMessage(out)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringValue(value any) string {
+	s, _ := value.(string)
+	return strings.TrimSpace(s)
+}
+
+func textValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return strings.TrimSpace(value.String)
+}
+
+func (h *Handler) resolveCRMProfileAgentLLMConfig(ctx context.Context) (string, string, string, string) {
+	var model pgtype.Text
+	var runtimeConfig, customEnv []byte
+	if err := h.DB.QueryRow(ctx, `
+		SELECT a.model, a.runtime_config, a.custom_env
+		FROM agent a
+		JOIN agent_runtime r ON r.id = a.runtime_id
+		WHERE lower(a.name) = 'jarvis'
+		  AND r.provider = 'hermes'
+		ORDER BY CASE WHEN r.status = 'online' THEN 0 ELSE 1 END, a.updated_at DESC
+		LIMIT 1
+	`).Scan(&model, &runtimeConfig, &customEnv); err == nil {
+		config := map[string]any{}
+		_ = json.Unmarshal(runtimeConfig, &config)
+		env := map[string]any{}
+		_ = json.Unmarshal(customEnv, &env)
+		baseURL := firstNonEmpty(stringValue(config["base_url"]), stringValue(config["baseURL"]), stringValue(env["HERMES_MODEL_BASE_URL"]), os.Getenv("HERMES_MODEL_BASE_URL"))
+		apiKey := firstNonEmpty(stringValue(config["api_key"]), stringValue(config["apiKey"]), stringValue(env["HERMES_MODEL_API_KEY"]), os.Getenv("HERMES_MODEL_API_KEY"))
+		modelName := firstNonEmpty(textValue(model), stringValue(config["model"]), stringValue(env["HERMES_MODEL"]), os.Getenv("HERMES_MODEL"))
+		if baseURL != "" && apiKey != "" && modelName != "" {
+			return baseURL, apiKey, modelName, "agent:Jarvis"
+		}
+	}
+	return firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_BASE_URL"), os.Getenv("HERMES_MODEL_BASE_URL")), firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_API_KEY"), os.Getenv("HERMES_MODEL_API_KEY")), firstNonEmpty(os.Getenv("CRM_PROFILE_LLM_MODEL"), os.Getenv("HERMES_MODEL")), "env:fallback"
+}
+
+func ptrString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func inferCRMCustomerLanguage(email, body string) string {
+	text := strings.ToLower(email + " " + body)
+	if strings.Contains(text, ".cn") || strings.Contains(body, "你好") || strings.Contains(body, "您好") {
+		return "Chinese"
+	}
+	if strings.Contains(text, ".es") || strings.Contains(text, ".mx") || strings.Contains(text, ".ar") {
+		return "Spanish"
+	}
+	if strings.Contains(text, ".fr") {
+		return "French"
+	}
+	if strings.Contains(text, ".de") {
+		return "German"
+	}
+	if strings.Contains(text, ".ru") {
+		return "Russian"
+	}
+	if strings.Contains(text, ".jp") {
+		return "Japanese"
+	}
+	if strings.Contains(text, ".kr") {
+		return "Korean"
+	}
+	return "English"
+}
+
+type CRMEmailDraftAISuggestRequest struct {
+	ThreadID  *string  `json:"thread_id"`
+	AccountID *string  `json:"account_id"`
+	ContactID *string  `json:"contact_id"`
+	ToEmails  []string `json:"to_emails"`
+	Subject   string   `json:"subject"`
+}
+
+type CRMEmailDraftAISuggestResponse struct {
+	Chinese          string `json:"chinese"`
+	CustomerLanguage string `json:"customer_language"`
+	CustomerReply    string `json:"customer_reply"`
+	Source           string `json:"source"`
+}
+
+func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	var req CRMEmailDraftAISuggestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	threadID := mustParsePgUUID(strings.TrimSpace(ptrString(req.ThreadID)))
+	accountID := mustParsePgUUID(strings.TrimSpace(ptrString(req.AccountID)))
+	contactID := mustParsePgUUID(strings.TrimSpace(ptrString(req.ContactID)))
+	ctx := r.Context()
+
+	accountName := ""
+	accountNotes := ""
+	if accountID.Valid {
+		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(notes,'') FROM crm_account WHERE workspace_id=$1 AND id=$2`, workspaceID, accountID).Scan(&accountName, &accountNotes)
+	}
+	contactName := ""
+	contactEmail := ""
+	contactLanguage := ""
+	if contactID.Valid {
+		_ = h.DB.QueryRow(ctx, `SELECT COALESCE(name,''), COALESCE(email,''), COALESCE(language,'') FROM crm_contact WHERE workspace_id=$1 AND id=$2`, workspaceID, contactID).Scan(&contactName, &contactEmail, &contactLanguage)
+	}
+	messages := []string{}
+	if threadID.Valid {
+		rows, err := h.DB.Query(ctx, `SELECT direction, COALESCE(from_name,''), COALESCE(from_email,''), COALESCE(subject,''), COALESCE(body_text, regexp_replace(COALESCE(body_html,''), '<[^>]+>', ' ', 'g'), ''), COALESCE(received_at, sent_at, created_at) FROM crm_email_message WHERE workspace_id=$1 AND thread_id=$2 ORDER BY COALESCE(received_at, sent_at, created_at) DESC LIMIT 8`, workspaceID, threadID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var direction, fromName, fromEmail, subject, body string
+				var at pgtype.Timestamptz
+				if rows.Scan(&direction, &fromName, &fromEmail, &subject, &body, &at) == nil {
+					messages = append(messages, fmt.Sprintf("[%s] %s <%s> %s\n%s", direction, fromName, fromEmail, subject, stringsTrimForCRM(body, 1200)))
+					if contactEmail == "" && direction == "inbound" {
+						contactEmail = fromEmail
+					}
+				}
+			}
+		}
+	}
+	language := strings.TrimSpace(contactLanguage)
+	if language == "" {
+		language = inferCRMCustomerLanguage(contactEmail, strings.Join(messages, "\n"))
+	}
+	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	apiKey = strings.TrimSpace(apiKey)
+	if baseURL == "" || apiKey == "" || model == "" {
+		zh := "您好，\n\n感谢您的来信。我们已收到您的需求，会尽快核对相关信息后回复您。若方便，请补充具体产品、数量、规格、目的港和期望交期，便于我们提供更准确的方案。\n\n此致"
+		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{Chinese: zh, CustomerLanguage: language, CustomerReply: zh, Source: "fallback"})
+		return
+	}
+	prompt := "你是外贸CRM邮件回复助手。根据客户资料和邮件往来，输出JSON：{\"chinese\":\"中文回复建议\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"客户语言回复建议\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 无客户资料/历史时只基于当前邮件；3) 中文建议用于内部参考；4) customer_reply 必须是客户语言，可直接发送；5) 正式、简洁、商务。\n\n客户：" + accountName + "\n联系人：" + contactName + " <" + contactEmail + ">\n客户语言：" + language + "\n客户备注：" + accountNotes + "\n主题：" + req.Subject + "\n邮件往来：\n" + strings.Join(messages, "\n---\n")
+	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
+	body, _ := json.Marshal(payload)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build AI request")
+		return
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to call AI model")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, "AI model returned error")
+		return
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
+		writeError(w, http.StatusBadGateway, "invalid AI model response")
+		return
+	}
+	var parsed CRMEmailDraftAISuggestResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.Choices[0].Message.Content)), &parsed); err != nil {
+		writeError(w, http.StatusBadGateway, "invalid AI suggestion JSON")
+		return
+	}
+	if parsed.CustomerLanguage == "" {
+		parsed.CustomerLanguage = language
+	}
+	parsed.Source = source
+	writeJSON(w, http.StatusOK, parsed)
 }
