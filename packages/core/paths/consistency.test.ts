@@ -44,7 +44,7 @@ describe("paths.workspace() shape", () => {
       ["autopilots", "autopilots"],
       ["agents", "agents"],
       ["inbox", "inbox"],
-      ["crm", "crm"],
+      ["crm", "crm/dashboard"],
       ["crmCustomers", "crm/customers"],
       ["crmEmails", "crm/emails"],
       ["crmAISettings", "crm/ai-settings"],
