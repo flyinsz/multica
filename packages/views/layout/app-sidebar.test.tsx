@@ -157,7 +157,7 @@ describe("PinRow", () => {
   it("links CRM to the dashboard and keeps a customer list entry below it", () => {
     const { container } = render(<AppSidebar />);
 
-    expect(container.querySelector('a[href="/acme/crm"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/acme/crm/dashboard"]')).not.toBeNull();
     expect(container.querySelector('a[href="/acme/crm/customers"]')).not.toBeNull();
     expect(container.querySelector('a[href="/acme/crm/emails"]')).not.toBeNull();
   });
