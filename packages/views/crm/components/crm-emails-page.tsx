@@ -334,6 +334,7 @@ export function CRMEmailsPage() {
   const initialDraftId = navigation.searchParams.get("draft");
   const initialThreadId = navigation.searchParams.get("thread");
   const initialMessageId = navigation.searchParams.get("message");
+  const initialComposeMode = navigation.searchParams.get("compose");
   const locale = normalizeLocale(i18n.language);
   const emailCopy = locale === "zh-Hans" ? {
     compose: "写邮件",
@@ -611,6 +612,7 @@ export function CRMEmailsPage() {
   const [aiAssistantTurns, setAIAssistantTurns] = useState<AIAssistantTurn[]>([]);
   const [acceptedAITurnIds, setAcceptedAITurnIds] = useState<Set<string>>(() => new Set());
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
+  const initialComposeHandledRef = useRef(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [folderSidebarExpanded, setFolderSidebarExpanded] = useState(false);
   const composeHidesList = Boolean(composeDraft && activeFolder !== "drafts");
@@ -1635,6 +1637,13 @@ export function CRMEmailsPage() {
       setAIDraftDialog({ mode, prompt: "" });
     }
   };
+
+  useEffect(() => {
+    if (initialComposeHandledRef.current || initialComposeMode !== "ai") return;
+    if (!mailboxes.length) return;
+    initialComposeHandledRef.current = true;
+    void openComposeDraft("new");
+  }, [initialComposeMode, mailboxes.length]);
 
   const updateAssociation = useMutation({
     mutationFn: async () => {

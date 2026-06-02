@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bot, Flame, Mail, PenLine, Plus, Sparkles, TrendingUp, Users } from "lucide-react";
 import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/crm/queries";
@@ -11,13 +10,10 @@ import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccou
 import { api } from "@multica/core/api";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
-import { normalizeLocale } from "../geo";
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString() : "—";
@@ -95,11 +91,7 @@ export function CRMDashboardPage() {
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
-  const { t, i18n } = useT("crm");
-  const locale = normalizeLocale(i18n.language);
-  const [aiComposeOpen, setAIComposeOpen] = useState(false);
-  const [aiComposePrompt, setAIComposePrompt] = useState("");
-  const [aiComposeResult, setAIComposeResult] = useState("");
+  const { t } = useT("crm");
   const { data: todayFollowUps = [], isLoading: todayLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "today", sort: "next_follow_up" }));
   const { data: weekFollowUps = [], isLoading: weekLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "next_7_days", sort: "next_follow_up" }));
   const { data: overdueFollowUps = [], isLoading: overdueLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "overdue", sort: "next_follow_up" }));
@@ -126,7 +118,7 @@ export function CRMDashboardPage() {
     { label: t(($) => $.dashboard.total_customers), value: allAccounts.length, icon: Users, filter: {} },
     { label: t(($) => $.dashboard.overdue_followups), value: overdueFollowUps.length, icon: Flame, filter: { follow_up: "overdue" } },
     { label: t(($) => $.dashboard.hot_customers), value: hotAccounts.length, icon: Flame, filter: { rating: "hot" } },
-    { label: t(($) => $.dashboard.email_threads), value: unreadEmailCount, icon: Mail, filter: null as ReportFilter | null | "ai" },
+    { label: t(($) => $.dashboard.unread_emails), value: unreadEmailCount, icon: Mail, filter: null as ReportFilter | null | "ai" },
     { label: t(($) => $.dashboard.ai_automations), value: enabledAISettings.length, icon: Bot, filter: "ai" as const },
   ], [allAccounts.length, unreadEmailCount, overdueFollowUps.length, hotAccounts.length, enabledAISettings.length, t]);
 
@@ -138,10 +130,7 @@ export function CRMDashboardPage() {
     navigation.push(`${paths.crmCustomers()}${params.size ? `?${params.toString()}` : ""}`);
   };
 
-  const generateAIEmail = useMutation({
-    mutationFn: () => api.suggestCRMEmailDraftReply({ prompt: aiComposePrompt, mode: "new", language: locale }),
-    onSuccess: (result) => setAIComposeResult(result.customer_reply || result.chinese || ""),
-  });
+  const openAIEmailComposer = () => navigation.push(`${paths.crmEmails()}?compose=ai`);
 
   const reportGroups = useMemo(() => {
     const statuses = countBy(allAccounts, (account) => account.status);
@@ -174,7 +163,7 @@ export function CRMDashboardPage() {
           <h1 className="text-sm font-medium">{t(($) => $.dashboard.title)}</h1>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setAIComposeOpen(true)}><PenLine className="mr-1 size-4" />{t(($) => $.dashboard.ai_write_email)}</Button>
+          <Button size="sm" variant="outline" onClick={openAIEmailComposer}><PenLine className="mr-1 size-4" />{t(($) => $.dashboard.ai_write_email)}</Button>
           <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmEmails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
           <Button size="sm" onClick={() => navigation.push(paths.crmCustomers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
@@ -239,7 +228,7 @@ export function CRMDashboardPage() {
               <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_recent_runs)}</div>
               <div className="mt-2 text-2xl font-semibold tabular-nums">{aiHistoryLoading ? "—" : aiHistory.length}</div>
             </div>
-            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => setAIComposeOpen(true)}>
+            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={openAIEmailComposer}>
               <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_email_writer)}</div>
               <div className="mt-2 flex items-center gap-2 text-sm font-medium"><PenLine className="size-4" />{t(($) => $.dashboard.ai_start_writing)}</div>
             </button>
@@ -279,7 +268,7 @@ export function CRMDashboardPage() {
             <h2 className="text-sm font-medium">{t(($) => $.dashboard.high_priority_title)}</h2>
             <div className="mt-3">{highPriorityLoading ? <Skeleton className="h-24" /> : accountList(topHighPriorityAccounts, t(($) => $.dashboard.no_high_priority))}</div>
           </section>
-          <section className="rounded-lg border bg-card p-4">
+          <section className="rounded-lg border bg-card p-4 lg:col-span-2">
             <h2 className="text-sm font-medium">{t(($) => $.dashboard.recent_emails_title)}</h2>
             <div className="mt-3">
               {emailLoading ? <Skeleton className="h-24" /> : topEmailThreads.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.dashboard.no_emails)}</p> : (
@@ -298,25 +287,6 @@ export function CRMDashboardPage() {
           </section>
         </div>
       </div>
-
-      <Dialog open={aiComposeOpen} onOpenChange={setAIComposeOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.dashboard.ai_write_email)}</DialogTitle>
-            <DialogDescription>{t(($) => $.dashboard.ai_write_email_help)}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Textarea className="min-h-28" value={aiComposePrompt} onChange={(event) => setAIComposePrompt(event.target.value)} placeholder={t(($) => $.dashboard.ai_email_prompt_placeholder)} />
-            {aiComposeResult ? <Textarea className="min-h-48" value={aiComposeResult} onChange={(event) => setAIComposeResult(event.target.value)} /> : null}
-            {generateAIEmail.isError ? <p className="text-xs text-destructive">{t(($) => $.dashboard.ai_generate_error)}</p> : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAIComposeOpen(false)}>{t(($) => $.actions.cancel)}</Button>
-            <Button disabled={!aiComposePrompt.trim() || generateAIEmail.isPending} onClick={() => generateAIEmail.mutate()}>{generateAIEmail.isPending ? t(($) => $.dashboard.ai_generating) : t(($) => $.dashboard.ai_generate)}</Button>
-            <Button variant="outline" disabled={!aiComposeResult} onClick={() => navigator.clipboard?.writeText(aiComposeResult)}>{t(($) => $.dashboard.ai_copy_body)}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
