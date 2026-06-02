@@ -1918,7 +1918,7 @@ export function CRMEmailsPage() {
                       </div>
                       {message.snippet ? <p className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">{message.snippet}</p> : null}
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2 text-xs text-muted-foreground">
-                        {[message.mailbox, message.folder, message.direction, message.status, t(($) => $.common.count_messages, { count: String(message.thread_message_count ?? thread?.message_count ?? 1) })].filter(Boolean).map((item) => <span key={String(item)}>{item}</span>)}
+                        {[message.mailbox, message.folder, message.direction, message.status, String(t(($) => $.common.count_messages, { count: message.thread_message_count ?? thread?.message_count ?? 1 } as any))].filter(Boolean).map((item) => <span key={String(item)}>{item}</span>)}
                         {attachmentCount > 0 ? <Badge variant="secondary" className="gap-1"><Paperclip className="size-3" />{attachmentCount}</Badge> : null}
                       </div>
                     </button>
