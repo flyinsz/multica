@@ -210,6 +210,7 @@ func TestBuildClaudeArgsIncludesStrictMCPConfig(t *testing.T) {
 		"--verbose",
 		"--strict-mcp-config",
 		"--permission-mode", "bypassPermissions",
+		"--disallowedTools", "AskUserQuestion",
 	}
 
 	if len(args) != len(expected) {
@@ -266,6 +267,57 @@ func TestFilterCustomArgsBlocksProtocolFlags(t *testing.T) {
 	result = filterCustomArgs(nil, blocked, logger)
 	if result != nil {
 		t.Fatalf("expected nil for nil input, got %v", result)
+	}
+}
+
+func TestFilterCustomArgsStripsShellQuotes(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.Default()
+
+	// Single-quoted inline value: --deny-tool='write' → --deny-tool=write
+	result := filterCustomArgs([]string{"--deny-tool='write'"}, nil, logger)
+	if len(result) != 1 || result[0] != "--deny-tool=write" {
+		t.Fatalf("expected [--deny-tool=write], got %v", result)
+	}
+
+	// Double-quoted inline value: --deny-tool="write" → --deny-tool=write
+	result = filterCustomArgs([]string{`--deny-tool="write"`}, nil, logger)
+	if len(result) != 1 || result[0] != "--deny-tool=write" {
+		t.Fatalf("expected [--deny-tool=write], got %v", result)
+	}
+
+	// Standalone quoted value: 'write' → write
+	result = filterCustomArgs([]string{"'write'"}, nil, logger)
+	if len(result) != 1 || result[0] != "write" {
+		t.Fatalf("expected [write], got %v", result)
+	}
+
+	// Non-flag assignments may use quotes semantically (for example Codex
+	// `-c model="o3"`), so they must survive unchanged.
+	result = filterCustomArgs([]string{`model="o3"`}, nil, logger)
+	if len(result) != 1 || result[0] != `model="o3"` {
+		t.Fatalf("expected [model=\"o3\"], got %v", result)
+	}
+
+	// Unquoted arg passes through unchanged
+	result = filterCustomArgs([]string{"--deny-tool=write"}, nil, logger)
+	if len(result) != 1 || result[0] != "--deny-tool=write" {
+		t.Fatalf("expected [--deny-tool=write], got %v", result)
+	}
+
+	// Mismatched quotes are not stripped
+	result = filterCustomArgs([]string{"--flag='val\""}, nil, logger)
+	if len(result) != 1 || result[0] != "--flag='val\"" {
+		t.Fatalf("mismatched quotes should not be stripped, got %v", result)
+	}
+
+	// Blocked flag with quoted value: the blocking still fires, the unquoted
+	// form passes the flag-match, and the arg is dropped.
+	blocked := map[string]blockedArgMode{"--output-format": blockedWithValue}
+	result = filterCustomArgs([]string{"--output-format='json'", "--verbose"}, blocked, logger)
+	if len(result) != 1 || result[0] != "--verbose" {
+		t.Fatalf("quoted blocked flag should still be dropped, got %v", result)
 	}
 }
 
@@ -588,6 +640,52 @@ func TestClaudeExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 		}
 		if !strings.Contains(result.Error, "claude stderr:") {
 			t.Fatalf("expected stderr label in error, got %q", result.Error)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for result")
+	}
+}
+
+func TestClaudeExecuteRecordsResultModelUsage(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+
+	fakePath := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		"cat >/dev/null\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"session_id\":\"sess-result-usage\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"sess-result-usage\",\"result\":\"done\",\"modelUsage\":{\"zhipu/coding-plan\":{\"inputTokens\":123,\"outputTokens\":45,\"cacheReadInputTokens\":7,\"cacheCreationInputTokens\":11,\"costUSD\":0.01}}}'\n"
+	writeTestExecutable(t, fakePath, []byte(script))
+
+	backend, err := New("claude", Config{ExecutablePath: fakePath, Logger: slog.Default()})
+	if err != nil {
+		t.Fatalf("new claude backend: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+
+	select {
+	case result, ok := <-session.Result:
+		if !ok {
+			t.Fatal("result channel closed without a value")
+		}
+		usage, ok := result.Usage["zhipu/coding-plan"]
+		if !ok {
+			t.Fatalf("expected usage for zhipu/coding-plan, got %#v", result.Usage)
+		}
+		if usage.InputTokens != 123 || usage.OutputTokens != 45 || usage.CacheReadTokens != 7 || usage.CacheWriteTokens != 11 {
+			t.Fatalf("unexpected usage: %+v", usage)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for result")

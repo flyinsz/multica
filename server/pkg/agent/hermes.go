@@ -2,12 +2,17 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +45,15 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		return nil, fmt.Errorf("hermes executable not found at %q: %w", execPath, err)
 	}
 
+	// Translate the agent's mcp_config (Claude-style object of objects)
+	// into the array shape ACP `session/new` expects. Fail closed on
+	// malformed JSON so the launch surfaces the real error instead of
+	// silently dropping all MCP servers.
+	mcpServers, err := buildACPMcpServers(opts.McpConfig, b.cfg.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("hermes: invalid mcp_config: %w", err)
+	}
+
 	timeout := opts.Timeout
 	if timeout == 0 {
 		timeout = 20 * time.Minute
@@ -50,8 +64,16 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	cmd := exec.CommandContext(runCtx, execPath, hermesArgs...)
 	hideAgentWindow(cmd)
 	b.cfg.Logger.Info("agent command", "exec", execPath, "args", hermesArgs)
+	agentsMDPresent := false
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
+		if _, err := os.Stat(filepath.Join(opts.Cwd, "AGENTS.md")); err == nil {
+			agentsMDPresent = true
+		}
+	}
+	b.cfg.Logger.Info("hermes acp starting", "cwd", opts.Cwd, "agents_md_present", agentsMDPresent)
+	if opts.SystemPrompt != "" {
+		b.cfg.Logger.Debug("hermes ignoring ExecOptions.SystemPrompt; using cwd-scoped context files", "cwd", opts.Cwd)
 	}
 
 	env := buildEnv(b.cfg.Env)
@@ -76,13 +98,34 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	// without this we'd report a misleading "empty output" and hide
 	// the real cause (wrong model for the current provider, bad
 	// credentials, rate limit, …) in the daemon log.
+	//
+	// We use StderrPipe + an explicit copier goroutine instead of
+	// `cmd.Stderr = io.MultiWriter(...)` so we have a join point
+	// (`stderrDone`) before the failure-promotion decision. With the
+	// MultiWriter form, exec's internal copy goroutine is only
+	// joined by `cmd.Wait()`, which runs in the deferred cleanup —
+	// after `promoteACPResultOnProviderError` already consulted the
+	// sniffer. That race lost the 429 / usage-limit message under
+	// CI load and surfaced as a flaky test
+	// (TestHermesBackendPromotesProviderErrorWithNonEmptyOutput).
 	providerErr := newACPProviderErrorSniffer("hermes")
-	cmd.Stderr = io.MultiWriter(newLogWriter(b.cfg.Logger, "[hermes:stderr] "), providerErr)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("hermes stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start hermes: %w", err)
 	}
+
+	stderrSink := io.MultiWriter(newLogWriter(b.cfg.Logger, "[hermes:stderr] "), providerErr)
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		_, _ = io.Copy(stderrSink, stderr)
+	}()
 
 	b.cfg.Logger.Info("hermes acp started", "pid", cmd.Process.Pid, "cwd", opts.Cwd)
 
@@ -160,9 +203,10 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
+		effectiveModel := strings.TrimSpace(opts.Model)
 
 		// 1. Initialize handshake.
-		_, err := c.request(runCtx, "initialize", map[string]any{
+		initResult, err := c.request(runCtx, "initialize", map[string]any{
 			"protocolVersion": 1,
 			"clientInfo": map[string]any{
 				"name":    "multica-agent-sdk",
@@ -177,6 +221,13 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			return
 		}
 
+		// Drop MCP entries whose remote transport the runtime didn't
+		// advertise. ACP requires the client to honour
+		// agentCapabilities.mcpCapabilities; sending an http/sse entry to
+		// a runtime that says it only supports stdio reliably rejects the
+		// whole session/new request.
+		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "hermes", b.cfg.Logger)
+
 		// 2. Create or resume a session.
 		cwd := opts.Cwd
 		if cwd == "" {
@@ -184,9 +235,14 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 
 		if opts.ResumeSessionID != "" {
+			// Per ACP Session Setup, session/resume accepts mcpServers and
+			// the runtime re-connects them as part of the resume. Without
+			// this, a resumed Hermes task lost access to MCP tools that a
+			// fresh task on the same agent would have.
 			result, err := c.request(runCtx, "session/resume", map[string]any{
-				"cwd":       cwd,
-				"sessionId": opts.ResumeSessionID,
+				"cwd":        cwd,
+				"sessionId":  opts.ResumeSessionID,
+				"mcpServers": mcpServers,
 			})
 			if err != nil {
 				finalStatus = "failed"
@@ -203,8 +259,11 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					"actual", sessionID,
 				)
 			}
+			if effectiveModel == "" {
+				effectiveModel = extractACPCurrentModelID(result)
+			}
 		} else {
-			result, err := c.request(runCtx, "session/new", buildHermesSessionParams(cwd, opts.Model))
+			result, err := c.request(runCtx, "session/new", buildHermesSessionParams(cwd, opts.Model, mcpServers))
 			if err != nil {
 				finalStatus = "failed"
 				finalError = fmt.Sprintf("hermes session/new failed: %v", err)
@@ -217,6 +276,9 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				finalError = "hermes session/new returned no session ID"
 				resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 				return
+			}
+			if effectiveModel == "" {
+				effectiveModel = extractACPCurrentModelID(result)
 			}
 		}
 
@@ -250,13 +312,13 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			b.cfg.Logger.Info("hermes session model set", "model", opts.Model)
 		}
 
-		// 4. Build the prompt content. If we have a system prompt, prepend it.
-		userText := prompt
-		if opts.SystemPrompt != "" {
-			userText = opts.SystemPrompt + "\n\n---\n\n" + prompt
-		}
-
-		// 5. Send the prompt and wait for PromptResponse. Flip the gate
+		// 4. Send the prompt and wait for PromptResponse.
+		//
+		// Do NOT prepend opts.SystemPrompt here. Hermes ACP loads project/context
+		// files from cwd (AGENTS.md, .agent_context, etc.) itself; duplicating the
+		// full runtime brief in the user prompt makes the request much larger and
+		// has triggered upstream safety filters on otherwise ordinary tasks.
+		// Flip the gate
 		// just before the request so any history replay flushed during
 		// initialize / session setup stays dropped, but every notification
 		// belonging to this turn is processed.
@@ -264,7 +326,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
 			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
+				{"type": "text", "text": prompt},
 			},
 		})
 		if err != nil {
@@ -293,6 +355,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				c.usageMu.Lock()
 				c.usage.InputTokens += pr.usage.InputTokens
 				c.usage.OutputTokens += pr.usage.OutputTokens
+				c.usage.CacheReadTokens += pr.usage.CacheReadTokens
 				c.usageMu.Unlock()
 			default:
 			}
@@ -307,24 +370,27 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 		// Wait for the reader goroutine to finish so all output is accumulated.
 		<-readerDone
+		// Wait for the stderr copier as well so the provider-error sniffer
+		// has every byte the child wrote before we consult it for failure
+		// promotion. Skipping this leaves a small race where stopReason=
+		// end_turn arrives over stdout while the stderr 429 / usage-limit
+		// lines are still in transit, causing the promoted error message
+		// to fall through to the synthetic agent-text fallback.
+		<-stderrDone
 
 		outputMu.Lock()
 		finalOutput := output.String()
 		outputMu.Unlock()
 
-		// If hermes produced no visible output but we sniffed a
-		// provider-level error on stderr (typically HTTP 4xx from
-		// the configured LLM endpoint), promote the status to
-		// failed and surface the real reason. Without this the
-		// daemon reports a cryptic "hermes returned empty output"
-		// and the actionable error (e.g. "model X not supported
-		// with your ChatGPT account") stays buried in daemon logs.
-		if finalStatus == "completed" && finalOutput == "" {
-			if msg := providerErr.message(); msg != "" {
-				finalStatus = "failed"
-				finalError = msg
-			}
-		}
+		// Hermes reports stopReason=end_turn even when the upstream
+		// LLM call ultimately fails (HTTP 429 rate-limit, expired
+		// token, ...). promoteACPResultOnProviderError flips the
+		// status to "failed" when either the stderr sniffer saw a
+		// *terminal* failure marker (not just a transient per-attempt
+		// warning), the agent text stream contains the synthetic
+		// "API call failed after N retries..." turn the adapter
+		// injects on give-up, or there's no output to fall back on.
+		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, finalOutput, providerErr)
 
 		// Build usage map.
 		c.usageMu.Lock()
@@ -333,7 +399,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 		var usageMap map[string]TokenUsage
 		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 {
-			model := opts.Model
+			model := effectiveModel
 			if model == "" {
 				model = "unknown"
 			}
@@ -568,11 +634,31 @@ func (c *hermesClient) handleResponse(raw map[string]json.RawMessage) {
 
 	if errData, hasErr := raw["error"]; hasErr {
 		var rpcErr struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
+			Code    int             `json:"code"`
+			Message string          `json:"message"`
+			Data    json.RawMessage `json:"data"`
 		}
 		_ = json.Unmarshal(errData, &rpcErr)
-		pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
+		// JSON-RPC `data` carries the provider-specific reason (e.g. Kiro
+		// returns "No session found with id" for code=-32603). Surface it
+		// in the wrapped error so daemon logs / UI can show *why* the
+		// agent failed instead of a bare "Internal error". `data` may be
+		// any JSON value: render strings unquoted, everything else as raw
+		// JSON.
+		detail := ""
+		if len(rpcErr.Data) > 0 && string(rpcErr.Data) != "null" {
+			var s string
+			if err := json.Unmarshal(rpcErr.Data, &s); err == nil {
+				detail = s
+			} else {
+				detail = string(rpcErr.Data)
+			}
+		}
+		if detail != "" {
+			pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d, data=%s)", pr.method, rpcErr.Message, rpcErr.Code, detail)}
+		} else {
+			pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
+		}
 	} else {
 		// If this is a prompt response, extract usage and stop reason.
 		if pr.method == "session/prompt" {
@@ -1081,6 +1167,35 @@ func extractACPSessionID(result json.RawMessage) string {
 	return r.SessionID
 }
 
+// extractACPCurrentModelID pulls the model selected by the ACP runtime out of
+// a session/new or session/resume response. Hermes returns this when it uses
+// its own default model, so token usage can still be attributed to a real model
+// even when Multica did not pass an explicit agent.model override.
+func extractACPCurrentModelID(result json.RawMessage) string {
+	var r struct {
+		Models struct {
+			CurrentModelID      string `json:"currentModelId"`
+			CurrentModelIDSnake string `json:"current_model_id"`
+		} `json:"models"`
+		CurrentModelID      string `json:"currentModelId"`
+		CurrentModelIDSnake string `json:"current_model_id"`
+	}
+	if err := json.Unmarshal(result, &r); err != nil {
+		return ""
+	}
+	for _, candidate := range []string{
+		r.Models.CurrentModelID,
+		r.Models.CurrentModelIDSnake,
+		r.CurrentModelID,
+		r.CurrentModelIDSnake,
+	} {
+		if model := strings.TrimSpace(candidate); model != "" {
+			return model
+		}
+	}
+	return ""
+}
+
 // resolveResumedSessionID picks which session id we should treat as live
 // after a `session/resume` round-trip. Hermes (and other ACP servers)
 // return the canonical sessionId in the response — when the local
@@ -1102,15 +1217,245 @@ func resolveResumedSessionID(requested string, response json.RawMessage) (string
 // buildHermesSessionParams constructs the params map for the ACP `session/new`
 // request. The `model` field is only included when non-empty so Hermes falls
 // back to its default only when no explicit model was configured.
-func buildHermesSessionParams(cwd, model string) map[string]any {
+//
+// mcpServers should be the ACP-shaped array produced by buildACPMcpServers
+// from the agent's mcp_config; a nil slice is normalised to an empty array
+// so the wire request always carries the field (ACP requires it).
+func buildHermesSessionParams(cwd, model string, mcpServers []any) map[string]any {
+	if mcpServers == nil {
+		mcpServers = []any{}
+	}
 	params := map[string]any{
 		"cwd":        cwd,
-		"mcpServers": []any{},
+		"mcpServers": mcpServers,
 	}
 	if model != "" {
 		params["model"] = model
 	}
 	return params
+}
+
+// buildACPMcpServers translates an agent's Claude-style mcp_config
+// (`{"mcpServers": {"<name>": {...}}}`) into the array shape that ACP's
+// `session/new` and `session/load` requests expect.
+//
+// Each Claude-style entry maps to one of:
+//
+//   - Stdio:  `{name, command, args, env: [{name,value}, ...]}` —
+//     when the entry has a `command` field. No `type` field is emitted;
+//     ACP treats untagged entries as stdio.
+//   - HTTP / SSE: `{type, name, url, headers: [{name,value}, ...]}` —
+//     when the entry has a `url` field. `type` defaults to "http"; Claude's
+//     "sse" and "streamable-http" / "http_streamable" aliases are accepted.
+//
+// Empty / null input returns an empty slice — the launch proceeds with no
+// MCP servers (the existing default for ACP backends). Malformed top-level
+// JSON returns an error so the launch fails closed, mirroring codex's
+// `renderCodexMcpServersBlock` contract. Individual entries that have
+// neither `command` nor `url` are skipped with a warning rather than
+// failing the whole launch, so a single bad entry can't kill the agent.
+//
+// Output entries are sorted by name and each entry's env / headers are
+// sorted by key, so the wire request is deterministic across reruns —
+// useful for tests, log diffs, and reproducibility.
+func buildACPMcpServers(raw json.RawMessage, logger *slog.Logger) ([]any, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return []any{}, nil
+	}
+	var parsed struct {
+		McpServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(trimmed, &parsed); err != nil {
+		return nil, fmt.Errorf("parse mcp_config json: %w", err)
+	}
+	if len(parsed.McpServers) == 0 {
+		return []any{}, nil
+	}
+
+	names := make([]string, 0, len(parsed.McpServers))
+	for name := range parsed.McpServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]any, 0, len(names))
+	for _, name := range names {
+		entry, err := convertACPMcpServer(name, parsed.McpServers[name])
+		if err != nil {
+			if logger != nil {
+				logger.Warn("skipping invalid mcp_config entry", "name", name, "error", err)
+			}
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// convertACPMcpServer converts a single Claude-style entry into the ACP
+// McpServer wire shape. Returns an error for entries that can't be
+// classified (no command and no url).
+func convertACPMcpServer(name string, raw json.RawMessage) (map[string]any, error) {
+	var entry struct {
+		Type    string            `json:"type"`
+		Command string            `json:"command"`
+		Args    []string          `json:"args"`
+		Env     map[string]string `json:"env"`
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers"`
+	}
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return nil, fmt.Errorf("parse entry: %w", err)
+	}
+
+	command := strings.TrimSpace(entry.Command)
+	url := strings.TrimSpace(entry.URL)
+
+	if command != "" {
+		args := entry.Args
+		if args == nil {
+			args = []string{}
+		}
+		envArr := make([]map[string]any, 0, len(entry.Env))
+		for _, k := range sortedStringMapKeys(entry.Env) {
+			envArr = append(envArr, map[string]any{
+				"name":  k,
+				"value": entry.Env[k],
+			})
+		}
+		return map[string]any{
+			"name":    name,
+			"command": command,
+			"args":    args,
+			"env":     envArr,
+		}, nil
+	}
+
+	if url != "" {
+		t := strings.ToLower(strings.TrimSpace(entry.Type))
+		switch t {
+		case "sse":
+			t = "sse"
+		case "", "http", "streamable-http", "http_streamable":
+			t = "http"
+		default:
+			// Unknown remote transport — degrade to "http" rather than fail.
+			// ACP servers that don't recognise the type will reject the
+			// session/new request and surface a real error to the user.
+			t = "http"
+		}
+		headerArr := make([]map[string]any, 0, len(entry.Headers))
+		for _, k := range sortedStringMapKeys(entry.Headers) {
+			headerArr = append(headerArr, map[string]any{
+				"name":  k,
+				"value": entry.Headers[k],
+			})
+		}
+		return map[string]any{
+			"type":    t,
+			"name":    name,
+			"url":     url,
+			"headers": headerArr,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("entry has neither command nor url")
+}
+
+func sortedStringMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// acpMcpTransportCapabilities reports which remote MCP transports the ACP
+// runtime advertised in its `initialize` response. Stdio is always
+// supported (it's the baseline transport and the spec does not gate it),
+// so it's not represented here.
+type acpMcpTransportCapabilities struct {
+	HTTP bool
+	SSE  bool
+}
+
+// extractACPMcpCapabilities reads `agentCapabilities.mcpCapabilities.http`
+// and `.sse` out of an ACP `initialize` response. Missing or false fields
+// stay false, matching the spec default: the runtime must opt-in to
+// remote MCP transports. Unparseable responses degrade to "neither
+// supported" so we fail closed on remote entries.
+//
+// See https://agentclientprotocol.com/protocol/initialization — clients
+// MUST NOT send `mcpServers` entries with a type the agent did not
+// advertise support for.
+func extractACPMcpCapabilities(result json.RawMessage) acpMcpTransportCapabilities {
+	var r struct {
+		AgentCapabilities struct {
+			McpCapabilities struct {
+				HTTP bool `json:"http"`
+				SSE  bool `json:"sse"`
+			} `json:"mcpCapabilities"`
+		} `json:"agentCapabilities"`
+	}
+	if err := json.Unmarshal(result, &r); err != nil {
+		return acpMcpTransportCapabilities{}
+	}
+	return acpMcpTransportCapabilities{
+		HTTP: r.AgentCapabilities.McpCapabilities.HTTP,
+		SSE:  r.AgentCapabilities.McpCapabilities.SSE,
+	}
+}
+
+// filterACPMcpServersByCapability drops remote MCP entries whose transport
+// the runtime didn't advertise in its initialize response. Stdio entries
+// (no `type` field) always pass through.
+//
+// Sending an http/sse entry to a runtime that doesn't support it is a
+// protocol violation per the ACP spec, and Hermes / Kimi observed in
+// practice reject the whole session/new request with a JSON-RPC error.
+// Dropping the offending entries with a warning lets the rest of the
+// session start and surfaces the problem in the daemon log instead of
+// tanking every task on that agent.
+func filterACPMcpServersByCapability(
+	servers []any,
+	caps acpMcpTransportCapabilities,
+	backend string,
+	logger *slog.Logger,
+) []any {
+	if len(servers) == 0 {
+		return servers
+	}
+	filtered := make([]any, 0, len(servers))
+	for _, raw := range servers {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			filtered = append(filtered, raw)
+			continue
+		}
+		transport, _ := entry["type"].(string)
+		switch transport {
+		case "http":
+			if !caps.HTTP {
+				if logger != nil {
+					logger.Warn("dropping http MCP server: runtime did not advertise mcpCapabilities.http",
+						"backend", backend, "name", entry["name"])
+				}
+				continue
+			}
+		case "sse":
+			if !caps.SSE {
+				if logger != nil {
+					logger.Warn("dropping sse MCP server: runtime did not advertise mcpCapabilities.sse",
+						"backend", backend, "name", entry["name"])
+				}
+				continue
+			}
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 // hermesToolNameFromTitle extracts a tool name from the ACP tool call title.
@@ -1194,12 +1539,23 @@ func hermesToolNameFromTitle(title string, kind string) string {
 // Parameterised by provider name so both hermes and kimi can share
 // the transport: the regexes match format-level signals (HTTP status,
 // error-kind tags, "API call failed" banner) that both runtimes emit.
+//
+// The sniffer distinguishes *transient* per-attempt warnings (e.g.
+// "API call failed (attempt 1/3): RateLimitError [HTTP 429]" — followed
+// by a successful retry) from *terminal* exhausted failures (e.g.
+// "API call failed after 3 retries: ..." or "❌ ... Non-retryable"):
+// `message()` returns whichever was last seen, while `terminalMessage()`
+// returns non-empty only when a terminal-failure marker was matched.
+// Promotion to status="failed" must use `terminalMessage()`, otherwise
+// a successful retry following an early per-attempt warning would be
+// wrongly marked as failed.
 type acpProviderErrorSniffer struct {
 	provider string
 	mu       sync.Mutex
 	remains  []byte   // buffer for a partial trailing line across writes
 	lines    []string // captured error lines, bounded
 	seen     map[string]bool
+	terminal bool // sticky: at least one line matched acpTerminalErrorRe
 }
 
 // acpErrorHeaderRe matches the first line of an API-error block.
@@ -1211,6 +1567,22 @@ var acpErrorHeaderRe = regexp.MustCompile(`(?:⚠️|❌|\[ERROR\]).*(?:BadReque
 // the subsequent lines of the error block (the one whose "Error:" or
 // "Details:" tag actually spells out what happened).
 var acpErrorDetailRe = regexp.MustCompile(`(?:Error:|detail:|Details:)\s*(.+)`)
+
+// acpTerminalErrorRe matches markers that only appear when the
+// adapter has *given up* on the upstream call — either after
+// exhausting retries ("after N retries"), or because the error is
+// classified as non-retryable up front (Non-retryable, BadRequest /
+// Authentication errors, ❌ / [ERROR] log levels). Per-attempt
+// warnings ("(attempt 1/3)") deliberately do NOT match this pattern.
+var acpTerminalErrorRe = regexp.MustCompile(`(?:❌|\[ERROR\]|after \d+ retr|Non-retryable|BadRequestError|AuthenticationError)`)
+
+// acpAgentOutputTerminalRe matches the synthetic agent-text turn that
+// hermes-style ACP adapters inject when they exhaust retries against
+// the upstream LLM ("API call failed after 3 retries: HTTP 429..."),
+// surfaced via session/update agent_message_chunk and ending up in the
+// final output buffer. Per-attempt warnings (which only go to stderr
+// and use "(attempt N/M)" phrasing) won't match.
+var acpAgentOutputTerminalRe = regexp.MustCompile(`API call failed after \d+ retr(?:y|ies)`)
 
 const acpMaxErrorLines = 8
 
@@ -1247,6 +1619,9 @@ func (s *acpProviderErrorSniffer) Write(p []byte) (int, error) {
 		if !(acpErrorHeaderRe.MatchString(line) || acpErrorDetailRe.MatchString(line)) {
 			continue
 		}
+		if acpTerminalErrorRe.MatchString(line) {
+			s.terminal = true
+		}
 		if s.seen[line] {
 			continue
 		}
@@ -1263,10 +1638,37 @@ func (s *acpProviderErrorSniffer) Write(p []byte) (int, error) {
 // error field. Prefers the most specific "Error:" / "detail:"
 // fragment; falls back to the first captured header line; empty
 // when nothing useful was seen.
+//
+// NOTE: a non-empty message() can describe a *transient* per-attempt
+// warning that was followed by a successful retry. Code that flips
+// task status to "failed" must instead use terminalMessage() — see
+// the type doc above.
 func (s *acpProviderErrorSniffer) message() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.messageLocked()
+}
+
+// terminalMessage returns the same single-line summary as message()
+// but only when the sniffer has seen at least one line matching
+// acpTerminalErrorRe — i.e. the adapter has given up retrying. This
+// is the signal callers should use to decide whether to promote a
+// run from "completed" to "failed". Returns empty if all captured
+// lines look like transient retry warnings.
+func (s *acpProviderErrorSniffer) terminalMessage() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.terminal {
+		return ""
+	}
+	return s.messageLocked()
+}
+
+// messageLocked is the lock-held implementation shared by message()
+// and terminalMessage(). Caller must hold s.mu.
+func (s *acpProviderErrorSniffer) messageLocked() string {
 	prefix := s.provider + " provider error: "
 	for _, line := range s.lines {
 		if m := acpErrorDetailRe.FindStringSubmatch(line); m != nil {
@@ -1282,4 +1684,40 @@ func (s *acpProviderErrorSniffer) message() string {
 		}
 	}
 	return ""
+}
+
+// promoteACPResultOnProviderError flips finalStatus to "failed" if
+// either (a) the stderr sniffer captured a terminal-failure marker,
+// (b) the adapter injected a synthetic "API call failed after N
+// retries..." turn into the agent text stream, or (c) output was
+// empty AND the sniffer captured anything at all (no real result to
+// fall back on, even from a transient-only sequence). Returns the
+// updated (status, error) pair; callers should overwrite their
+// locals with the result.
+//
+// This is the shared post-processing step for hermes/kimi/kiro.
+// Without it, runs that exhaust retries against the upstream LLM
+// (HTTP 429, expired token, …) silently report as "completed"
+// because session/prompt still ends with stopReason=end_turn — see
+// GitHub multica#1952.
+func promoteACPResultOnProviderError(finalStatus, finalError, finalOutput string, sniffer *acpProviderErrorSniffer) (string, string) {
+	if finalStatus != "completed" {
+		return finalStatus, finalError
+	}
+	if msg := sniffer.terminalMessage(); msg != "" {
+		return "failed", msg
+	}
+	if acpAgentOutputTerminalRe.MatchString(finalOutput) {
+		msg := sniffer.message()
+		if msg == "" {
+			msg = sniffer.provider + " provider error: " + acpAgentOutputTerminalRe.FindString(finalOutput)
+		}
+		return "failed", msg
+	}
+	if finalOutput == "" {
+		if msg := sniffer.message(); msg != "" {
+			return "failed", msg
+		}
+	}
+	return finalStatus, finalError
 }

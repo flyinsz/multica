@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,37 @@ type Model struct {
 	Label    string `json:"label"`
 	Provider string `json:"provider,omitempty"`
 	Default  bool   `json:"default,omitempty"`
+	// Thinking advertises the runtime's reasoning/effort catalog for this
+	// model. nil means the runtime/model has no thinking-level control
+	// (or the daemon couldn't discover one); the UI hides its picker. The
+	// catalog is per-model because Codex's `codex debug models` is itself
+	// per-model and Claude's `--effort` superset has known per-model gaps
+	// (`xhigh` is Opus-only, `max` is session-only). See MUL-2339.
+	Thinking *ModelThinking `json:"thinking,omitempty"`
+}
+
+// ModelThinking carries the per-model reasoning/effort catalog
+// surfaced by an agent runtime. Values are runtime-native — Codex
+// emits "none|minimal|low|medium|high|xhigh"; Claude emits
+// "low|medium|high|xhigh|max". The frontend renders SupportedLevels
+// as-is so what users see matches each CLI's own UI.
+type ModelThinking struct {
+	SupportedLevels []ThinkingLevel `json:"supported_levels"`
+	// DefaultLevel is the value the runtime picks when no override is
+	// provided. Empty means "the runtime picks, we don't know" — the
+	// UI shows "Default" as a generic option.
+	DefaultLevel string `json:"default_level,omitempty"`
+}
+
+// ThinkingLevel is one entry in a ModelThinking.SupportedLevels list.
+// Value is the literal token passed to the CLI (Claude `--effort <value>`
+// or Codex `model_reasoning_effort=<value>`); Label is a display string;
+// Description is optional helper copy lifted from the upstream catalog
+// when available (Codex's `description` field).
+type ThinkingLevel struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // modelCache memoizes dynamic discovery calls so repeated UI loads
@@ -51,22 +83,40 @@ const modelCacheTTL = 60 * time.Second
 // openclaw) it shells out with caching and falls back to the static
 // list on failure.
 //
+// For claude, codex, and opencode, the catalog is augmented with per-model
+// thinking-level options discovered from the local CLI. Discovery failures
+// silently leave Thinking == nil on each entry, which the UI treats as
+// "no picker for this model" rather than blocking model selection.
+//
 // executablePath lets the caller point at a non-default binary; pass
 // "" to use the provider's default name on PATH.
 func ListModels(ctx context.Context, providerType, executablePath string) ([]Model, error) {
 	switch providerType {
 	case "claude":
-		return claudeStaticModels(), nil
+		models := claudeStaticModels()
+		annotateClaudeThinking(ctx, models, executablePath)
+		return models, nil
 	case "codex":
-		return codexStaticModels(), nil
+		models := codexStaticModels()
+		annotateCodexThinking(ctx, models, executablePath)
+		return models, nil
 	case "gemini":
 		return geminiStaticModels(), nil
+	case "antigravity":
+		// Antigravity CLI (`agy`) does not expose a `--model` flag today;
+		// model selection lives in the user's Antigravity settings and is
+		// communicated to the backend internally by the CLI itself. Return
+		// an empty catalog so the daemon's model_list endpoint succeeds
+		// without populating a misleading dropdown.
+		return []Model{}, nil
 	case "cursor":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverCursorModels(ctx, executablePath)
 		})
 	case "copilot":
-		return copilotStaticModels(), nil
+		return cachedDiscovery(providerType, func() ([]Model, error) {
+			return discoverCopilotModels(ctx, executablePath)
+		})
 	case "hermes":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverHermesModels(ctx, executablePath)
@@ -80,7 +130,7 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 			return discoverKiroModels(ctx, executablePath)
 		})
 	case "opencode":
-		return cachedDiscovery(providerType, func() ([]Model, error) {
+		return cachedDiscovery(discoveryCacheKey(providerType, executablePath), func() ([]Model, error) {
 			return discoverOpenCodeModels(ctx, executablePath)
 		})
 	case "pi":
@@ -97,14 +147,20 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 }
 
 // ModelSelectionSupported reports whether setting `agent.model` has
-// any effect for the given provider. Today every provider in the
-// registry honours `opts.Model` end-to-end: Hermes routes it through
-// the ACP `session/set_model` RPC before each prompt, which means
-// the UI's dropdown choice is carried all the way down to the LLM
-// call. The helper is retained so we can add a `return false` branch
-// the next time a provider legitimately ignores model selection.
+// any effect for the given provider. Most providers honour `opts.Model`
+// end-to-end — Hermes routes it through the ACP `session/set_model` RPC
+// before each prompt, Claude / Codex / Cursor / Gemini / Copilot / Kimi /
+// Kiro / OpenCode / OpenClaw / Pi pass it via flag or session config.
+//
+// Antigravity is the lone exception: `agy` has no `--model` flag today,
+// and the backend in antigravity.go deliberately drops opts.Model on the
+// floor. Returning false here makes the UI render a disabled
+// "Managed by runtime" picker instead of an empty dropdown plus a
+// silently-ignored manual-entry field.
 func ModelSelectionSupported(providerType string) bool {
-	_ = providerType
+	if providerType == "antigravity" {
+		return false
+	}
 	return true
 }
 
@@ -132,6 +188,13 @@ func cachedDiscovery(key string, fn func() ([]Model, error)) ([]Model, error) {
 	return models, nil
 }
 
+func discoveryCacheKey(providerType, executablePath string) string {
+	if executablePath == "" {
+		return providerType
+	}
+	return providerType + ":" + executablePath
+}
+
 // ── Static catalogs ──
 
 // claudeStaticModels reflects the Claude Code CLI's accepted --model
@@ -141,6 +204,7 @@ func cachedDiscovery(key string, fn func() ([]Model, error)) ([]Model, error) {
 func claudeStaticModels() []Model {
 	return []Model{
 		{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
+		{ID: "claude-opus-4-8", Label: "Claude Opus 4.8", Provider: "anthropic"},
 		{ID: "claude-opus-4-7", Label: "Claude Opus 4.7", Provider: "anthropic"},
 		{ID: "claude-haiku-4-5-20251001", Label: "Claude Haiku 4.5", Provider: "anthropic"},
 		{ID: "claude-opus-4-6", Label: "Claude Opus 4.6", Provider: "anthropic"},
@@ -198,22 +262,87 @@ func cursorStaticModels() []Model {
 	}
 }
 
-// copilotStaticModels — GitHub Copilot CLI resolves models via the
-// user's GitHub account, not via CLI args. We deliberately mark no
-// Default: the right model is whatever GitHub routes the request
-// to, and forcing one here would override that.
+// copilotStaticModels — fallback used when GitHub Copilot CLI is
+// missing on PATH or the user hasn't logged in. Normal operation
+// goes through discoverCopilotModels(), which speaks ACP to the
+// CLI and gets the live catalog (including which IDs the user's
+// account actually has access to). This list is just a safety net
+// so the UI dropdown still has reasonable options when the live
+// query fails.
+//
+// Source: https://docs.github.com/en/copilot/reference/ai-models/supported-models
+// IDs use the dotted form `copilot --model <id>` actually accepts.
 func copilotStaticModels() []Model {
 	return []Model{
+		// OpenAI
+		{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai"},
 		{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai"},
-		{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic"},
+		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
+		{ID: "gpt-5.3-codex", Label: "GPT-5.3-Codex", Provider: "openai"},
+		{ID: "gpt-5.2-codex", Label: "GPT-5.2-Codex", Provider: "openai"},
+		{ID: "gpt-5.2", Label: "GPT-5.2", Provider: "openai"},
+		{ID: "gpt-5-mini", Label: "GPT-5 mini", Provider: "openai"},
+		{ID: "gpt-4.1", Label: "GPT-4.1", Provider: "openai"},
+		// Anthropic
+		{ID: "claude-opus-4.7", Label: "Claude Opus 4.7", Provider: "anthropic"},
+		{ID: "claude-sonnet-4.6", Label: "Claude Sonnet 4.6", Provider: "anthropic"},
+		{ID: "claude-sonnet-4.5", Label: "Claude Sonnet 4.5", Provider: "anthropic"},
+		{ID: "claude-haiku-4.5", Label: "Claude Haiku 4.5", Provider: "anthropic"},
 	}
+}
+
+// inferCopilotProvider tags Copilot model IDs with a vendor name so
+// the UI can group them. The Copilot CLI's ACP `availableModels`
+// payload exposes only `modelId`/`name`; the vendor is implicit in
+// the prefix. Returning "" leaves the entry ungrouped, which
+// matches what other ACP discovery paths (hermes/kimi) do for
+// non-prefixed IDs.
+//
+// The OpenAI reasoning series (`o1`, `o3`, `o3-mini`, `o4-mini`,
+// future `o5`/`o6`/…) is matched by the generic `o<digit>…`
+// pattern so we don't have to chase every new generation.
+func inferCopilotProvider(modelID string) string {
+	switch {
+	case strings.HasPrefix(modelID, "gpt-") || isOpenAIReasoningSeriesID(modelID):
+		return "openai"
+	case strings.HasPrefix(modelID, "claude-"):
+		return "anthropic"
+	case strings.HasPrefix(modelID, "gemini-"):
+		return "google"
+	case strings.HasPrefix(modelID, "grok-"):
+		return "xai"
+	default:
+		return ""
+	}
+}
+
+// isOpenAIReasoningSeriesID matches IDs in OpenAI's `o`-prefixed
+// reasoning family: lowercase `o` followed by at least one digit
+// and then either end-of-string or a `-` separator (e.g. `o3`,
+// `o3-mini`, `o4-mini-high`). Avoids false positives like
+// `opus-…` or random IDs that happen to start with `o`.
+func isOpenAIReasoningSeriesID(id string) bool {
+	if len(id) < 2 || id[0] != 'o' {
+		return false
+	}
+	i := 1
+	for i < len(id) && id[i] >= '0' && id[i] <= '9' {
+		i++
+	}
+	if i == 1 {
+		return false
+	}
+	return i == len(id) || id[i] == '-'
 }
 
 // ── Dynamic discovery ──
 
-// discoverOpenCodeModels runs `opencode models` and parses its tabular
-// output. The CLI prints `provider/model` rows; we emit them verbatim
-// as IDs so what the user sees matches what `--model` accepts.
+// discoverOpenCodeModels runs `opencode models --verbose` and parses its
+// output. The CLI prints `provider/model` rows, followed by JSON metadata
+// when verbose mode is enabled; we emit IDs verbatim so what the user sees
+// matches what `--model` accepts, and project any model `variants` into the
+// thinking-level picker because OpenCode's `run --variant` flag is its
+// provider-specific reasoning-effort surface.
 // On any failure (CLI missing, parse error, timeout) we fall back to
 // an empty list so the creatable UI still works.
 func discoverOpenCodeModels(ctx context.Context, executablePath string) ([]Model, error) {
@@ -225,51 +354,191 @@ func discoverOpenCodeModels(ctx context.Context, executablePath string) ([]Model
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, executablePath, "models")
+	cmd := exec.CommandContext(runCtx, executablePath, "models", "--verbose")
 	hideAgentWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return []Model{}, nil
+		cmd = exec.CommandContext(runCtx, executablePath, "models")
+		hideAgentWindow(cmd)
+		out, err = cmd.Output()
+		if err != nil {
+			return []Model{}, nil
+		}
 	}
 	return parseOpenCodeModels(string(out)), nil
 }
 
 // parseOpenCodeModels accepts the `opencode models` text output and
-// extracts IDs. Output format (v0.x): a header row followed by rows
-// whose first whitespace-delimited field is `provider/model`.
+// extracts IDs. Non-verbose output is one `provider/model` row per line.
+// Verbose output appends a pretty-printed JSON object after each ID; when
+// that object contains `variants`, each enabled variant becomes a thinking
+// level that the backend later passes through `opencode run --variant`.
 func parseOpenCodeModels(output string) []Model {
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lines := strings.Split(output, "\n")
 	var models []Model
-	seen := map[string]bool{}
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	indexByID := map[string]int{}
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
-		first := strings.Fields(line)
-		if len(first) == 0 {
+		id := parseOpenCodeModelIDLine(line)
+		if id == "" {
 			continue
 		}
-		id := first[0]
-		if !strings.Contains(id, "/") {
+		idx, seen := indexByID[id]
+		if !seen {
+			provider := ""
+			if slash := strings.Index(id, "/"); slash > 0 {
+				provider = id[:slash]
+			}
+			idx = len(models)
+			indexByID[id] = idx
+			models = append(models, Model{ID: id, Label: id, Provider: provider})
+		}
+
+		next := i + 1
+		for next < len(lines) && strings.TrimSpace(lines[next]) == "" {
+			next++
+		}
+		if next >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[next]), "{") {
 			continue
 		}
-		// Skip the header row (opencode prints e.g. PROVIDER/MODEL in caps).
-		if id == strings.ToUpper(id) {
-			continue
+		raw, resumeAt := collectOpenCodeModelJSON(lines, next)
+		if json.Valid(raw) {
+			annotateOpenCodeModelMetadata(&models[idx], raw)
 		}
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		provider := ""
-		if i := strings.Index(id, "/"); i > 0 {
-			provider = id[:i]
-		}
-		models = append(models, Model{ID: id, Label: id, Provider: provider})
+		i = resumeAt - 1
 	}
 	return models
+}
+
+func parseOpenCodeModelIDLine(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+	id := fields[0]
+	if strings.HasPrefix(id, `"`) || strings.HasPrefix(id, "{") || strings.HasPrefix(id, "[") {
+		return ""
+	}
+	if !strings.Contains(id, "/") {
+		return ""
+	}
+	// Skip header rows such as PROVIDER/MODEL.
+	if id == strings.ToUpper(id) {
+		return ""
+	}
+	return id
+}
+
+func collectOpenCodeModelJSON(lines []string, start int) ([]byte, int) {
+	var b strings.Builder
+	for i := start; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if i > start && parseOpenCodeModelIDLine(line) != "" {
+			return []byte(b.String()), i
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(lines[i])
+		if json.Valid([]byte(b.String())) {
+			return []byte(b.String()), i + 1
+		}
+	}
+	return []byte(b.String()), len(lines)
+}
+
+type opencodeModelMetadata struct {
+	Reasoning bool                            `json:"reasoning"`
+	Variants  map[string]opencodeModelVariant `json:"variants"`
+}
+
+type opencodeModelVariant struct {
+	Disabled        bool            `json:"disabled"`
+	ReasoningEffort string          `json:"reasoningEffort"`
+	Thinking        json.RawMessage `json:"thinking"`
+}
+
+var opencodeVariantLabel = map[string]string{
+	"none":    "None",
+	"minimal": "Minimal",
+	"low":     "Low",
+	"medium":  "Medium",
+	"high":    "High",
+	"xhigh":   "Extra high",
+	"max":     "Max",
+}
+
+var opencodeVariantOrder = map[string]int{
+	"none":    0,
+	"minimal": 1,
+	"low":     2,
+	"medium":  3,
+	"high":    4,
+	"xhigh":   5,
+	"max":     6,
+}
+
+func annotateOpenCodeModelMetadata(model *Model, raw []byte) {
+	var meta opencodeModelMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return
+	}
+	if !meta.Reasoning && !openCodeVariantsLookReasoning(meta.Variants) {
+		return
+	}
+	levels := openCodeThinkingLevelsFromVariants(meta.Variants)
+	if len(levels) == 0 {
+		return
+	}
+	model.Thinking = &ModelThinking{SupportedLevels: levels}
+}
+
+func openCodeVariantsLookReasoning(variants map[string]opencodeModelVariant) bool {
+	for name, variant := range variants {
+		if _, known := opencodeVariantOrder[name]; known {
+			return true
+		}
+		if variant.ReasoningEffort != "" || len(variant.Thinking) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func openCodeThinkingLevelsFromVariants(variants map[string]opencodeModelVariant) []ThinkingLevel {
+	if len(variants) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(variants))
+	for value, variant := range variants {
+		if value == "" || variant.Disabled {
+			continue
+		}
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		left, leftKnown := opencodeVariantOrder[values[i]]
+		right, rightKnown := opencodeVariantOrder[values[j]]
+		if leftKnown && rightKnown {
+			return left < right
+		}
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		return values[i] < values[j]
+	})
+	levels := make([]ThinkingLevel, 0, len(values))
+	for _, value := range values {
+		label, ok := opencodeVariantLabel[value]
+		if !ok {
+			label = strings.Title(strings.ReplaceAll(value, "-", " ")) //nolint:staticcheck
+		}
+		levels = append(levels, ThinkingLevel{Value: value, Label: label})
+	}
+	return levels
 }
 
 // discoverPiModels runs `pi --list-models` and parses its output.
@@ -299,9 +568,11 @@ func discoverPiModels(ctx context.Context, executablePath string) ([]Model, erro
 	return parsePiModels(text), nil
 }
 
-// parsePiModels accepts the `pi --list-models` output and extracts
-// model IDs. Pi's format uses `provider:model` rows; we normalize to
-// the same `provider/model` form as opencode for UI consistency.
+// parsePiModels accepts the `pi --list-models` output. Pi historically
+// emitted `provider:model` per line and now emits a multi-column table
+// (`provider  model  context …`); both shapes are normalized to
+// `provider/model` to match opencode/UI conventions. The case-insensitive
+// `provider` token in column 0 is treated as the table header and skipped.
 func parsePiModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -312,16 +583,25 @@ func parsePiModels(output string) []Model {
 		if line == "" {
 			continue
 		}
-		first := strings.Fields(line)
-		if len(first) == 0 {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
 			continue
 		}
-		id := first[0]
-		if !strings.ContainsAny(id, ":/") {
+		first := fields[0]
+		if strings.EqualFold(first, "provider") {
 			continue
 		}
-		// Normalize ":" to "/" since pi uses colon but opencode/UI uses slash.
-		id = strings.Replace(id, ":", "/", 1)
+		var id string
+		if strings.ContainsAny(first, ":/") {
+			// Legacy `provider:model` format — normalize colon to slash.
+			// Restricted to this branch so a model name with a `:` in
+			// the table format's column 1 is not silently rewritten.
+			id = strings.Replace(first, ":", "/", 1)
+		} else if len(fields) >= 2 {
+			id = first + "/" + fields[1]
+		} else {
+			continue
+		}
 		if seen[id] {
 			continue
 		}
@@ -380,17 +660,59 @@ func discoverKiroModels(ctx context.Context, executablePath string) ([]Model, er
 	})
 }
 
+// discoverCopilotModels spins up `copilot --acp` and reads the
+// `availableModels` block from session/new. The catalog is keyed
+// off the user's GitHub account, so this is the only way to know
+// which IDs they actually have access to (Pro vs Pro+ vs
+// Enterprise vs evaluation models).
+//
+// Falls back to copilotStaticModels() when the binary is missing
+// or when the ACP handshake fails (auth missing, network down,
+// etc.) so the UI dropdown always has something to show.
+//
+// We also tag each entry with a vendor in the Provider field —
+// the Copilot ACP payload doesn't include one, but the UI groups
+// by Provider, so deriving it from the ID prefix keeps OpenAI /
+// Anthropic / Gemini sections distinct.
+//
+// No extra env or permission flags are needed: discovery only
+// drives `initialize` + `session/new`, neither of which triggers
+// a tool-permission prompt — the model catalog is part of the
+// session/new response itself.
+func discoverCopilotModels(ctx context.Context, executablePath string) ([]Model, error) {
+	models, err := discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+		defaultBin:   "copilot",
+		clientName:   "multica-model-discovery",
+		tmpdirPrefix: "multica-copilot-discovery-",
+		acpArgs:      []string{"--acp"},
+	})
+	if err != nil || len(models) == 0 {
+		return copilotStaticModels(), nil
+	}
+	for i := range models {
+		if models[i].Provider == "" {
+			models[i].Provider = inferCopilotProvider(models[i].ID)
+		}
+	}
+	return models, nil
+}
+
 // acpDiscoveryProvider configures how discoverACPModels launches an
 // ACP-speaking agent CLI. The shared helper drives every CLI in
 // the same way (initialize → session/new → parse models block) — the
 // per-provider differences are which binary to spawn, which env
-// vars suppress interactive prompts during init, and what to label
-// temporary work directories so they're easy to identify in logs.
+// vars suppress interactive prompts during init, what argv puts
+// the binary into ACP server mode (most use `acp`, Copilot uses
+// `--acp`), and what to label temporary work directories so they're
+// easy to identify in logs.
 type acpDiscoveryProvider struct {
 	defaultBin   string
 	clientName   string
 	extraEnv     []string
 	tmpdirPrefix string
+	// acpArgs is the argv passed to the binary to start it in ACP
+	// server mode. Defaults to []string{"acp"} when nil/empty.
+	acpArgs []string
 }
 
 // discoverACPModels runs the ACP handshake for any agent CLI that
@@ -409,7 +731,11 @@ func discoverACPModels(ctx context.Context, executablePath string, p acpDiscover
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, executablePath, "acp")
+	cmdArgs := p.acpArgs
+	if len(cmdArgs) == 0 {
+		cmdArgs = []string{"acp"}
+	}
+	cmd := exec.CommandContext(runCtx, executablePath, cmdArgs...)
 	hideAgentWindow(cmd)
 	if len(p.extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), p.extraEnv...)
@@ -535,42 +861,63 @@ func discoverACPModels(ctx context.Context, executablePath string, p acpDiscover
 // the caller can distinguish "parsed with no models" (valid but
 // empty catalog) from "couldn't find the structure at all".
 func parseACPSessionNewModels(raw json.RawMessage) []Model {
+	type acpModelInfo struct {
+		ModelID      string `json:"modelId"`
+		ModelIDSnake string `json:"model_id"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+	}
 	var resp struct {
 		Models struct {
-			AvailableModels []struct {
-				ModelID     string `json:"modelId"`
-				Name        string `json:"name"`
-				Description string `json:"description"`
-			} `json:"availableModels"`
-			CurrentModelID string `json:"currentModelId"`
+			AvailableModels      []acpModelInfo `json:"availableModels"`
+			AvailableModelsSnake []acpModelInfo `json:"available_models"`
+			CurrentModelID       string         `json:"currentModelId"`
+			CurrentModelIDSnake  string         `json:"current_model_id"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil
 	}
-	models := make([]Model, 0, len(resp.Models.AvailableModels))
+	availableModels := resp.Models.AvailableModels
+	if len(availableModels) == 0 && resp.Models.AvailableModelsSnake != nil {
+		availableModels = resp.Models.AvailableModelsSnake
+	}
+	currentModelID := strings.TrimSpace(resp.Models.CurrentModelID)
+	if currentModelID == "" {
+		currentModelID = strings.TrimSpace(resp.Models.CurrentModelIDSnake)
+	}
+	models := make([]Model, 0, len(availableModels))
 	seen := map[string]bool{}
-	for _, m := range resp.Models.AvailableModels {
-		if m.ModelID == "" || seen[m.ModelID] {
+	for _, m := range availableModels {
+		modelID := strings.TrimSpace(m.ModelID)
+		if modelID == "" {
+			modelID = strings.TrimSpace(m.ModelIDSnake)
+		}
+		if modelID == "" || seen[modelID] {
 			continue
 		}
-		seen[m.ModelID] = true
-		label := m.Name
-		if label == "" {
-			label = m.ModelID
-		}
+		seen[modelID] = true
+		label := acpModelLabel(m.Name, modelID)
 		provider := ""
-		if idx := strings.Index(m.ModelID, ":"); idx > 0 {
-			provider = m.ModelID[:idx]
+		if idx := strings.Index(modelID, ":"); idx > 0 {
+			provider = modelID[:idx]
 		}
 		models = append(models, Model{
-			ID:       m.ModelID,
+			ID:       modelID,
 			Label:    label,
 			Provider: provider,
-			Default:  m.ModelID == resp.Models.CurrentModelID,
+			Default:  modelID == currentModelID,
 		})
 	}
 	return models
+}
+
+func acpModelLabel(name, modelID string) string {
+	label := strings.TrimSpace(name)
+	if label == "" || strings.EqualFold(label, "unknown") {
+		return modelID
+	}
+	return label
 }
 
 // discoverCursorModels runs `cursor-agent --list-models` and parses
@@ -709,10 +1056,14 @@ func discoverOpenclawAgents(ctx context.Context, executablePath string) ([]Model
 }
 
 // openclawAgentEntry is the shape parseOpenclawAgentsJSON expects
-// from `openclaw agents list --json`. Both `name` and `id` are
-// accepted as the identifier (different openclaw versions ship
-// different field names); `model` is optional and only used to
-// enrich the dropdown label.
+// from `openclaw agents list --json`. `id` is the routing key
+// passed to `openclaw agent --agent <id>`; `name` is the human
+// display label set via `openclaw agents set-identity --name` and
+// is only used to enrich the dropdown label. The two are not
+// interchangeable — see openclawEntriesToModels for the mapping.
+// Older openclaw versions may emit only `name`; in that case we
+// fall back to using it as the id for backward compatibility.
+// `model` is optional and only used to enrich the dropdown label.
 type openclawAgentEntry struct {
 	Name  string `json:"name"`
 	ID    string `json:"id"`
@@ -748,19 +1099,28 @@ func openclawEntriesToModels(entries []openclawAgentEntry) []Model {
 	models := make([]Model, 0, len(entries))
 	seen := map[string]bool{}
 	for _, e := range entries {
-		name := e.Name
-		if name == "" {
-			name = e.ID
+		// Use ID as the model identifier because openclaw resolves
+		// --agent by id, not by display name. Names may contain spaces
+		// (e.g. "Sub2API OPS") which openclaw's normalizeAgentId would
+		// mangle into a different string ("sub2api-ops"), causing a
+		// lookup miss and "no parseable output" errors.
+		id := e.ID
+		if id == "" {
+			id = e.Name
 		}
-		if name == "" || seen[name] {
+		if id == "" || seen[id] {
 			continue
 		}
-		seen[name] = true
-		label := name
-		if e.Model != "" {
-			label = name + " (" + e.Model + ")"
+		seen[id] = true
+		displayName := e.Name
+		if displayName == "" {
+			displayName = id
 		}
-		models = append(models, Model{ID: name, Label: label, Provider: "openclaw"})
+		label := displayName
+		if e.Model != "" {
+			label = displayName + " (" + e.Model + ")"
+		}
+		models = append(models, Model{ID: id, Label: label, Provider: "openclaw"})
 	}
 	return models
 }

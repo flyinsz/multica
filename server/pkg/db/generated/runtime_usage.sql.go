@@ -12,20 +12,29 @@ import (
 )
 
 const getRuntimeTaskHourlyActivity = `-- name: GetRuntimeTaskHourlyActivity :many
-SELECT EXTRACT(HOUR FROM started_at)::int AS hour, COUNT(*)::int AS count
+SELECT EXTRACT(HOUR FROM started_at AT TIME ZONE $2::text)::int AS hour,
+       COUNT(*)::int AS count
 FROM agent_task_queue
 WHERE runtime_id = $1 AND started_at IS NOT NULL
 GROUP BY hour
 ORDER BY hour
 `
 
+type GetRuntimeTaskHourlyActivityParams struct {
+	RuntimeID pgtype.UUID `json:"runtime_id"`
+	Tz        string      `json:"tz"`
+}
+
 type GetRuntimeTaskHourlyActivityRow struct {
 	Hour  int32 `json:"hour"`
 	Count int32 `json:"count"`
 }
 
-func (q *Queries) GetRuntimeTaskHourlyActivity(ctx context.Context, runtimeID pgtype.UUID) ([]GetRuntimeTaskHourlyActivityRow, error) {
-	rows, err := q.db.Query(ctx, getRuntimeTaskHourlyActivity, runtimeID)
+// Hour-of-day distribution for queue starts. Bucketed in the viewer's
+// tz so "this runtime is busy in the afternoon" actually means
+// the operator's afternoon, not UTC's.
+func (q *Queries) GetRuntimeTaskHourlyActivity(ctx context.Context, arg GetRuntimeTaskHourlyActivityParams) ([]GetRuntimeTaskHourlyActivityRow, error) {
+	rows, err := q.db.Query(ctx, getRuntimeTaskHourlyActivity, arg.RuntimeID, arg.Tz)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +55,7 @@ func (q *Queries) GetRuntimeTaskHourlyActivity(ctx context.Context, runtimeID pg
 
 const getRuntimeUsageByHour = `-- name: GetRuntimeUsageByHour :many
 SELECT
-    EXTRACT(HOUR FROM tu.created_at)::int AS hour,
+    EXTRACT(HOUR FROM tu.created_at AT TIME ZONE $2::text)::int AS hour,
     tu.model,
     SUM(tu.input_tokens)::bigint AS input_tokens,
     SUM(tu.output_tokens)::bigint AS output_tokens,
@@ -56,13 +65,14 @@ SELECT
 FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.runtime_id = $1
-  AND tu.created_at >= DATE_TRUNC('day', $2::timestamptz)
-GROUP BY EXTRACT(HOUR FROM tu.created_at), tu.model
+  AND tu.created_at >= $3::timestamptz
+GROUP BY EXTRACT(HOUR FROM tu.created_at AT TIME ZONE $2::text), tu.model
 ORDER BY hour, tu.model
 `
 
 type GetRuntimeUsageByHourParams struct {
 	RuntimeID pgtype.UUID        `json:"runtime_id"`
+	Tz        string             `json:"tz"`
 	Since     pgtype.Timestamptz `json:"since"`
 }
 
@@ -81,8 +91,11 @@ type GetRuntimeUsageByHourRow struct {
 // doing real work, with model preserved for client-side cost calculation
 // (same reason as ListRuntimeUsageByAgent above). Hours with zero activity
 // are omitted; the client fills the 24-bucket axis.
+//
+// Hours are extracted in the viewer's tz via @tz so afternoon
+// work bucketed at UTC 06:00 lands in 14:00 for a UTC+8 viewer.
 func (q *Queries) GetRuntimeUsageByHour(ctx context.Context, arg GetRuntimeUsageByHourParams) ([]GetRuntimeUsageByHourRow, error) {
-	rows, err := q.db.Query(ctx, getRuntimeUsageByHour, arg.RuntimeID, arg.Since)
+	rows, err := q.db.Query(ctx, getRuntimeUsageByHour, arg.RuntimeID, arg.Tz, arg.Since)
 	if err != nil {
 		return nil, err
 	}
@@ -111,23 +124,23 @@ func (q *Queries) GetRuntimeUsageByHour(ctx context.Context, arg GetRuntimeUsage
 
 const listRuntimeUsage = `-- name: ListRuntimeUsage :many
 SELECT
-    DATE(tu.created_at) AS date,
-    tu.provider,
-    tu.model,
-    SUM(tu.input_tokens)::bigint AS input_tokens,
-    SUM(tu.output_tokens)::bigint AS output_tokens,
-    SUM(tu.cache_read_tokens)::bigint AS cache_read_tokens,
-    SUM(tu.cache_write_tokens)::bigint AS cache_write_tokens
-FROM task_usage tu
-JOIN agent_task_queue atq ON atq.id = tu.task_id
-WHERE atq.runtime_id = $1
-  AND tu.created_at >= DATE_TRUNC('day', $2::timestamptz)
-GROUP BY DATE(tu.created_at), tu.provider, tu.model
-ORDER BY DATE(tu.created_at) DESC, tu.provider, tu.model
+    DATE(bucket_hour AT TIME ZONE $2::text) AS date,
+    provider,
+    model,
+    SUM(input_tokens)::bigint        AS input_tokens,
+    SUM(output_tokens)::bigint       AS output_tokens,
+    SUM(cache_read_tokens)::bigint   AS cache_read_tokens,
+    SUM(cache_write_tokens)::bigint  AS cache_write_tokens
+FROM task_usage_hourly
+WHERE runtime_id = $1
+  AND bucket_hour >= $3::timestamptz
+GROUP BY DATE(bucket_hour AT TIME ZONE $2::text), provider, model
+ORDER BY DATE(bucket_hour AT TIME ZONE $2::text) DESC, provider, model
 `
 
 type ListRuntimeUsageParams struct {
 	RuntimeID pgtype.UUID        `json:"runtime_id"`
+	Tz        string             `json:"tz"`
 	Since     pgtype.Timestamptz `json:"since"`
 }
 
@@ -141,12 +154,16 @@ type ListRuntimeUsageRow struct {
 	CacheWriteTokens int64       `json:"cache_write_tokens"`
 }
 
-// Bucket by tu.created_at (usage report time, ~= task completion time), not
-// atq.created_at (task enqueue time), so tasks that queue one day and execute
-// the next are attributed to the day tokens were actually produced. The since
-// cutoff is truncated to start-of-day so `days=N` yields full calendar days.
+// Reads from the UTC-bucketed `task_usage_hourly` rollup table,
+// aggregated to per-(date, provider, model) under the
+// caller-supplied @tz. Powers the trend chart on the runtime detail
+// page and the per-row cost cell on the runtimes list.
+//
+// @tz is required, even if the caller intends "UTC", so the bucket
+// cast is unambiguous — `bucket_hour` is UTC and the caller picks the
+// calendar boundary per request.
 func (q *Queries) ListRuntimeUsage(ctx context.Context, arg ListRuntimeUsageParams) ([]ListRuntimeUsageRow, error) {
-	rows, err := q.db.Query(ctx, listRuntimeUsage, arg.RuntimeID, arg.Since)
+	rows, err := q.db.Query(ctx, listRuntimeUsage, arg.RuntimeID, arg.Tz, arg.Since)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +202,7 @@ SELECT
 FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.runtime_id = $1
-  AND tu.created_at >= DATE_TRUNC('day', $2::timestamptz)
+  AND tu.created_at >= $2::timestamptz
 GROUP BY atq.agent_id, tu.model
 ORDER BY atq.agent_id, tu.model
 `
@@ -211,6 +228,9 @@ type ListRuntimeUsageByAgentRow struct {
 // purpose: cost is computed client-side from a per-model pricing table, so
 // collapsing models server-side would erase the information needed to do
 // that arithmetic. The client groups by agent_id and sums cost per agent.
+//
+// This view doesn't bucket by date, so it doesn't need @tz; only the
+// @since cutoff is provided in runtime-local terms (computed in Go).
 func (q *Queries) ListRuntimeUsageByAgent(ctx context.Context, arg ListRuntimeUsageByAgentParams) ([]ListRuntimeUsageByAgentRow, error) {
 	rows, err := q.db.Query(ctx, listRuntimeUsageByAgent, arg.RuntimeID, arg.Since)
 	if err != nil {

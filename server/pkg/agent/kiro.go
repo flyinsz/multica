@@ -44,6 +44,15 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		return nil, fmt.Errorf("kiro executable not found at %q: %w", execPath, err)
 	}
 
+	// Translate the agent's mcp_config (Claude-style object of objects)
+	// into the array shape ACP `session/new` and `session/load` expect.
+	// Fail closed on malformed JSON so the launch surfaces the real error
+	// instead of silently dropping all MCP servers.
+	mcpServers, err := buildACPMcpServers(opts.McpConfig, b.cfg.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("kiro: invalid mcp_config: %w", err)
+	}
+
 	timeout := opts.Timeout
 	if timeout == 0 {
 		timeout = 20 * time.Minute
@@ -69,13 +78,28 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		cancel()
 		return nil, fmt.Errorf("kiro stdin pipe: %w", err)
 	}
+	// StderrPipe + an explicit copier give us a join point
+	// (`stderrDone`) that fires before the failure-promotion
+	// decision; see the matching comment in hermes.go for why the
+	// io.MultiWriter form races with stopReason=end_turn under load.
 	providerErr := newACPProviderErrorSniffer("kiro")
-	cmd.Stderr = io.MultiWriter(newLogWriter(b.cfg.Logger, "[kiro:stderr] "), providerErr)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("kiro stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start kiro: %w", err)
 	}
+
+	stderrSink := io.MultiWriter(newLogWriter(b.cfg.Logger, "[kiro:stderr] "), providerErr)
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		_, _ = io.Copy(stderrSink, stderr)
+	}()
 
 	b.cfg.Logger.Info("kiro acp started", "pid", cmd.Process.Pid, "cwd", opts.Cwd)
 
@@ -150,7 +174,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		var finalError string
 		var sessionID string
 
-		_, err := c.request(runCtx, "initialize", map[string]any{
+		initResult, err := c.request(runCtx, "initialize", map[string]any{
 			"protocolVersion": 1,
 			"clientInfo": map[string]any{
 				"name":    "multica-agent-sdk",
@@ -165,6 +189,12 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			return
 		}
 
+		// Drop MCP entries whose remote transport the runtime didn't
+		// advertise. See the matching comment in hermes.go for why
+		// unconditionally sending http/sse to a stdio-only ACP runtime
+		// tanks the whole session/new.
+		mcpServers = filterACPMcpServersByCapability(mcpServers, extractACPMcpCapabilities(initResult), "kiro", b.cfg.Logger)
+
 		cwd := opts.Cwd
 		if cwd == "" {
 			cwd = "."
@@ -174,7 +204,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			result, err := c.request(runCtx, "session/load", map[string]any{
 				"cwd":        cwd,
 				"sessionId":  opts.ResumeSessionID,
-				"mcpServers": []any{},
+				"mcpServers": mcpServers,
 			})
 			if err != nil {
 				finalStatus = "failed"
@@ -202,7 +232,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		} else {
 			result, err := c.request(runCtx, "session/new", map[string]any{
 				"cwd":        cwd,
-				"mcpServers": []any{},
+				"mcpServers": mcpServers,
 			})
 			if err != nil {
 				finalStatus = "failed"
@@ -292,17 +322,21 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		cancel()
 
 		<-readerDone
+		// Ensure the stderr copier has drained before consulting the
+		// provider-error sniffer; see hermes.go for the failure mode.
+		<-stderrDone
 
 		outputMu.Lock()
 		finalOutput := output.String()
 		outputMu.Unlock()
 
-		if finalStatus == "completed" && finalOutput == "" {
-			if msg := providerErr.message(); msg != "" {
-				finalStatus = "failed"
-				finalError = msg
-			}
-		}
+		// Promote completed→failed when stderr or the agent text
+		// stream show a terminal upstream-LLM failure (HTTP 4xx /
+		// rate-limit / expired token). See the helper docs for the
+		// full signal set; the key safety property is that transient
+		// per-attempt warnings followed by a successful retry stay
+		// "completed".
+		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, finalOutput, providerErr)
 
 		c.usageMu.Lock()
 		u := c.usage

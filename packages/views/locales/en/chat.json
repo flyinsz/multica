@@ -9,7 +9,9 @@
     "placeholder_no_agent": "Create an agent to start chatting",
     "placeholder_archived": "This session is archived",
     "placeholder_named": "Tell {{name}} what to do…",
-    "placeholder_default": "Tell me what to do…"
+    "placeholder_default": "Tell me what to do…",
+    "send_tooltip": "Send",
+    "stop_tooltip": "Stop"
   },
   "message_list": {
     "show_details": "Show details",
@@ -35,6 +37,22 @@
       "days": "{{count}}d ago"
     },
     "row_delete_aria": "Delete chat session",
+    "row_rename_aria": "Rename chat session",
+    "row_stop_aria": "Stop current run",
+    "stop_action": "Stop",
+    "row_subtitle": {
+      "working": "Working",
+      "completed": "Completed",
+      "new_reply": "New reply"
+    },
+    "stop_dialog": {
+      "title": "Stop this run?",
+      "description_with_title": "This will cancel the current agent task in \"{{title}}\". Partial output will stay in the chat.",
+      "description_default": "This will cancel the current agent task. Partial output will stay in the chat.",
+      "cancel": "Keep running",
+      "confirm": "Stop run",
+      "confirming": "Stopping..."
+    },
     "delete_dialog": {
       "title": "Delete chat session",
       "description_with_title": "\"{{title}}\" and its messages will be permanently removed. This action cannot be undone.",
@@ -58,9 +76,7 @@
     "my_agents": "My agents",
     "others": "Others",
     "no_agents": "No agents",
-    "active_group": "Active",
-    "archived_group_one": "{{count}} archived chat",
-    "archived_group_other": "{{count}} archived chats"
+    "history_group": "Chat history"
   },
   "empty_state": {
     "first_time_title": "Chat with your agents",
@@ -99,6 +115,7 @@
       "offline": "Offline",
       "reconnecting": "Reconnecting",
       "queued": "Queued",
+      "waiting_local_directory": "Waiting for local directory",
       "starting_up": "Starting up",
       "thinking": "Thinking",
       "typing": "Typing"

@@ -1,6 +1,4 @@
-import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import "@testing-library/jest-dom/vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { AppSidebar } from "./app-sidebar";
@@ -45,8 +43,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarMenuButton: ({ children, render }: { children: React.ReactNode; render?: React.ReactElement<Record<string, unknown>> }) =>
-    render ? React.createElement(render.type, render.props, children) : <button type="button">{children}</button>,
+  SidebarMenuButton: ({ children }: { children: React.ReactNode }) => <button type="button">{children}</button>,
   SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarRail: () => null,
 }));
@@ -73,7 +70,7 @@ vi.mock("./help-launcher", () => ({ HelpLauncher: () => null }));
 vi.mock("../auth", () => ({ useLogout: () => vi.fn() }));
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("../navigation", () => ({
-  AppLink: ({ children, href, ...props }: { children?: React.ReactNode; href: string }) => <a href={href} {...props}>{children}</a>,
+  AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
   useNavigation: () => ({ pathname: "/acme/issues", push: vi.fn() }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
@@ -93,6 +90,8 @@ vi.mock("@multica/core/paths", () => ({
     projects: () => "/acme/projects",
     autopilots: () => "/acme/autopilots",
     agents: () => "/acme/agents",
+    squads: () => "/acme/squads",
+    usage: () => "/acme/usage",
     runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
@@ -100,19 +99,22 @@ vi.mock("@multica/core/paths", () => ({
     projectDetail: (id: string) => `/acme/projects/${id}`,
   }),
 }));
-vi.mock("@multica/core/crm/paths", () => ({
-  useCRMWorkspacePaths: () => ({
-    dashboard: () => "/acme/crm/dashboard",
-    customers: () => "/acme/crm/customers",
-    customerDetail: (id: string) => `/acme/crm/customers/${id}`,
-    emails: () => "/acme/crm/emails",
-    aiSettings: () => "/acme/crm/ai-settings",
-  }),
-}));
-vi.mock("@multica/core/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@multica/core/api")>()), api: {} }));
+vi.mock("@multica/core/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/api")>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getBaseUrl: () => "http://127.0.0.1:8080",
+    },
+  };
+});
 vi.mock("@multica/core/inbox/queries", () => ({ deduplicateInboxItems: (items: unknown[]) => items, inboxKeys: { list: () => ["inbox"] } }));
 vi.mock("@multica/core/issues/queries", () => ({ issueDetailOptions: () => ({ queryKey: ["issue"] }) }));
-vi.mock("@multica/core/issues/stores/create-mode-store", () => ({ useCreateModeStore: { getState: () => ({ lastMode: "agent" }) } }));
+vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
+  useCreateModeStore: { getState: () => ({ lastMode: "agent" }) },
+  openCreateIssueWithPreference: vi.fn(),
+}));
 vi.mock("@multica/core/issues/stores/draft-store", () => ({ useIssueDraftStore: () => false }));
 vi.mock("@multica/core/modals", () => ({ useModalStore: { getState: () => ({ modal: null, open: vi.fn() }) } }));
 vi.mock("@multica/core/pins/mutations", () => ({ useDeletePin: () => ({ mutate: deletePin }), useReorderPins: () => ({ mutate: vi.fn() }) }));
@@ -157,13 +159,5 @@ describe("PinRow", () => {
     detail.current = { isPending: false, isError: false, data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" }, error: null };
     render(<AppSidebar />);
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
-  });
-
-  it("links CRM to the dashboard and keeps a customer list entry below it", () => {
-    const { container } = render(<AppSidebar />);
-
-    expect(container.querySelector('a[href="/acme/crm/dashboard"]')).not.toBeNull();
-    expect(container.querySelector('a[href="/acme/crm/customers"]')).not.toBeNull();
-    expect(container.querySelector('a[href="/acme/crm/emails"]')).not.toBeNull();
   });
 });

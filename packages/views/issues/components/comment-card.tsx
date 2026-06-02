@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useRef, useState } from "react";
-import { ChevronRight, Copy, Download, FileText, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, Copy, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -29,14 +29,14 @@ import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { QuickEmojiPicker } from "@multica/ui/components/common/quick-emoji-picker";
 import { cn } from "@multica/ui/lib/utils";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { timeAgo } from "@multica/core/utils";
-import { ContentEditor, type ContentEditorRef, copyMarkdown, ReadonlyContent, useFileDropZone, FileDropOverlay } from "../../editor";
+import { useTimeAgo } from "../../i18n";
+import { ContentEditor, type ContentEditorRef, copyMarkdown, ReadonlyContent, useFileDropZone, FileDropOverlay, Attachment as AttachmentRenderer, AttachmentDownloadProvider } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { api } from "@multica/core/api";
 import { ReplyInput } from "./reply-input";
 import type { TimelineEntry, Attachment } from "@multica/core/types";
-import { useCommentCollapseStore } from "@multica/core/issues/stores";
+import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,14 @@ import { useT } from "../../i18n";
 interface CommentCardProps {
   issueId: string;
   entry: TimelineEntry;
-  allReplies: Map<string, TimelineEntry[]>;
+  /**
+   * Flat list of every nested reply under this thread root, in render order.
+   * Computed once in `issue-detail.tsx`'s `timelineView` and stabilized so
+   * the array reference only changes when *this* thread's replies change —
+   * an unrelated thread receiving a new reply must NOT bust this card's
+   * memo. Passing the full Map here used to do exactly that.
+   */
+  replies: TimelineEntry[];
   currentUserId?: string;
   /**
    * True when the current user is a workspace owner/admin and can therefore
@@ -57,9 +64,17 @@ interface CommentCardProps {
    */
   canModerate?: boolean;
   onReply: (parentId: string, content: string, attachmentIds?: string[]) => Promise<void>;
-  onEdit: (commentId: string, content: string) => Promise<void>;
+  onEdit: (commentId: string, content: string, attachmentIds: string[]) => Promise<void>;
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
+  /** Toggle the resolved state on the thread root. Only invoked for root entries. */
+  onResolveToggle?: (commentId: string, resolved: boolean) => void;
+  /**
+   * When non-null, the thread root is currently rendered as a resolved-but-
+   * expanded card. Pass a "Collapse" affordance into the header so the user
+   * can fold the thread back to the bar; the parent owns the session state.
+   */
+  onCollapseResolved?: () => void;
   /** ID of the comment to highlight (flash animation). */
   highlightedCommentId?: string | null;
 }
@@ -106,7 +121,17 @@ function DeleteCommentDialog({
 // Standalone attachment list — renders attachments not already in the markdown
 // ---------------------------------------------------------------------------
 
-function AttachmentList({ attachments, content, className }: { attachments?: Attachment[]; content?: string; className?: string }) {
+export function AttachmentList({
+  attachments,
+  content,
+  className,
+  onRemove,
+}: {
+  attachments?: Attachment[];
+  content?: string;
+  className?: string;
+  onRemove?: (attachmentId: string) => void;
+}) {
   if (!attachments?.length) return null;
   // Skip attachments whose URL is already referenced in the markdown content,
   // and duplicates of the same file (same name/type/size) that are referenced.
@@ -130,29 +155,159 @@ function AttachmentList({ attachments, content, className }: { attachments?: Att
   if (!standalone.length) return null;
 
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
-      {standalone.map((a) => (
-        <div
-          key={a.id}
-          className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted"
-        >
-          <FileText className="size-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm">{a.filename}</p>
-          </div>
-          {a.download_url && (
-            <button
-              type="button"
-              className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              onClick={() => window.open(a.download_url, "_blank", "noopener,noreferrer")}
-            >
-              <Download className="size-3.5" />
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
+    <AttachmentDownloadProvider attachments={attachments}>
+      <div className={cn("flex flex-col gap-1", className)}>
+        {standalone.map((a) => (
+          <AttachmentRenderer
+            key={a.id}
+            attachment={{ kind: "record", attachment: a }}
+            editable={!!onRemove}
+            onDelete={onRemove ? () => onRemove(a.id) : undefined}
+          />
+        ))}
+      </div>
+    </AttachmentDownloadProvider>
   );
+}
+
+function collectActiveAttachmentIds(
+  content: string,
+  attachments: Attachment[],
+  retainedStandaloneIds?: Set<string> | null,
+): string[] {
+  const ids = new Set<string>();
+  for (const attachment of attachments) {
+    if (content.includes(attachment.url)) ids.add(attachment.id);
+  }
+  for (const id of retainedStandaloneIds ?? []) ids.add(id);
+  return [...ids];
+}
+
+function sameIdSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
+}
+
+function initialStandaloneAttachmentIds(entry: TimelineEntry): Set<string> {
+  const content = entry.content ?? "";
+  return new Set(
+    (entry.attachments ?? [])
+      .filter((attachment) => !content.includes(attachment.url))
+      .map((attachment) => attachment.id),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared edit-attachment state hook
+// ---------------------------------------------------------------------------
+
+function useEditAttachmentState(
+  issueId: string,
+  entry: TimelineEntry,
+  onEdit: (commentId: string, content: string, attachmentIds: string[]) => Promise<void>,
+) {
+  const { t } = useT("issues");
+  const { uploadWithToast } = useFileUpload(api);
+  const [editing, setEditing] = useState(false);
+  const editorRef = useRef<ContentEditorRef>(null);
+  const cancelledRef = useRef(false);
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [retainedStandaloneIds, setRetainedStandaloneIds] = useState<Set<string> | null>(null);
+
+  const editorAttachments = pendingAttachments.length > 0
+    ? [...(entry.attachments ?? []), ...pendingAttachments]
+    : entry.attachments;
+
+  const handleUpload = useCallback(async (file: File) => {
+    const result = await uploadWithToast(file, { issueId });
+    if (result) setPendingAttachments((prev) => [...prev, result]);
+    return result;
+  }, [uploadWithToast, issueId]);
+
+  const { isDragOver, dropZoneProps } = useFileDropZone({
+    onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
+    enabled: editing,
+  });
+
+  const draftKey = `edit:${issueId}:${entry.id}` as const;
+  const getDraft = useCommentDraftStore.getState().getDraft;
+  const setDraft = useCommentDraftStore((s) => s.setDraft);
+  const clearDraft = useCommentDraftStore((s) => s.clearDraft);
+
+  const initialValue = editing
+    ? (getDraft(draftKey) ?? entry.content ?? "")
+    : (entry.content ?? "");
+
+  const standaloneEditAttachments = (entry.attachments ?? []).filter((a) =>
+    retainedStandaloneIds?.has(a.id),
+  );
+
+  const resetState = () => {
+    setEditing(false);
+    setPendingAttachments([]);
+    setRetainedStandaloneIds(null);
+    clearDraft(draftKey);
+  };
+
+  const startEdit = () => {
+    cancelledRef.current = false;
+    setRetainedStandaloneIds(initialStandaloneAttachmentIds(entry));
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    cancelledRef.current = true;
+    resetState();
+  };
+
+  const saveEdit = async () => {
+    if (cancelledRef.current) return;
+    const trimmed = editorRef.current
+      ?.getMarkdown()
+      ?.replace(/(\n\s*)+$/, "")
+      .trim();
+    if (!trimmed) return;
+    const activeIds = collectActiveAttachmentIds(
+      trimmed,
+      [...(entry.attachments ?? []), ...pendingAttachments],
+      retainedStandaloneIds,
+    );
+    const attachmentsChanged = !sameIdSet(activeIds, (entry.attachments ?? []).map((a) => a.id));
+    if (trimmed === (entry.content ?? "").trim() && !attachmentsChanged) {
+      resetState();
+      return;
+    }
+    try {
+      await onEdit(entry.id, trimmed, activeIds);
+      resetState();
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.comment.update_failed),
+      );
+    }
+  };
+
+  return {
+    editing,
+    editorRef,
+    editorAttachments,
+    handleUpload,
+    isDragOver,
+    dropZoneProps,
+    draftKey,
+    setDraft,
+    clearDraft,
+    initialValue,
+    standaloneEditAttachments,
+    retainedStandaloneIds,
+    setRetainedStandaloneIds,
+    startEdit,
+    cancelEdit,
+    saveEdit,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -172,61 +327,27 @@ function CommentRow({
   entry: TimelineEntry;
   currentUserId?: string;
   canModerate?: boolean;
-  onEdit: (commentId: string, content: string) => Promise<void>;
+  onEdit: (commentId: string, content: string, attachmentIds: string[]) => Promise<void>;
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
 }) {
   const { t } = useT("issues");
+  const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
-  const [editing, setEditing] = useState(false);
-  const editEditorRef = useRef<ContentEditorRef>(null);
-  const cancelledRef = useRef(false);
-  const { uploadWithToast } = useFileUpload(api);
-  const { isDragOver, dropZoneProps } = useFileDropZone({
-    onDrop: (files) => files.forEach((f) => editEditorRef.current?.uploadFile(f)),
-    enabled: editing,
-  });
+
+  const edit = useEditAttachmentState(issueId, entry, onEdit);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
   const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
   const canDeleteEntry = isOwn || canModerate;
-  const isTemp = entry.id.startsWith("temp-");
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const startEdit = () => {
-    cancelledRef.current = false;
-    setEditing(true);
-  };
-
-  const cancelEdit = () => {
-    cancelledRef.current = true;
-    setEditing(false);
-  };
-
-  const saveEdit = async () => {
-    if (cancelledRef.current) return;
-    const trimmed = editEditorRef.current
-      ?.getMarkdown()
-      ?.replace(/(\n\s*)+$/, "")
-      .trim();
-    if (!trimmed || trimmed === (entry.content ?? "").trim()) {
-      setEditing(false);
-      return;
-    }
-    try {
-      await onEdit(entry.id, trimmed);
-      setEditing(false);
-    } catch {
-      toast.error(t(($) => $.comment.update_failed));
-    }
-  };
 
   const reactions = entry.reactions ?? [];
   const contentText = entry.content ?? "";
   const isLongContent = contentText.length > 500 || contentText.split("\n").length > 8;
 
   return (
-    <div className={`py-3${isTemp ? " opacity-60" : ""}`}>
+    <div className="py-3">
       <div className="flex items-center gap-2.5">
         <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size={24} enableHoverCard showStatusDot />
         <span className="cursor-pointer text-sm font-medium">
@@ -245,12 +366,11 @@ function CommentRow({
           </TooltipContent>
         </Tooltip>
 
-        {!isTemp && (
-          <div className="ml-auto flex items-center gap-0.5">
-            <QuickEmojiPicker
-              onSelect={(emoji) => onToggleReaction(entry.id, emoji)}
-              align="end"
-            />
+        <div className="ml-auto flex items-center gap-0.5">
+          <QuickEmojiPicker
+            onSelect={(emoji) => onToggleReaction(entry.id, emoji)}
+            align="end"
+          />
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -271,7 +391,7 @@ function CommentRow({
                 <>
                   <DropdownMenuSeparator />
                   {canEditEntry && (
-                    <DropdownMenuItem onClick={startEdit}>
+                    <DropdownMenuItem onClick={edit.startEdit}>
                       <Pencil className="h-3.5 w-3.5" />
                       {t(($) => $.comment.edit_action)}
                     </DropdownMenuItem>
@@ -292,55 +412,73 @@ function CommentRow({
             onOpenChange={setConfirmDelete}
             onConfirm={() => onDelete(entry.id)}
           />
-          </div>
-        )}
+        </div>
       </div>
 
-      {editing ? (
+      {edit.editing ? (
         <div
-          {...dropZoneProps}
+          {...edit.dropZoneProps}
           className="relative mt-1.5 pl-8"
-          onKeyDown={(e) => { if (e.key === "Escape") cancelEdit(); }}
+          onKeyDown={(e) => { if (e.key === "Escape") edit.cancelEdit(); }}
         >
           <div className="text-sm leading-relaxed">
             <ContentEditor
-              ref={editEditorRef}
-              defaultValue={entry.content ?? ""}
+              ref={edit.editorRef}
+              defaultValue={edit.initialValue}
               placeholder={t(($) => $.comment.edit_placeholder)}
-              onSubmit={saveEdit}
-              onUploadFile={(file) => uploadWithToast(file, { issueId })}
+              onUpdate={(md) => {
+                if (md.trim().length > 0) edit.setDraft(edit.draftKey, md);
+                else edit.clearDraft(edit.draftKey);
+              }}
+              onSubmit={edit.saveEdit}
+              onUploadFile={edit.handleUpload}
               debounceMs={100}
               currentIssueId={issueId}
+              attachments={edit.editorAttachments}
             />
           </div>
           <div className="flex items-center justify-between mt-2">
-            <FileUploadButton
-              size="sm"
-              onSelect={(file) => editEditorRef.current?.uploadFile(file)}
-            />
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              {edit.standaloneEditAttachments.length > 0 && (
+                <AttachmentList
+                  attachments={edit.standaloneEditAttachments}
+                  className="max-w-full"
+                  onRemove={(attachmentId) =>
+                    edit.setRetainedStandaloneIds((ids) => {
+                      const next = new Set(ids ?? []);
+                      next.delete(attachmentId);
+                      return next;
+                    })
+                  }
+                />
+              )}
+              <FileUploadButton
+                size="sm"
+                multiple
+                onSelect={(file) => edit.editorRef.current?.uploadFile(file)}
+              />
+            </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={cancelEdit}>{t(($) => $.comment.cancel_edit)}</Button>
-              <Button size="sm" variant="outline" onClick={saveEdit}>{t(($) => $.comment.save_action)}</Button>
+              <Button size="sm" variant="ghost" onClick={edit.cancelEdit}>{t(($) => $.comment.cancel_edit)}</Button>
+              <Button size="sm" variant="outline" onClick={edit.saveEdit}>{t(($) => $.comment.save_action)}</Button>
             </div>
           </div>
-          {isDragOver && <FileDropOverlay />}
+          {edit.isDragOver && <FileDropOverlay />}
         </div>
       ) : (
         <>
           <div className="mt-1.5 pl-8 text-sm leading-relaxed text-foreground/85">
-            <ReadonlyContent content={entry.content ?? ""} />
+            <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-8" />
-          {!isTemp && (
-            <ReactionBar
-              reactions={reactions}
-              currentUserId={currentUserId}
-              onToggle={(emoji) => onToggleReaction(entry.id, emoji)}
-              getActorName={getActorName}
-              hideAddButton={!isLongContent}
-              className="mt-1.5 pl-8"
-            />
-          )}
+          <ReactionBar
+            reactions={reactions}
+            currentUserId={currentUserId}
+            onToggle={(emoji) => onToggleReaction(entry.id, emoji)}
+            getActorName={getActorName}
+            hideAddButton={!isLongContent}
+            className="mt-1.5 pl-8"
+          />
         </>
       )}
     </div>
@@ -354,78 +492,33 @@ function CommentRow({
 function CommentCardImpl({
   issueId,
   entry,
-  allReplies,
+  replies,
   currentUserId,
   canModerate = false,
   onReply,
   onEdit,
   onDelete,
   onToggleReaction,
+  onResolveToggle,
+  onCollapseResolved,
   highlightedCommentId,
 }: CommentCardProps) {
   const { t } = useT("issues");
+  const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
-  const { uploadWithToast } = useFileUpload(api);
   const isCollapsed = useCommentCollapseStore((s) => s.isCollapsed(issueId, entry.id));
   const toggleCollapse = useCommentCollapseStore((s) => s.toggle);
   const open = !isCollapsed;
   const handleOpenChange = useCallback((_open: boolean) => toggleCollapse(issueId, entry.id), [toggleCollapse, issueId, entry.id]);
-  const [editing, setEditing] = useState(false);
-  const editEditorRef = useRef<ContentEditorRef>(null);
-  const cancelledRef = useRef(false);
-  const { isDragOver: parentDragOver, dropZoneProps: parentDropZoneProps } = useFileDropZone({
-    onDrop: (files) => files.forEach((f) => editEditorRef.current?.uploadFile(f)),
-    enabled: editing,
-  });
+
+  const edit = useEditAttachmentState(issueId, entry, onEdit);
 
   const isOwn = entry.actor_type === "member" && entry.actor_id === currentUserId;
-  // Author-only edit is the same as before; admins additionally get edit
-  // *and* delete on member-authored comments, plus delete on agent-authored
-  // ones. Edit on agent comments is intentionally never offered — agents
-  // own their own outputs.
   const canEditEntry = isOwn || (canModerate && entry.actor_type === "member");
   const canDeleteEntry = isOwn || canModerate;
-  const isTemp = entry.id.startsWith("temp-");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const startEdit = () => {
-    cancelledRef.current = false;
-    setEditing(true);
-  };
-
-  const cancelEdit = () => {
-    cancelledRef.current = true;
-    setEditing(false);
-  };
-
-  const saveEdit = async () => {
-    if (cancelledRef.current) return;
-    const trimmed = editEditorRef.current
-      ?.getMarkdown()
-      ?.replace(/(\n\s*)+$/, "")
-      .trim();
-    if (!trimmed || trimmed === (entry.content ?? "").trim()) {
-      setEditing(false);
-      return;
-    }
-    try {
-      await onEdit(entry.id, trimmed);
-      setEditing(false);
-    } catch {
-      toast.error(t(($) => $.comment.update_failed));
-    }
-  };
-
-  // Collect all nested replies recursively into a flat list
-  const allNestedReplies: TimelineEntry[] = [];
-  const collectReplies = (parentId: string) => {
-    const children = allReplies.get(parentId) ?? [];
-    for (const child of children) {
-      allNestedReplies.push(child);
-      collectReplies(child.id);
-    }
-  };
-  collectReplies(entry.id);
+  const allNestedReplies = replies;
 
   const replyCount = allNestedReplies.length;
   const contentPreview = (entry.content ?? "").replace(/\n/g, " ").slice(0, 80);
@@ -436,7 +529,21 @@ function CommentCardImpl({
   const isHighlighted = highlightedCommentId === entry.id;
 
   return (
-    <Card className={cn("!py-0 !gap-0 overflow-hidden transition-colors duration-700", isTemp && "opacity-60", isHighlighted && "ring-2 ring-brand/50 bg-brand/5")}>
+    <Card className={cn("!py-0 !gap-0 overflow-hidden transition-colors duration-700", isHighlighted && "ring-2 ring-brand/50 bg-brand/5")}>
+      {onCollapseResolved && (
+        <button
+          type="button"
+          onClick={onCollapseResolved}
+          className="flex w-full items-center justify-between border-b border-border/50 px-4 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
+          aria-label={t(($) => $.comment.resolve.collapse)}
+        >
+          <span className="flex items-center gap-2">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {t(($) => $.comment.resolve.collapse)}
+          </span>
+          <ChevronRight className="h-3.5 w-3.5 -rotate-90" />
+        </button>
+      )}
       <Collapsible open={open} onOpenChange={handleOpenChange}>
         {/* Header — always visible, acts as toggle */}
         <div className="px-4 py-3">
@@ -472,7 +579,7 @@ function CommentCardImpl({
               </span>
             )}
 
-            {open && !isTemp && (
+            {open && (
               <div className="ml-auto flex items-center gap-0.5">
                 <QuickEmojiPicker
                   onSelect={(emoji) => onToggleReaction(entry.id, emoji)}
@@ -494,11 +601,29 @@ function CommentCardImpl({
                     <Copy className="h-3.5 w-3.5" />
                     {t(($) => $.comment.copy_action)}
                   </DropdownMenuItem>
+                  {onResolveToggle && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => onResolveToggle(entry.id, !entry.resolved_at)}>
+                        {entry.resolved_at ? (
+                          <>
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t(($) => $.comment.resolve.unresolve_action)}
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            {t(($) => $.comment.resolve.resolve_action)}
+                          </>
+                        )}
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   {(canEditEntry || canDeleteEntry) && (
                     <>
                       <DropdownMenuSeparator />
                       {canEditEntry && (
-                        <DropdownMenuItem onClick={startEdit}>
+                        <DropdownMenuItem onClick={edit.startEdit}>
                           <Pencil className="h-3.5 w-3.5" />
                           {t(($) => $.comment.edit_action)}
                         </DropdownMenuItem>
@@ -529,51 +654,70 @@ function CommentCardImpl({
         <CollapsibleContent>
           {/* Parent comment body */}
           <div className="px-4 pb-3">
-            {editing ? (
+            {edit.editing ? (
               <div
-                {...parentDropZoneProps}
+                {...edit.dropZoneProps}
                 className="relative pl-10"
-                onKeyDown={(e) => { if (e.key === "Escape") cancelEdit(); }}
+                onKeyDown={(e) => { if (e.key === "Escape") edit.cancelEdit(); }}
               >
                 <div className="text-sm leading-relaxed">
                   <ContentEditor
-                    ref={editEditorRef}
-                    defaultValue={entry.content ?? ""}
+                    ref={edit.editorRef}
+                    defaultValue={edit.initialValue}
                     placeholder={t(($) => $.comment.edit_placeholder)}
-                    onSubmit={saveEdit}
-                    onUploadFile={(file) => uploadWithToast(file, { issueId })}
+                    onUpdate={(md) => {
+                      if (md.trim().length > 0) edit.setDraft(edit.draftKey, md);
+                      else edit.clearDraft(edit.draftKey);
+                    }}
+                    onSubmit={edit.saveEdit}
+                    onUploadFile={edit.handleUpload}
                     debounceMs={100}
                     currentIssueId={issueId}
+                    attachments={edit.editorAttachments}
                   />
                 </div>
                 <div className="flex items-center justify-between mt-2">
-                  <FileUploadButton
-                    size="sm"
-                    onSelect={(file) => editEditorRef.current?.uploadFile(file)}
-                  />
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    {edit.standaloneEditAttachments.length > 0 && (
+                      <AttachmentList
+                        attachments={edit.standaloneEditAttachments}
+                        className="max-w-full"
+                        onRemove={(attachmentId) =>
+                          edit.setRetainedStandaloneIds((ids) => {
+                            const next = new Set(ids ?? []);
+                            next.delete(attachmentId);
+                            return next;
+                          })
+                        }
+                      />
+                    )}
+                    <FileUploadButton
+                      size="sm"
+                      multiple
+                      onSelect={(file) => edit.editorRef.current?.uploadFile(file)}
+                    />
+                  </div>
                   <div className="flex items-center gap-2">
-                    <Button size="sm" variant="ghost" onClick={cancelEdit}>{t(($) => $.comment.cancel_edit)}</Button>
-                    <Button size="sm" variant="outline" onClick={saveEdit}>{t(($) => $.comment.save_action)}</Button>
+                    <Button size="sm" variant="ghost" onClick={edit.cancelEdit}>{t(($) => $.comment.cancel_edit)}</Button>
+                    <Button size="sm" variant="outline" onClick={edit.saveEdit}>{t(($) => $.comment.save_action)}</Button>
                   </div>
                 </div>
-                {parentDragOver && <FileDropOverlay />}
+                {edit.isDragOver && <FileDropOverlay />}
               </div>
             ) : (
               <>
                 <div className="pl-10 text-sm leading-relaxed text-foreground/85">
-                  <ReadonlyContent content={entry.content ?? ""} />
+                  <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10" />
-                {!isTemp && (
-                  <ReactionBar
-                    reactions={reactions}
-                    currentUserId={currentUserId}
-                    onToggle={(emoji) => onToggleReaction(entry.id, emoji)}
-                    getActorName={getActorName}
-                    hideAddButton={!isLongContent}
-                    className="mt-1.5 pl-10"
-                  />
-                )}
+                <ReactionBar
+                  reactions={reactions}
+                  currentUserId={currentUserId}
+                  onToggle={(emoji) => onToggleReaction(entry.id, emoji)}
+                  getActorName={getActorName}
+                  hideAddButton={!isLongContent}
+                  className="mt-1.5 pl-10"
+                />
               </>
             )}
           </div>
@@ -601,6 +745,7 @@ function CommentCardImpl({
               size="sm"
               avatarType="member"
               avatarId={currentUserId ?? ""}
+              draftKey={`reply:${issueId}:${entry.id}`}
               onSubmit={(content, attachmentIds) => onReply(entry.id, content, attachmentIds)}
             />
           </div>

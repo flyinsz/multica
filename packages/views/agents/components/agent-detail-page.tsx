@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
+  Lock,
   MoreHorizontal,
   Trash2,
 } from "lucide-react";
@@ -14,7 +15,7 @@ import {
   type AgentPresenceDetail,
   useWorkspacePresenceMap,
 } from "@multica/core/agents";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -43,6 +44,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { AppLink, useNavigation } from "../../navigation";
+import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -78,6 +80,19 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const presence: AgentPresenceDetail | null =
     agent ? presenceMap.get(agent.id) ?? null : null;
 
+  // Fallback fetch: when the agent is missing from the workspace list, hit
+  // GET /api/agents/{id} directly to disambiguate "doesn't exist" (404) from
+  // "you can't see this private agent" (403). Only fires after the list has
+  // settled, so the common path makes zero extra requests.
+  const { error: detailError } = useQuery({
+    queryKey: ["agent-detail-probe", wsId, agentId],
+    queryFn: () => api.getAgent(agentId),
+    enabled: !agentsLoading && !agent && !!agentId,
+    retry: false,
+  });
+  const isForbidden =
+    detailError instanceof ApiError && detailError.status === 403;
+
   // Permission hook MUST be called unconditionally — its `agent | null`
   // signature handles the not-found / loading case internally so the early
   // returns below don't violate the rules of hooks. Backend gates archive
@@ -87,11 +102,44 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const [confirmArchive, setConfirmArchive] = useState(false);
 
   const handleUpdate = async (id: string, data: Record<string, unknown>) => {
+    // Optimistic update: patch the matching agent in the cached list
+    // BEFORE the network round-trip so the inspector picker chips flip to
+    // the new value immediately on click. Without this, every inspector
+    // picker (thinking / visibility / concurrency / model / runtime) waits
+    // 0.5-2s for the API response + invalidate + refetch before the trigger
+    // updates — readable as obvious lag in the UI.
+    //
+    // On error we rollback only the fields THIS call wrote, leaving any
+    // other concurrently-mutated fields untouched, then invalidate so the
+    // cache converges with the server. A whole-list snapshot rollback
+    // would clobber a concurrent successful mutation if the failing call
+    // resolves last (e.g. flipping visibility then runtime simultaneously
+    // and only the visibility PATCH fails).
+    const queryKey = workspaceKeys.agents(wsId);
+    const prevAgents = qc.getQueryData<Agent[]>(queryKey);
+    const prevAgent = prevAgents?.find((a) => a.id === id);
+    const prevFields: Record<string, unknown> = {};
+    if (prevAgent) {
+      for (const key of Object.keys(data)) {
+        prevFields[key] = (prevAgent as unknown as Record<string, unknown>)[key];
+      }
+    }
+    qc.setQueryData<Agent[]>(queryKey, (old) =>
+      old?.map((a) => (a.id === id ? ({ ...a, ...data } as Agent) : a)),
+    );
     try {
       await api.updateAgent(id, data as UpdateAgentRequest);
-      qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+      qc.invalidateQueries({ queryKey });
       toast.success(t(($) => $.detail.agent_updated_toast));
     } catch (e) {
+      if (prevAgent) {
+        qc.setQueryData<Agent[]>(queryKey, (old) =>
+          old?.map((a) =>
+            a.id === id ? ({ ...a, ...prevFields } as Agent) : a,
+          ),
+        );
+      }
+      qc.invalidateQueries({ queryKey });
       toast.error(e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast));
       throw e;
     }
@@ -120,6 +168,31 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   // --- Loading ---
   if (agentsLoading && !agent) {
     return <DetailLoadingSkeleton />;
+  }
+
+  // --- No permission (private agent the caller is not in allowed_principals for) ---
+  if (!agent && isForbidden) {
+    return (
+      <div className="flex flex-1 min-h-0 flex-col">
+        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+          <Lock className="h-8 w-8 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">{t(($) => $.detail.no_access_title)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t(($) => $.detail.no_access_hint)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => navigation.push(paths.agents())}
+          >
+            {t(($) => $.detail.back_to_agents_full)}
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   // --- Not found / error ---
@@ -296,46 +369,42 @@ function DetailHeader({
   // up here was redundant chrome.
 
   return (
-    <PageHeader className="justify-between gap-3 px-5">
-      <div className="flex min-w-0 items-center gap-2">
-        <AppLink
-          href={backHref}
-          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          {t(($) => $.detail.back_to_agents)}
-        </AppLink>
-        <span className="text-muted-foreground/40">/</span>
-        <h1 className="truncate text-sm font-medium">{agent.name}</h1>
-        {!isArchived && av && presence && (
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs ${av.textClass}`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${av.dotClass}`} />
-            {av.label}
-          </span>
-        )}
-      </div>
-
-      {!isArchived && canArchive && (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="ghost" size="icon-sm" />}
-          >
-            <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-auto">
-            <DropdownMenuItem
-              className="text-destructive"
-              onClick={onArchive}
+    <BreadcrumbHeader
+      segments={[{ href: backHref, label: t(($) => $.page.title) }]}
+      leaf={
+        <>
+          <h1 className="min-w-0 truncate text-sm font-medium text-foreground">{agent.name}</h1>
+          {av && presence && (
+            <span
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs ${av.textClass}`}
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t(($) => $.detail.more_archive)}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </PageHeader>
+              <span className={`h-1.5 w-1.5 rounded-full ${av.dotClass}`} />
+              {av.label}
+            </span>
+          )}
+        </>
+      }
+      actions={
+        !isArchived && canArchive ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="ghost" size="icon-sm" />}
+            >
+              <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-auto">
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={onArchive}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t(($) => $.detail.more_archive)}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null
+      }
+    />
   );
 }
 
