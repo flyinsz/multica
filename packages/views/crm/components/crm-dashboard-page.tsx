@@ -167,8 +167,8 @@ export function CRMDashboardPage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader className="justify-between px-5">
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader className="shrink-0 justify-between px-5">
         <div className="flex items-center gap-2">
           <Users className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.dashboard.title)}</h1>
@@ -179,7 +179,7 @@ export function CRMDashboardPage() {
           <Button size="sm" onClick={() => navigation.push(paths.crmCustomers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
       </PageHeader>
-      <div className="space-y-4 p-5">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 pb-11">
         <div className="grid gap-3 md:grid-cols-5">
           {stats.map(({ label, value, icon: Icon, filter }) => (
             <button key={label} type="button" className="rounded-lg border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-muted/30" onClick={() => filter === "ai" ? navigation.push(paths.crmAISettings()) : filter ? navigateToCustomers(filter) : navigation.push(paths.crmEmails())}>
