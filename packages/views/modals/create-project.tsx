@@ -33,7 +33,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
-import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
+import type { CreateProjectResourceRequest, Project, ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -110,7 +110,14 @@ function RepoUrlText({
   );
 }
 
-export function CreateProjectModal({ onClose }: { onClose: () => void }) {
+type CreateProjectModalProps = {
+  onClose: () => void;
+  navigateOnCreate?: boolean;
+  onCreated?: (project: Project) => void | Promise<void>;
+  initialResources?: CreateProjectResourceRequest[];
+};
+
+export function CreateProjectModal({ onClose, navigateOnCreate = true, onCreated, initialResources }: CreateProjectModalProps) {
   const { t } = useT("modals");
   const router = useNavigation();
   const workspace = useCurrentWorkspace();
@@ -232,20 +239,22 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     // `sourceMode` decides which side's stash gets persisted — the other
     // side is silently dropped, so repos picked then abandoned for local
     // mode don't leak into the project.
-    let resources:
-      | Array<{ resource_type: "github_repo" | "local_directory"; resource_ref: Record<string, unknown> }>
-      | undefined;
+    let resources: CreateProjectResourceRequest[] | undefined = initialResources ? [...initialResources] : undefined;
     if (sourceMode === "repos" && selectedRepos.length > 0) {
-      resources = selectedRepos.map((url) => ({
-        resource_type: "github_repo" as const,
-        resource_ref: { url },
-      }));
+      resources = [
+        ...(resources ?? []),
+        ...selectedRepos.map((url) => ({
+          resource_type: "github_repo" as const,
+          resource_ref: { url },
+        })),
+      ];
     } else if (
       sourceMode === "local" &&
       selectedLocalPath &&
       daemonStatus.daemonId
     ) {
       resources = [
+        ...(resources ?? []),
         {
           resource_type: "local_directory" as const,
           resource_ref: {
@@ -270,9 +279,12 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         resources,
       });
       clearDraft();
+      await onCreated?.(project);
       onClose();
       toast.success(t(($) => $.create_project.toast_created));
-      router.push(wsPaths.projectDetail(project.id));
+      if (navigateOnCreate) {
+        router.push(wsPaths.projectDetail(project.id));
+      }
     } catch (err) {
       toast.error(
         err instanceof Error && err.message
