@@ -55,7 +55,9 @@ export interface ListProjectsResponse {
 //   - github_repo: cloud-side git checkout, ref = { url, default_branch_hint? }
 //   - local_directory: in-place agent execution on a specific daemon,
 //     ref = { local_path, daemon_id, label? }
-export type ProjectResourceType = "github_repo" | "local_directory";
+//   - crm_account: CRM account linked to a project,
+//     ref = { account_id, name? }
+export type ProjectResourceType = "github_repo" | "local_directory" | "crm_account";
 
 export interface GithubRepoResourceRef {
   url: string;
@@ -68,9 +70,15 @@ export interface LocalDirectoryResourceRef {
   label?: string;
 }
 
+export interface CRMAccountResourceRef {
+  account_id: string;
+  name?: string;
+}
+
 export type ProjectResourceRef =
   | GithubRepoResourceRef
   | LocalDirectoryResourceRef
+  | CRMAccountResourceRef
   | Record<string, unknown>;
 
 export interface ProjectResource {

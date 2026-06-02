@@ -76,6 +76,8 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 		return validateGithubRepoRef(ref)
 	case "local_directory":
 		return validateLocalDirectoryRef(ref)
+	case "crm_account":
+		return validateCRMAccountRef(ref)
 	default:
 		return nil, fmt.Errorf("unknown resource_type %q", resourceType)
 	}
@@ -136,6 +138,28 @@ func validateLocalDirectoryRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("local_directory: daemon_id is required")
 	}
 	payload.Label = strings.TrimSpace(payload.Label)
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type crmAccountRef struct {
+	AccountID string `json:"account_id"`
+	Name      string `json:"name,omitempty"`
+}
+
+func validateCRMAccountRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload crmAccountRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid crm_account payload: %w", err)
+	}
+	payload.AccountID = strings.TrimSpace(payload.AccountID)
+	if payload.AccountID == "" {
+		return nil, errors.New("crm_account: account_id is required")
+	}
+	payload.Name = strings.TrimSpace(payload.Name)
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err

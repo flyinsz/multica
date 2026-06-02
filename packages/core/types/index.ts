@@ -79,6 +79,7 @@ export type {
   ProjectResourceRef,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
+  CRMAccountResourceRef,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
