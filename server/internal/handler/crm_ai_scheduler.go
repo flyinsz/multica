@@ -470,7 +470,10 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
 			}
 			if h.TaskService != nil {
-				if issue, err := h.Queries.GetIssue(ctx, parentIssueID); err == nil && h.shouldEnqueueOnComment(ctx, issue) {
+				actorType, actorID, actorErr := h.crmIssueCommentAuthor(ctx, workspaceID)
+				if actorErr != nil {
+					slog.Warn("CRM pending reply parent enqueue actor lookup failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "error", actorErr)
+				} else if issue, err := h.Queries.GetIssue(ctx, parentIssueID); err == nil && h.shouldEnqueueOnComment(ctx, issue, actorType, uuidToString(actorID)) {
 					if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
 						slog.Warn("CRM pending reply parent enqueue failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "error", err)
 					}
