@@ -640,7 +640,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
     mutationFn: () => api.refreshCRMAccountProfile(accountId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId), refetchType: "active" });
-      await queryClient.invalidateQueries({ queryKey: crmKeys.detail(wsId, accountId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.accountDetail(wsId, accountId), refetchType: "active" });
       await queryClient.invalidateQueries({ queryKey: crmKeys.notes(wsId, accountId), refetchType: "active" });
     },
   });
