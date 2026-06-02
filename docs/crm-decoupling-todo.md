@@ -26,7 +26,7 @@
 - [x] 解耦 CRM schemas/types
 - [x] 解耦 CRM paths
 - [x] 解耦 sidebar CRM 导航
-- [ ] 解耦 CRM scheduler 启动逻辑
+- [x] 解耦 CRM scheduler 启动逻辑
 - [ ] 审计 sqlc/generated 与 DB 查询边界
 - [ ] 全量测试、GHCR 构建、部署验证
 
@@ -300,15 +300,15 @@ packages/views/crm/sidebar-nav.tsx
 
 无。只渲染少量 nav item。
 
-## 7. 待做：CRM scheduler 启动逻辑解耦
+## 7. 已完成：CRM scheduler 启动逻辑解耦
 
 ### 当前强耦合
 
-核心 handler/init 里启动 CRM AI scheduler。
+核心 `main.go` 里曾直接启动 CRM IMAP/AI scheduler。
 
 ### 目标结构
 
-- [ ] 新建 CRM 启动模块：
+- [x] 新建 CRM 启动模块：
 
 ```text
 server/internal/handler/crm_bootstrap.go
@@ -326,14 +326,14 @@ server/internal/crm/bootstrap.go
 h.StartCRMServices(ctx)
 ```
 
-或在 CRM route registration 内完成 scheduler 注册。
+已采用 CRM 启动模块：`cmd/server/crm_scheduler.go`；`main.go` 只保留 `runCRMSchedulers(sweepCtx, pool)` 最小桥接。
 
-- [ ] `crm_ai_scheduler.go` 保持 CRM 专属。
+- [x] `crm_ai_scheduler.go` 保持 CRM 专属。
 
 ### 验证
 
-- [ ] 后端启动无 panic
-- [ ] mailbox sync / AI scheduler 行为不变
+- [ ] 后端启动无 panic（本机不跑 `go test`，交给 GH Actions / 部署验证）。
+- [x] mailbox sync / AI scheduler 行为不变：构造参数、env、interval、ctx 不变。
 - [ ] sync errors watchdog 数据不变
 
 ### 性能影响
@@ -456,7 +456,7 @@ docker compose down -v
 
 1. [ ] CRM paths 解耦
 2. [ ] sidebar 导航解耦
-3. [ ] scheduler 启动解耦
+3. [x] scheduler 启动解耦
 4. [x] CRM API client 解耦
 5. [x] CRM schemas/types 解耦
 6. [ ] sqlc/generated 审计
