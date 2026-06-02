@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import countriesData from "@countrystatecity/countries/data/countries.json";
-import countryDirsData from "./generated/country-dirs.json";
-import stateDirsData from "./generated/state-dirs.json";
+import { getCitiesOfState, getStatesOfCountry } from "@countrystatecity/countries";
 
 export type LocaleCode = "en" | "zh-Hans";
 
@@ -50,19 +49,10 @@ type CityData = {
   translations?: TranslationMap;
 };
 
-type CountryDirEntry = {
-  code: string;
-  dir: string;
-};
-
-type StateDirMap = Record<string, Record<string, string>>;
-
 const countryNameFormatterCache = new Map<LocaleCode, Intl.DisplayNames>();
 const countryMetaCache = new Map<string, Promise<CountryData | null>>();
 const statesCache = new Map<string, Promise<StateData[]>>();
 const citiesCache = new Map<string, Promise<CityData[]>>();
-const countryDirMap = new Map((countryDirsData as CountryDirEntry[]).map((entry) => [entry.code, entry.dir]));
-const stateDirMap = stateDirsData as StateDirMap;
 const englishCollator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const pinyinCollator = new Intl.Collator("zh-Hans-CN-u-co-pinyin", { sensitivity: "base", numeric: true });
 
@@ -122,11 +112,6 @@ const localizedSubdivisionName = (name: string, native?: string | null, translat
   return { en: name, zh };
 };
 
-async function loadPackageJson<T>(path: string): Promise<T> {
-  const module = await import(/* webpackInclude: /\.json$/ */ /* webpackMode: "lazy" */ `@countrystatecity/countries/data/${path}.json`);
-  return module.default as T;
-}
-
 const countryData = countriesData as CountryData[];
 
 export const COUNTRY_OPTIONS: CountryOption[] = localizedSort(countryData.map((country) => ({
@@ -172,8 +157,7 @@ export async function loadCountryOption(countryCode: string): Promise<CountryOpt
 
   let metaPromise = countryMetaCache.get(countryCode);
   if (!metaPromise) {
-    const countryDir = countryDirMap.get(countryCode);
-    metaPromise = countryDir ? loadPackageJson<CountryData>(`${countryDir}/meta`) : Promise.resolve(null);
+    metaPromise = Promise.resolve(countryData.find((entry) => entry.iso2 === countryCode) ?? null);
     countryMetaCache.set(countryCode, metaPromise);
   }
 
@@ -185,8 +169,7 @@ export async function loadRegionOptions(countryCode: string, locale: LocaleCode 
   if (!countryCode) return [];
   let promise = statesCache.get(countryCode);
   if (!promise) {
-    const countryDir = countryDirMap.get(countryCode);
-    promise = countryDir ? loadPackageJson<StateData[]>(`${countryDir}/states`) : Promise.resolve([]);
+    promise = getStatesOfCountry(countryCode) as Promise<StateData[]>;
     statesCache.set(countryCode, promise);
   }
 
@@ -203,9 +186,7 @@ export async function loadCityOptions(countryCode: string, regionCode: string, l
   const cacheKey = `${countryCode}:${regionCode}`;
   let promise = citiesCache.get(cacheKey);
   if (!promise) {
-    const countryDir = countryDirMap.get(countryCode);
-    const stateDir = stateDirMap[countryCode]?.[regionCode];
-    promise = countryDir && stateDir ? loadPackageJson<CityData[]>(`${countryDir}/${stateDir}/cities`) : Promise.resolve([]);
+    promise = getCitiesOfState(countryCode, regionCode) as Promise<CityData[]>;
     citiesCache.set(cacheKey, promise);
   }
 
