@@ -470,7 +470,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const queryClient = useQueryClient();
   const navigation = useNavigation();
   const paths = useCRMWorkspacePaths();
-  const { t: rawT, i18n } = useT("crm");
+  const { t: rawT, i18n } = useT("crm" as any);
   const t = rawT as Translation;
   const locale = normalizeLocale(i18n.language);
 

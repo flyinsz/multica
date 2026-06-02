@@ -19,7 +19,7 @@ function isNavActive(pathname: string, href: string): boolean {
 
 export function CRMSidebarNavGroup({ pathname }: { pathname: string }) {
   const paths = useCRMWorkspacePaths();
-  const { t } = useT("crm");
+  const { t } = useT("crm" as any);
   const items = [
     { key: "dashboard", href: paths.dashboard(), label: t(($) => $.dashboard.title), icon: Users },
     { key: "customers", href: paths.customers(), label: t(($) => $.customers.title), icon: Users },

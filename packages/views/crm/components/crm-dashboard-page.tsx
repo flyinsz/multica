@@ -92,7 +92,7 @@ export function CRMDashboardPage() {
   const wsId = useWorkspaceId();
   const paths = useCRMWorkspacePaths();
   const navigation = useNavigation();
-  const { t } = useT("crm");
+  const { t } = useT("crm" as any);
   const { data: todayFollowUps = [], isLoading: todayLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "today", sort: "next_follow_up" }));
   const { data: weekFollowUps = [], isLoading: weekLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "next_7_days", sort: "next_follow_up" }));
   const { data: overdueFollowUps = [], isLoading: overdueLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "overdue", sort: "next_follow_up" }));

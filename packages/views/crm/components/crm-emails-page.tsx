@@ -332,7 +332,7 @@ export function CRMEmailsPage() {
   const queryClient = useQueryClient();
   const navigation = useNavigation();
   const paths = useCRMWorkspacePaths();
-  const { t, i18n } = useT("crm");
+  const { t, i18n } = useT("crm" as any);
   const initialDraftId = navigation.searchParams.get("draft");
   const initialThreadId = navigation.searchParams.get("thread");
   const initialMessageId = navigation.searchParams.get("message");
