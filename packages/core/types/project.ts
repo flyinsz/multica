@@ -17,7 +17,6 @@ export interface Project {
   issue_count: number;
   done_count: number;
   resource_count: number;
-  resources?: ProjectResource[];
 }
 
 export interface CreateProjectRequest {
@@ -53,7 +52,7 @@ export interface ListProjectsResponse {
 // { url, default_branch_hint? }). New types add a case in
 // validateAndNormalizeResourceRef on the server and a renderer in the UI;
 // no schema or type changes required.
-export type ProjectResourceType = "github_repo" | "crm_account";
+export type ProjectResourceType = "github_repo";
 
 export interface GithubRepoResourceRef {
   url: string;

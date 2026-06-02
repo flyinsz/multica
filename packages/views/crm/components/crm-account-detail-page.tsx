@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useProjectDraftStore } from "@multica/core/projects";
@@ -17,6 +17,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
 import { useModalStore } from "@multica/core/modals";
 import { projectKeys, projectListOptions } from "@multica/core/projects";
+import { projectResourceKeys, projectResourcesOptions } from "@multica/core/projects/resource-queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useNavigation } from "../../navigation";
 import type {
@@ -33,6 +34,7 @@ import type {
   CreateCRMContactRequest,
   Issue,
   Project,
+  ProjectResource,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -446,16 +448,15 @@ function contactPayload(form: ContactFormState): CreateCRMContactRequest {
   };
 }
 
-function crmAccountResource(project: Project, accountId: string) {
-  const resources = project.resources ?? [];
-  return resources.find((resource) => {
+function crmAccountResource(resources: ProjectResource[] | undefined, accountId: string) {
+  return (resources ?? []).find((resource) => {
     const ref = resource.resource_ref as { account_id?: string };
     return resource.resource_type === "crm_account" && ref.account_id === accountId;
   });
 }
 
-function projectLinkedToAccount(project: Project, accountId: string) {
-  return Boolean(crmAccountResource(project, accountId));
+function projectLinkedToAccount(projectId: string, resourcesByProjectId: Map<string, ProjectResource[]>, accountId: string) {
+  return Boolean(crmAccountResource(resourcesByProjectId.get(projectId), accountId));
 }
 
 function formatIssueOption(issue: Issue) {
@@ -496,6 +497,16 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const accountEmailItems = emailMessages.length ? emailMessages : emailThreads;
   const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const projectResourceQueries = useQueries({
+    queries: projects.map((project) => projectResourcesOptions(wsId, project.id)),
+  });
+  const projectResourcesById = useMemo(() => {
+    const map = new Map<string, ProjectResource[]>();
+    projects.forEach((project, index) => {
+      map.set(project.id, projectResourceQueries[index]?.data ?? []);
+    });
+    return map;
+  }, [projects, projectResourceQueries]);
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-account-detail"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-account-detail"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
   const ownerLabel = useMemo(() => {
@@ -536,8 +547,8 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   });
 
   const linkedProjectIds = useMemo(
-    () => projects.filter((project) => projectLinkedToAccount(project, accountId)).map((project) => project.id),
-    [accountId, projects],
+    () => projects.filter((project) => projectLinkedToAccount(project.id, projectResourcesById, accountId)).map((project) => project.id),
+    [accountId, projects, projectResourcesById],
   );
   const linkedProjects = useMemo(
     () => projects.filter((project) => selectedProjectIds.includes(project.id)),
@@ -667,13 +678,14 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
           label: account?.name ?? undefined,
         });
       }
-      const resource = crmAccountResource(project, accountId);
+      const resource = crmAccountResource(projectResourcesById.get(project.id), accountId);
       if (!resource) return undefined;
       await api.deleteProjectResource(project.id, resource.id);
       return undefined;
     },
-    onSuccess: async () => {
+    onSuccess: async (_result, variables) => {
       await queryClient.invalidateQueries({ queryKey: projectKeys.list(wsId) });
+      await queryClient.invalidateQueries({ queryKey: projectResourceKeys.list(wsId, variables.project.id) });
       await queryClient.invalidateQueries({ queryKey: crmKeys.accountDetail(wsId, accountId) });
     },
     onError: async () => {
@@ -918,7 +930,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                       >
                         <Checkbox checked={checked} className="pointer-events-none" aria-label={project.title} />
                         <span className="min-w-0 flex-1 truncate">{project.title}</span>
-                        {projectLinkedToAccount(project, accountId) && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t(($) => $.projects.linked)}</span>}
+                        {projectLinkedToAccount(project.id, projectResourcesById, accountId) && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t(($) => $.projects.linked)}</span>}
                       </button>
                     );
                   })}
