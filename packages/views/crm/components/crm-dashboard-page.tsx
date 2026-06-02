@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Flame, Mail, Plus, TrendingUp, Users } from "lucide-react";
+import { Bot, Flame, Mail, PenLine, Plus, Sparkles, TrendingUp, Users } from "lucide-react";
 import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/crm/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -17,8 +17,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
-import { countryByCode, localizedName, localizedSort, normalizeLocale } from "../geo";
-import { industryLabel } from "../options";
+import { normalizeLocale } from "../geo";
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString() : "—";
@@ -105,27 +104,31 @@ export function CRMDashboardPage() {
   const { data: weekFollowUps = [], isLoading: weekLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "next_7_days", sort: "next_follow_up" }));
   const { data: overdueFollowUps = [], isLoading: overdueLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "overdue", sort: "next_follow_up" }));
   const { data: highPriorityAccounts = [], isLoading: highPriorityLoading } = useQuery(crmAccountListOptions(wsId, { priority: "high", sort: "priority_rating" }));
-  const { data: hotAccounts = [], isLoading: hotLoading } = useQuery(crmAccountListOptions(wsId, { rating: "hot", sort: "priority_rating" }));
-  const { data: recentAccounts = [], isLoading: recentLoading } = useQuery(crmAccountListOptions(wsId, { sort: "updated" }));
+  const { data: hotAccounts = [] } = useQuery(crmAccountListOptions(wsId, { rating: "hot", sort: "priority_rating" }));
   const { data: allAccounts = [], isLoading: reportsLoading } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: emailThreadData, isLoading: emailLoading } = useQuery(crmEmailThreadListOptions(wsId));
+  const { data: aiSettingsData, isLoading: aiSettingsLoading } = useQuery({ queryKey: ["crm", "ai-settings"], queryFn: () => api.listCRMAISettings() });
+  const { data: aiHistoryData, isLoading: aiHistoryLoading } = useQuery({ queryKey: ["crm", "ai-history", "dashboard"], queryFn: () => api.listCRMAIHistory({ limit: 8, days: 14 }) });
   const emailThreads = emailThreadData?.threads ?? [];
   const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
   const topTodayFollowUps = todayFollowUps.slice(0, 6);
   const topWeekFollowUps = weekFollowUps.slice(0, 6);
   const topOverdueFollowUps = overdueFollowUps.slice(0, 6);
   const topHighPriorityAccounts = highPriorityAccounts.slice(0, 6);
-  const topHotAccounts = hotAccounts.slice(0, 6);
-  const topRecentAccounts = recentAccounts.slice(0, 6);
   const emailMessages = emailThreadData?.messages ?? [];
   const topEmailMessages = emailMessages.slice(0, 6);
   const topEmailThreads = topEmailMessages.length ? topEmailMessages : emailThreads.slice(0, 6);
+  const pendingReplyThreads = emailThreads.filter((thread: any) => thread.direction !== "outbound" && thread.is_read !== true && !thread.is_trashed);
+  const aiSettings = (aiSettingsData?.settings ?? []) as Array<any>;
+  const aiHistory = (aiHistoryData?.items ?? []) as Array<any>;
+  const enabledAISettings = aiSettings.filter((setting) => setting.enabled !== false);
   const stats = useMemo(() => [
     { label: t(($) => $.dashboard.total_customers), value: allAccounts.length, icon: Users, filter: {} },
     { label: t(($) => $.dashboard.overdue_followups), value: overdueFollowUps.length, icon: Flame, filter: { follow_up: "overdue" } },
     { label: t(($) => $.dashboard.hot_customers), value: hotAccounts.length, icon: Flame, filter: { rating: "hot" } },
-    { label: t(($) => $.dashboard.email_threads), value: unreadEmailCount, icon: Mail, filter: null },
-  ], [allAccounts.length, unreadEmailCount, overdueFollowUps.length, hotAccounts.length, t]);
+    { label: t(($) => $.dashboard.email_threads), value: unreadEmailCount, icon: Mail, filter: null as ReportFilter | null | "ai" },
+    { label: t(($) => $.dashboard.ai_automations), value: enabledAISettings.length, icon: Bot, filter: "ai" as const },
+  ], [allAccounts.length, unreadEmailCount, overdueFollowUps.length, hotAccounts.length, enabledAISettings.length, t]);
 
   const navigateToCustomers = (filter: ReportFilter = {}) => {
     const params = new URLSearchParams();
@@ -145,27 +148,15 @@ export function CRMDashboardPage() {
     const ratings = countBy(allAccounts, (account) => account.rating);
     const priorities = countBy(allAccounts, (account) => account.priority);
     const followUpsByBucket = countBy(allAccounts, (account) => followUpBucket(account));
-    const countries = countBy(allAccounts, (account) => account.country_code || account.country_name || account.country);
-    const industries = countBy(allAccounts, (account) => account.industry);
-
     return {
       funnel: ratingOrder.map((key) => ({ key, label: t(($) => $.ratings[key]), value: ratings.get(key) ?? 0, filter: { rating: key } })),
       status: statusOrder.map((key) => ({ key, label: t(($) => $.statuses[key]), value: statuses.get(key) ?? 0, filter: { status: key } })),
       priority: priorityOrder.map((key) => ({ key, label: t(($) => $.priorities[key]), value: priorities.get(key) ?? 0, filter: { priority: key } })),
       followUps: followUpOrder.map((key) => ({ key, label: t(($) => $.filters[`follow_up_${key}`]), value: followUpsByBucket.get(key) ?? 0, filter: { follow_up: key } })),
-      countries: [...countries.entries()]
-        .map(([key, value]) => ({ key, label: countryByCode(key) ? localizedName(countryByCode(key)!.name, locale) : key, value, filter: { country: key } }))
-        .sort((a, b) => a.label.localeCompare(b.label, locale === "zh-Hans" ? "zh-Hans-CN-u-co-pinyin" : "en"))
-        .slice(0, 8),
-      industries: localizedSort(
-        [...industries.entries()]
-          .map(([key, value]) => ({ key, name: { en: industryLabel(key, "en"), zh: industryLabel(key, "zh-Hans") }, value, filter: { industry: key } })),
-        locale,
-      ).map((item) => ({ key: item.key, label: locale === "zh-Hans" ? item.name.zh : item.name.en, value: item.value, filter: item.filter })).slice(0, 8),
     };
-  }, [allAccounts, locale, t]);
+  }, [allAccounts, t]);
 
-  const accountList = (items: typeof recentAccounts, empty: string) => {
+  const accountList = (items: CRMAccount[], empty: string) => {
     if (items.length === 0) return <p className="text-sm text-muted-foreground">{empty}</p>;
     return <div className="space-y-2">{items.map((account) => (
       <button key={account.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(paths.crmCustomerDetail(account.id))}>
@@ -183,15 +174,15 @@ export function CRMDashboardPage() {
           <h1 className="text-sm font-medium">{t(($) => $.dashboard.title)}</h1>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setAIComposeOpen(true)}><Mail className="mr-1 size-4" />AI 写邮件</Button>
+          <Button size="sm" variant="outline" onClick={() => setAIComposeOpen(true)}><PenLine className="mr-1 size-4" />{t(($) => $.dashboard.ai_write_email)}</Button>
           <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmEmails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
           <Button size="sm" onClick={() => navigation.push(paths.crmCustomers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
       </PageHeader>
       <div className="space-y-4 p-5">
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-5">
           {stats.map(({ label, value, icon: Icon, filter }) => (
-            <button key={label} type="button" className="rounded-lg border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-muted/30" onClick={() => filter ? navigateToCustomers(filter) : navigation.push(paths.crmEmails())}>
+            <button key={label} type="button" className="rounded-lg border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-muted/30" onClick={() => filter === "ai" ? navigation.push(paths.crmAISettings()) : filter ? navigateToCustomers(filter) : navigation.push(paths.crmEmails())}>
               <div className="flex items-center justify-between text-xs text-muted-foreground"><span>{label}</span><Icon className="size-4" /></div>
               <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
             </button>
@@ -222,12 +213,55 @@ export function CRMDashboardPage() {
         </section>
 
         <div className="grid gap-4 xl:grid-cols-3">
-          <ReportPanel title={t(($) => $.dashboard.status_distribution)} icon={<BarChart3 className="size-4" />} buckets={reportGroups.status} loading={reportsLoading} onSelect={navigateToCustomers} />
+          <ReportPanel title={t(($) => $.dashboard.status_distribution)} icon={<TrendingUp className="size-4" />} buckets={reportGroups.status} loading={reportsLoading} onSelect={navigateToCustomers} />
           <ReportPanel title={t(($) => $.dashboard.priority_distribution)} buckets={reportGroups.priority} loading={reportsLoading} onSelect={navigateToCustomers} />
           <ReportPanel title={t(($) => $.dashboard.overdue_trend)} buckets={reportGroups.followUps} loading={reportsLoading} onSelect={navigateToCustomers} />
-          <ReportPanel title={t(($) => $.dashboard.country_distribution)} buckets={reportGroups.countries} loading={reportsLoading} onSelect={navigateToCustomers} empty={t(($) => $.dashboard.no_report_data)} />
-          <ReportPanel title={t(($) => $.dashboard.industry_distribution)} buckets={reportGroups.industries} loading={reportsLoading} onSelect={navigateToCustomers} empty={t(($) => $.dashboard.no_report_data)} />
         </div>
+
+        <section className="rounded-lg border bg-card p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-medium"><Sparkles className="size-4 text-primary" />{t(($) => $.dashboard.ai_board_title)}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">{t(($) => $.dashboard.ai_board_help)}</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmAISettings())}>{t(($) => $.dashboard.ai_settings)}</Button>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => navigation.push(paths.crmEmails())}>
+              <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_pending_replies)}</div>
+              <div className="mt-2 text-2xl font-semibold tabular-nums">{pendingReplyThreads.length}</div>
+            </button>
+            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => navigation.push(paths.crmAISettings())}>
+              <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_enabled_automations)}</div>
+              <div className="mt-2 text-2xl font-semibold tabular-nums">{aiSettingsLoading ? "—" : enabledAISettings.length}</div>
+            </button>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_recent_runs)}</div>
+              <div className="mt-2 text-2xl font-semibold tabular-nums">{aiHistoryLoading ? "—" : aiHistory.length}</div>
+            </div>
+            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => setAIComposeOpen(true)}>
+              <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_email_writer)}</div>
+              <div className="mt-2 flex items-center gap-2 text-sm font-medium"><PenLine className="size-4" />{t(($) => $.dashboard.ai_start_writing)}</div>
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-lg border p-3">
+              <h3 className="text-xs font-medium text-muted-foreground">{t(($) => $.dashboard.ai_work_queue)}</h3>
+              <div className="mt-3 space-y-2">
+                {pendingReplyThreads.slice(0, 4).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.dashboard.ai_no_pending)}</p> : pendingReplyThreads.slice(0, 4).map((thread: any) => {
+                  const emailPath = `${paths.crmEmails()}?thread=${encodeURIComponent(thread.thread_id ?? thread.id)}&folder=${encodeURIComponent(thread.folder ?? "inbox")}`;
+                  return <button key={thread.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(emailPath)}><span className="truncate font-medium">{thread.subject || t(($) => $.notes.untitled)}</span><Mail className="ml-2 size-4 text-muted-foreground" /></button>;
+                })}
+              </div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <h3 className="text-xs font-medium text-muted-foreground">{t(($) => $.dashboard.ai_recent_activity)}</h3>
+              <div className="mt-3 space-y-2">
+                {aiHistoryLoading ? <Skeleton className="h-20" /> : aiHistory.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.dashboard.ai_no_activity)}</p> : aiHistory.slice(0, 4).map((item: any, index) => <div key={item.id ?? index} className="rounded-md border p-2 text-sm"><div className="truncate font-medium">{item.automation_key ?? item.kind ?? t(($) => $.dashboard.ai_activity)}</div><div className="mt-1 text-xs text-muted-foreground">{formatDate(item.created_at ?? item.updated_at)}</div></div>)}
+              </div>
+            </div>
+          </div>
+        </section>
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="rounded-lg border bg-card p-4">
             <h2 className="text-sm font-medium">{t(($) => $.dashboard.today_title)}</h2>
@@ -244,14 +278,6 @@ export function CRMDashboardPage() {
           <section className="rounded-lg border bg-card p-4">
             <h2 className="text-sm font-medium">{t(($) => $.dashboard.high_priority_title)}</h2>
             <div className="mt-3">{highPriorityLoading ? <Skeleton className="h-24" /> : accountList(topHighPriorityAccounts, t(($) => $.dashboard.no_high_priority))}</div>
-          </section>
-          <section className="rounded-lg border bg-card p-4">
-            <h2 className="text-sm font-medium">{t(($) => $.dashboard.hot_title)}</h2>
-            <div className="mt-3">{hotLoading ? <Skeleton className="h-24" /> : accountList(topHotAccounts, t(($) => $.dashboard.no_hot))}</div>
-          </section>
-          <section className="rounded-lg border bg-card p-4">
-            <h2 className="text-sm font-medium">{t(($) => $.dashboard.recent_customers_title)}</h2>
-            <div className="mt-3">{recentLoading ? <Skeleton className="h-24" /> : accountList(topRecentAccounts, t(($) => $.dashboard.no_customers))}</div>
           </section>
           <section className="rounded-lg border bg-card p-4">
             <h2 className="text-sm font-medium">{t(($) => $.dashboard.recent_emails_title)}</h2>
@@ -276,18 +302,18 @@ export function CRMDashboardPage() {
       <Dialog open={aiComposeOpen} onOpenChange={setAIComposeOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>AI 写邮件</DialogTitle>
-            <DialogDescription>输入客户、主题、语气、要点，生成可复制邮件正文。</DialogDescription>
+            <DialogTitle>{t(($) => $.dashboard.ai_write_email)}</DialogTitle>
+            <DialogDescription>{t(($) => $.dashboard.ai_write_email_help)}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Textarea className="min-h-28" value={aiComposePrompt} onChange={(event) => setAIComposePrompt(event.target.value)} placeholder="例如：给越南客户写英文跟进邮件，确认报价和交期，语气专业简洁。" />
+            <Textarea className="min-h-28" value={aiComposePrompt} onChange={(event) => setAIComposePrompt(event.target.value)} placeholder={t(($) => $.dashboard.ai_email_prompt_placeholder)} />
             {aiComposeResult ? <Textarea className="min-h-48" value={aiComposeResult} onChange={(event) => setAIComposeResult(event.target.value)} /> : null}
-            {generateAIEmail.isError ? <p className="text-xs text-destructive">AI 生成失败，请检查 CRM AI 配置。</p> : null}
+            {generateAIEmail.isError ? <p className="text-xs text-destructive">{t(($) => $.dashboard.ai_generate_error)}</p> : null}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAIComposeOpen(false)}>关闭</Button>
-            <Button disabled={!aiComposePrompt.trim() || generateAIEmail.isPending} onClick={() => generateAIEmail.mutate()}>{generateAIEmail.isPending ? "生成中…" : "生成"}</Button>
-            <Button variant="outline" disabled={!aiComposeResult} onClick={() => navigator.clipboard?.writeText(aiComposeResult)}>复制正文</Button>
+            <Button variant="outline" onClick={() => setAIComposeOpen(false)}>{t(($) => $.actions.cancel)}</Button>
+            <Button disabled={!aiComposePrompt.trim() || generateAIEmail.isPending} onClick={() => generateAIEmail.mutate()}>{generateAIEmail.isPending ? t(($) => $.dashboard.ai_generating) : t(($) => $.dashboard.ai_generate)}</Button>
+            <Button variant="outline" disabled={!aiComposeResult} onClick={() => navigator.clipboard?.writeText(aiComposeResult)}>{t(($) => $.dashboard.ai_copy_body)}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
