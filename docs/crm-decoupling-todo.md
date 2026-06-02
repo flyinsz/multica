@@ -22,7 +22,7 @@
 - [x] 分类强耦合点：可回退 / 必须桥接 / CRM 专属
 - [x] 解耦 server 核心 router 中的 CRM 路由
 - [x] 回退 Project API 内嵌 resources 的核心改动
-- [ ] 解耦前端 CRM API client
+- [x] 解耦前端 CRM API client
 - [ ] 解耦 CRM schemas/types
 - [x] 解耦 CRM paths
 - [x] 解耦 sidebar CRM 导航
@@ -94,7 +94,7 @@ api.listProjectResources(project.id)
 - React Query 会缓存资源查询。
 - 若项目很多，可后续加 CRM 专属批量 endpoint：`/api/crm/project-resources?account_id=...`，不要改官方 Project API。
 
-## 3. 待做：前端 CRM API client 解耦
+## 3. 已完成：前端 CRM API client 解耦
 
 ### 当前强耦合
 
@@ -361,8 +361,8 @@ h.StartCRMServices(ctx)
 
 ### 本地/CI 验证
 
-- [ ] `git diff --check`
-- [ ] `go test ./...` in `server`
+- [x] `git diff --check`
+- [ ] `go test ./...` in `server`（本机跳过，避免卡死；交给 GitHub Actions）
 - [ ] 前端 build：
 
 ```bash
@@ -455,7 +455,7 @@ docker compose down -v
 1. [ ] CRM paths 解耦
 2. [ ] sidebar 导航解耦
 3. [ ] scheduler 启动解耦
-4. [ ] CRM API client 解耦
+4. [x] CRM API client 解耦
 5. [ ] CRM schemas/types 解耦
 6. [ ] sqlc/generated 审计
 7. [ ] 前后端测试

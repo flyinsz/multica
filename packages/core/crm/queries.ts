@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { api } from "../api";
+import { crmApi } from "./api";
 import type { ListCRMAccountsParams } from "../types";
 
 export const crmKeys = {
@@ -29,7 +29,7 @@ export const crmKeys = {
 export function crmAccountListOptions(wsId: string, params: ListCRMAccountsParams = {}) {
   return queryOptions({
     queryKey: crmKeys.accountList(wsId, params),
-    queryFn: () => api.listCRMAccounts(params),
+    queryFn: () => crmApi.listCRMAccounts(params),
     select: (data) => data.accounts,
   });
 }
@@ -37,14 +37,14 @@ export function crmAccountListOptions(wsId: string, params: ListCRMAccountsParam
 export function crmAccountDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: crmKeys.accountDetail(wsId, id),
-    queryFn: () => api.getCRMAccount(id),
+    queryFn: () => crmApi.getCRMAccount(id),
   });
 }
 
 export function crmContactListOptions(wsId: string, accountId: string) {
   return queryOptions({
     queryKey: crmKeys.contacts(wsId, accountId),
-    queryFn: () => api.listCRMContacts(accountId),
+    queryFn: () => crmApi.listCRMContacts(accountId),
     select: (data) => data.contacts,
   });
 }
@@ -52,14 +52,14 @@ export function crmContactListOptions(wsId: string, accountId: string) {
 export function crmAccountProfileOptions(wsId: string, accountId: string) {
   return queryOptions({
     queryKey: crmKeys.profile(wsId, accountId),
-    queryFn: () => api.getCRMAccountProfile(accountId),
+    queryFn: () => crmApi.getCRMAccountProfile(accountId),
   });
 }
 
 export function crmCommunicationNoteListOptions(wsId: string, accountId: string) {
   return queryOptions({
     queryKey: crmKeys.notes(wsId, accountId),
-    queryFn: () => api.listCRMCommunicationNotes(accountId),
+    queryFn: () => crmApi.listCRMCommunicationNotes(accountId),
     select: (data) => data.notes,
   });
 }
@@ -67,14 +67,14 @@ export function crmCommunicationNoteListOptions(wsId: string, accountId: string)
 export function crmEmailThreadListOptions(wsId: string, accountId = "", folder = "", filter = "", mailbox = "") {
   return queryOptions({
     queryKey: crmKeys.emailThreads(wsId, accountId, folder, filter, mailbox),
-    queryFn: () => api.listCRMEmailThreads({ account_id: accountId || undefined, folder: folder || undefined, filter: filter || undefined, mailbox: mailbox || undefined }),
+    queryFn: () => crmApi.listCRMEmailThreads({ account_id: accountId || undefined, folder: folder || undefined, filter: filter || undefined, mailbox: mailbox || undefined }),
   });
 }
 
 export function crmEmailThreadDetailOptions(wsId: string, threadId: string) {
   return queryOptions({
     queryKey: crmKeys.emailThread(wsId, threadId),
-    queryFn: () => api.getCRMEmailThread(threadId),
+    queryFn: () => crmApi.getCRMEmailThread(threadId),
     enabled: Boolean(threadId),
   });
 }
@@ -82,7 +82,7 @@ export function crmEmailThreadDetailOptions(wsId: string, threadId: string) {
 export function crmEmailMessageListOptions(wsId: string, threadId: string) {
   return queryOptions({
     queryKey: crmKeys.emailMessages(wsId, threadId),
-    queryFn: () => api.listCRMEmailMessages(threadId),
+    queryFn: () => crmApi.listCRMEmailMessages(threadId),
     select: (data) => data.messages,
   });
 }
@@ -90,7 +90,7 @@ export function crmEmailMessageListOptions(wsId: string, threadId: string) {
 export function crmEmailEngineStatusOptions(wsId: string, mailboxId = "") {
   return queryOptions({
     queryKey: crmKeys.emailEngineStatus(wsId, mailboxId),
-    queryFn: () => api.getCRMEmailEngineStatus(mailboxId || undefined),
+    queryFn: () => crmApi.getCRMEmailEngineStatus(mailboxId || undefined),
     enabled: Boolean(wsId),
   });
 }

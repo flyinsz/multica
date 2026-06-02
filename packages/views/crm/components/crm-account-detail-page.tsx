@@ -65,6 +65,7 @@ import { CreateProjectModal } from "../../modals/create-project";
 import type crmResources from "../../locales/en/crm.json";
 import { COUNTRY_OPTIONS, countryByCode, findCityCode, findRegionCode, loadCityOptions, loadRegionOptions, localizedName, localizedSort, normalizeLocale, useLocationSelection } from "../geo";
 import { appendTag, CRM_INDUSTRY_OPTIONS, industryLabel, optionLabel, splitTags, subIndustryOptions } from "../options";
+import { crmApi } from "@multica/core/crm/api";
 
 type CRMResources = typeof crmResources;
 type Translation = (
@@ -576,7 +577,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
       const region = regions.find((option) => option.code === accountForm.regionCode);
       const cities = await loadCityOptions(accountForm.countryCode, accountForm.regionCode, locale);
       const city = cities.find((option) => option.code === accountForm.cityCode);
-      return api.updateCRMAccount(accountId, {
+      return crmApi.updateCRMAccount(accountId, {
         name: accountForm.name,
         account_code: accountForm.accountCode || null,
         account_type: accountForm.accountType,
@@ -610,7 +611,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   });
 
   const deleteAccount = useMutation({
-    mutationFn: () => api.deleteCRMAccount(accountId),
+    mutationFn: () => crmApi.deleteCRMAccount(accountId),
     onSuccess: () => navigation.push(paths.customers()),
   });
 
@@ -618,8 +619,8 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
     mutationFn: () => {
       if (!contactForm) throw new Error("missing contact form");
       return contactForm.id
-        ? api.updateCRMContact(accountId, contactForm.id, contactPayload(contactForm))
-        : api.createCRMContact(accountId, contactPayload(contactForm));
+        ? crmApi.updateCRMContact(accountId, contactForm.id, contactPayload(contactForm))
+        : crmApi.createCRMContact(accountId, contactPayload(contactForm));
     },
     onSuccess: async () => {
       setContactForm(null);
@@ -629,7 +630,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   });
 
   const deleteContact = useMutation({
-    mutationFn: (contactId: string) => api.deleteCRMContact(accountId, contactId),
+    mutationFn: (contactId: string) => crmApi.deleteCRMContact(accountId, contactId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: crmKeys.accounts(wsId) });
       await queryClient.invalidateQueries({ queryKey: crmKeys.contacts(wsId, accountId) });
@@ -639,7 +640,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const saveProfile = useMutation({
     mutationFn: () => {
       if (!profileForm) throw new Error("missing profile form");
-      return api.upsertCRMAccountProfile(accountId, profilePayload(profileForm, profile));
+      return crmApi.upsertCRMAccountProfile(accountId, profilePayload(profileForm, profile));
     },
     onSuccess: async () => {
       setProfileForm(null);
@@ -648,7 +649,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   });
 
   const refreshProfile = useMutation({
-    mutationFn: () => api.refreshCRMAccountProfile(accountId),
+    mutationFn: () => crmApi.refreshCRMAccountProfile(accountId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId), refetchType: "active" });
       await queryClient.invalidateQueries({ queryKey: crmKeys.accountDetail(wsId, accountId), refetchType: "active" });
@@ -657,7 +658,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   });
 
   const createNote = useMutation({
-    mutationFn: () => api.createCRMCommunicationNote(accountId, {
+    mutationFn: () => crmApi.createCRMCommunicationNote(accountId, {
       body: noteForm.body,
       channel: noteForm.channel,
       direction: noteForm.direction,

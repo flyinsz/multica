@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@multica/core/api";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
+import { crmApi } from "@multica/core/crm/api";
 import enCrm from "../../locales/en/crm.json";
 import { CRMDashboardPage } from "./crm-dashboard-page";
 
@@ -12,8 +12,8 @@ const push = vi.fn();
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("../../navigation", () => ({ useNavigation: () => ({ push }) }));
-vi.mock("@multica/core/api", () => ({
-  api: {
+vi.mock("@multica/core/crm/api", () => ({
+  crmApi: {
     listCRMAccounts: vi.fn(),
     listCRMEmailThreads: vi.fn(),
   },
@@ -51,12 +51,12 @@ const account = (id: string, name: string) => ({ ...baseAccount, id, name });
 describe.skip("CRMDashboardPage", () => {
   beforeEach(() => {
     push.mockReset();
-    vi.mocked(api.listCRMAccounts).mockImplementation(async (params) => {
+    vi.mocked(crmApi.listCRMAccounts).mockImplementation(async (params) => {
       if (params?.follow_up_bucket === "overdue") return { accounts: [account("follow-account", "Follow Customer")], total: 1 };
       if (params?.rating === "hot") return { accounts: [account("hot-account", "Hot Customer")], total: 1 };
       return { accounts: [account("recent-account", "Recent Customer")], total: 1 };
     });
-    vi.mocked(api.listCRMEmailThreads).mockResolvedValue({
+    vi.mocked(crmApi.listCRMEmailThreads).mockResolvedValue({
       threads: [{ id: "thread-1", workspace_id: "workspace-1", subject: "RFQ", direction: "inbound", status: "open", message_count: 1, created_at: "2026-05-12T07:00:00Z", updated_at: "2026-05-12T08:00:00Z", last_message_at: "2026-05-12T08:00:00Z" }],
       total: 1,
     });

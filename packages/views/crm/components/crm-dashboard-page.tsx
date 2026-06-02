@@ -7,13 +7,14 @@ import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountStatus } from "@multica/core/types";
-import { api } from "@multica/core/api";
+
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
+import { crmApi } from "@multica/core/crm/api";
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString() : "—";
@@ -99,8 +100,8 @@ export function CRMDashboardPage() {
   const { data: hotAccounts = [] } = useQuery(crmAccountListOptions(wsId, { rating: "hot", sort: "priority_rating" }));
   const { data: allAccounts = [], isLoading: reportsLoading } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: emailThreadData, isLoading: emailLoading } = useQuery(crmEmailThreadListOptions(wsId));
-  const { data: aiSettingsData, isLoading: aiSettingsLoading } = useQuery({ queryKey: ["crm", "ai-settings"], queryFn: () => api.listCRMAISettings() });
-  const { data: aiHistoryData, isLoading: aiHistoryLoading } = useQuery({ queryKey: ["crm", "ai-history", "dashboard"], queryFn: () => api.listCRMAIHistory({ limit: 8, days: 14 }) });
+  const { data: aiSettingsData, isLoading: aiSettingsLoading } = useQuery({ queryKey: ["crm", "ai-settings"], queryFn: () => crmApi.listCRMAISettings() });
+  const { data: aiHistoryData, isLoading: aiHistoryLoading } = useQuery({ queryKey: ["crm", "ai-history", "dashboard"], queryFn: () => crmApi.listCRMAIHistory({ limit: 8, days: 14 }) });
   const emailThreads = emailThreadData?.threads ?? [];
   const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
   const topTodayFollowUps = todayFollowUps.slice(0, 6);

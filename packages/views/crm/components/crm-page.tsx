@@ -34,6 +34,7 @@ import type crmResources from "../../locales/en/crm.json";
 import { PageHeader } from "../../layout/page-header";
 import { COUNTRY_OPTIONS, countryByCode, loadCityOptions, loadRegionOptions, localizedName, localizedSort, normalizeLocale, useLocationSelection } from "../geo";
 import { appendTag, CRM_INDUSTRY_OPTIONS, formatDateTimeLocal, industryLabel, optionLabel, splitTags, subIndustryOptions } from "../options";
+import { crmApi } from "@multica/core/crm/api";
 
 type CRMResources = typeof crmResources;
 type Translation = (
@@ -259,7 +260,7 @@ export function CRMPage() {
       const region = regions.find((option) => option.code === form.regionCode);
       const cities = await loadCityOptions(form.countryCode, form.regionCode, locale);
       const city = cities.find((option) => option.code === form.cityCode);
-      return api.createCRMAccount({
+      return crmApi.createCRMAccount({
         name: form.name,
         account_type: form.accountType,
         website: form.website || null,

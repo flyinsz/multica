@@ -4,7 +4,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeft, Bot, Clock, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
-import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { crmKeys } from "@multica/core/crm/queries";
@@ -20,6 +19,7 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
+import { crmApi } from "@multica/core/crm/api";
 
 type SettingKey = "email_pending_reply" | "due_followup" | "profile_new_activity_refresh" | "profile_daily_refresh";
 
@@ -189,7 +189,7 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [...crmKeys.aiSettings(wsId), "history", automationKey, limit],
-    queryFn: () => api.listCRMAIHistory({ automation_key: automationKey, days: 30, limit, offset: 0 }),
+    queryFn: () => crmApi.listCRMAIHistory({ automation_key: automationKey, days: 30, limit, offset: 0 }),
     select: (res) => ({ ...res, items: res.items as CRMAIHistoryItem[] }),
     enabled: Boolean(wsId),
     refetchInterval: autoRefresh ? 5000 : false,
@@ -307,7 +307,7 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
       } else if (setting.automation_key === "profile_daily_refresh") {
         config.time = form.time || "03:00";
       }
-      return api.updateCRMAISetting(setting.automation_key, {
+      return crmApi.updateCRMAISetting(setting.automation_key, {
         enabled: form.enabled,
         interval_minutes: numberValue(form.interval_minutes, 1, 1440),
         assignee_agent_id: form.assignee_agent_id || null,
@@ -488,7 +488,7 @@ function SettingListRow({
 
 export function CRMAISettingsPage() {
   const wsId = useWorkspaceId();
-  const { data = [], isLoading } = useQuery({ queryKey: crmKeys.aiSettings(wsId), queryFn: () => api.listCRMAISettings(), select: (res) => res.settings as CRMAISetting[] });
+  const { data = [], isLoading } = useQuery({ queryKey: crmKeys.aiSettings(wsId), queryFn: () => crmApi.listCRMAISettings(), select: (res) => res.settings as CRMAISetting[] });
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const [selectedKey, setSelectedKey] = useState<SettingKey | null>(null);

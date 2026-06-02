@@ -29,6 +29,7 @@ import { PageHeader } from "../../layout/page-header";
 import { IssueDetail } from "../../issues/components";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
+import { crmApi } from "@multica/core/crm/api";
 
 type EmailFolderKey = "inbox" | "sent" | "drafts" | "spam" | "archived" | "starred" | "unlinked" | "trash";
 type EmailQuickFilter = "all" | "unread" | "linked" | "unlinked";
@@ -238,16 +239,16 @@ function AssociationChip({ icon, label, value, onClick }: { icon: ReactNode; lab
 function DiagnosticsDialog({ wsId, open, onOpenChange }: { wsId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
   const diagnostics = useQuery({
     queryKey: ["crm", wsId, "imap-diagnostics"],
-    queryFn: () => api.getCRMIMAPDiagnostics(wsId),
+    queryFn: () => crmApi.getCRMIMAPDiagnostics(wsId),
     enabled: open && Boolean(wsId),
   });
   const syncErrors = useQuery({
     queryKey: ["crm", wsId, "sync-errors"],
-    queryFn: () => api.listCRMIMAPSyncErrors(wsId),
+    queryFn: () => crmApi.listCRMIMAPSyncErrors(wsId),
     enabled: open && Boolean(wsId),
   });
   const testConnection = useMutation({
-    mutationFn: (config: Record<string, unknown>) => api.testCRMIMAPConnection(wsId, config),
+    mutationFn: (config: Record<string, unknown>) => crmApi.testCRMIMAPConnection(wsId, config),
   });
   const diagnosticMailboxes = Array.isArray((diagnostics.data as any)?.mailboxes)
     ? (diagnostics.data as any).mailboxes
@@ -633,7 +634,7 @@ export function CRMEmailsPage() {
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
   const { data: mailboxData } = useQuery({
     queryKey: ["crm", wsId, "imap-settings"],
-    queryFn: () => api.listCRMIMAPSettings(),
+    queryFn: () => crmApi.listCRMIMAPSettings(),
     enabled: Boolean(wsId),
   });
   const mailboxes = mailboxData?.settings ?? [];
@@ -660,10 +661,10 @@ export function CRMEmailsPage() {
   });
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-mailbox"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId && settingsOpen) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-mailbox"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId && settingsOpen) });
-  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts", initialDraftId ?? ""], queryFn: () => api.listCRMEmailDrafts(initialDraftId), enabled: Boolean(wsId), refetchOnMount: "always" });
+  const { data: draftsData } = useQuery({ queryKey: ["crm", wsId, "email-drafts", initialDraftId ?? ""], queryFn: () => crmApi.listCRMEmailDrafts(initialDraftId), enabled: Boolean(wsId), refetchOnMount: "always" });
   const { data: syncRunsData, dataUpdatedAt: syncRunsUpdatedAt } = useQuery({
     queryKey: ["crm", wsId, "imap-sync-runs"],
-    queryFn: () => api.listCRMIMAPSyncRuns(),
+    queryFn: () => crmApi.listCRMIMAPSyncRuns(),
     enabled: Boolean(wsId),
     refetchInterval: (query) => {
       const runs = query.state.data?.runs ?? [];
@@ -850,7 +851,7 @@ export function CRMEmailsPage() {
         saveAttachmentBlob(new Blob([bytes], { type: attachment.content_type || "application/octet-stream" }), fileName, attachmentIndex);
         return;
       }
-      const blob = await api.downloadCRMEmailAttachment(wsId, messageId, attachmentIndex);
+      const blob = await crmApi.downloadCRMEmailAttachment(wsId, messageId, attachmentIndex);
       saveAttachmentBlob(blob, fileName, attachmentIndex);
     } catch (error: any) {
       window.alert(error?.message || "Failed to download attachment");
@@ -920,7 +921,7 @@ export function CRMEmailsPage() {
   });
 
   const saveMailbox = useMutation({
-    mutationFn: () => api.upsertCRMIMAPSetting(mailboxPayload()),
+    mutationFn: () => crmApi.upsertCRMIMAPSetting(mailboxPayload()),
     onSuccess: async (setting) => {
       setMailboxDraft(mailboxToDraft(setting));
       setSelectedMailboxId(setting.id);
@@ -932,12 +933,12 @@ export function CRMEmailsPage() {
 
   const testMailbox = useMutation({
     mutationFn: async () => {
-      const setting = mailboxDraft.id ? null : await api.upsertCRMIMAPSetting(mailboxPayload());
+      const setting = mailboxDraft.id ? null : await crmApi.upsertCRMIMAPSetting(mailboxPayload());
       if (setting) {
         setMailboxDraft(mailboxToDraft(setting));
         setSelectedMailboxId(setting.id);
       }
-      return api.testCRMIMAPSetting(setting?.id ?? mailboxDraft.id ?? "");
+      return crmApi.testCRMIMAPSetting(setting?.id ?? mailboxDraft.id ?? "");
     },
     onSuccess: (result) => {
       setMailboxStatus(result.message);
@@ -946,7 +947,7 @@ export function CRMEmailsPage() {
   });
 
   const deleteMailbox = useMutation({
-    mutationFn: (mailboxId: string) => api.deleteCRMIMAPSetting(mailboxId),
+    mutationFn: (mailboxId: string) => crmApi.deleteCRMIMAPSetting(mailboxId),
     onSuccess: async (_result, mailboxId) => {
       setMailboxStatus("Mailbox deleted.");
       setSelectedMailboxId((current) => current === mailboxId ? null : current);
@@ -957,7 +958,7 @@ export function CRMEmailsPage() {
   });
 
   const sendDraft = useMutation({
-    mutationFn: (draftId: string) => api.sendCRMEmailDraft(draftId),
+    mutationFn: (draftId: string) => crmApi.sendCRMEmailDraft(draftId),
     onSuccess: async () => {
       setMailboxStatus(emailCopy.draftSent);
       clearComposeLocalCache(composeDraft);
@@ -973,7 +974,7 @@ export function CRMEmailsPage() {
   });
 
   const discardDraft = useMutation({
-    mutationFn: (draft: any) => api.updateCRMEmailDraft(draft.id, {
+    mutationFn: (draft: any) => crmApi.updateCRMEmailDraft(draft.id, {
       mailbox_id: draft.mailbox_id ?? selectedMailbox?.id ?? mailboxes[0]?.id,
       thread_id: draft.thread_id ?? null,
       account_id: draft.account_id ?? null,
@@ -1028,7 +1029,7 @@ export function CRMEmailsPage() {
   };
 
   const updateThreadState = useMutation({
-    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean; message_id?: string | null } }) => api.updateCRMEmailThreadState(threadId, data),
+    mutationFn: ({ threadId, data }: { threadId: string; data: { status?: "open" | "archived"; is_read?: boolean; is_starred?: boolean; message_id?: string | null } }) => crmApi.updateCRMEmailThreadState(threadId, data),
     onMutate: async ({ threadId, data }) => {
       await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
       const { message_id: messageId, ...threadPatch } = data;
@@ -1045,7 +1046,7 @@ export function CRMEmailsPage() {
   });
 
   const trashThread = useMutation({
-    mutationFn: ({ threadId }: { threadId: string }) => api.trashCRMEmailThread(threadId),
+    mutationFn: ({ threadId }: { threadId: string }) => crmApi.trashCRMEmailThread(threadId),
     onMutate: async ({ threadId }) => {
       await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
       patchCachedThread(threadId, { is_trashed: true, status: "open" });
@@ -1064,7 +1065,7 @@ export function CRMEmailsPage() {
   });
 
   const restoreThread = useMutation({
-    mutationFn: ({ threadId }: { threadId: string }) => api.restoreCRMEmailThread(threadId),
+    mutationFn: ({ threadId }: { threadId: string }) => crmApi.restoreCRMEmailThread(threadId),
     onSuccess: async () => {
       setMailboxStatus(emailCopy.restored);
       setActiveFolder("inbox");
@@ -1076,7 +1077,7 @@ export function CRMEmailsPage() {
   });
 
   const deleteThread = useMutation({
-    mutationFn: ({ threadId }: { threadId: string }) => api.deleteCRMEmailThread(threadId),
+    mutationFn: ({ threadId }: { threadId: string }) => crmApi.deleteCRMEmailThread(threadId),
     onSuccess: async () => {
       setMailboxStatus(emailCopy.deletedForever);
       setSelectedThreadIds([]);
@@ -1087,7 +1088,7 @@ export function CRMEmailsPage() {
   });
 
   const moveThread = useMutation({
-    mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => api.moveCRMEmailThread(threadId, folder),
+    mutationFn: ({ threadId, folder }: { threadId: string; folder: string }) => crmApi.moveCRMEmailThread(threadId, folder),
     onMutate: async ({ threadId, folder }) => {
       await queryClient.cancelQueries({ queryKey: emailThreadRootKey });
       patchCachedThread(threadId, {
@@ -1110,7 +1111,7 @@ export function CRMEmailsPage() {
   });
 
   const refreshMailbox = useMutation({
-    mutationFn: () => api.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 100, range_days: 7 }),
+    mutationFn: () => crmApi.syncCRMIMAP({ mailbox_id: selectedMailbox?.id ?? null, folder: activeFolder === "sent" ? "Sent" : "INBOX", limit: 100, range_days: 7 }),
     onSuccess: async (result) => {
       setMailboxStatus(result.status === "running" ? "同步已开始，正在后台导入…" : emailCopy.imported(result.imported ?? 0, result.skipped ?? 0));
       await queryClient.invalidateQueries({ queryKey: emailThreadRootKey });
@@ -1169,7 +1170,7 @@ export function CRMEmailsPage() {
         window.localStorage.setItem(key, JSON.stringify({ ...composeDraft, localCacheKey: key, source: "local", updatedAt: new Date().toISOString() }));
         return { id: "", close: false, localOnly: true, localCacheKey: key };
       }
-      const result = composeDraft.draftId ? await api.updateCRMEmailDraft(composeDraft.draftId, payload) : await api.createCRMEmailDraft(payload);
+      const result = composeDraft.draftId ? await crmApi.updateCRMEmailDraft(composeDraft.draftId, payload) : await crmApi.createCRMEmailDraft(payload);
       return { ...result, close: options?.close ?? false, localOnly: false };
     },
     onSuccess: (result) => {
@@ -1403,7 +1404,7 @@ export function CRMEmailsPage() {
   }, [messages, selectedMessage, selectedMessageId]);
   const { data: associationSuggestions = [] } = useQuery({
     queryKey: [...crmKeys.emailThread(wsId, selectedThread?.id ?? ""), "association-suggestions"],
-    queryFn: async () => (await api.listCRMEmailThreadAssociationSuggestions(selectedThread?.id ?? "")).suggestions,
+    queryFn: async () => (await crmApi.listCRMEmailThreadAssociationSuggestions(selectedThread?.id ?? "")).suggestions,
     enabled: Boolean(selectedThread?.id && !selectedThread?.account_id),
   });
   const { data: projects = [] } = useQuery({
@@ -1453,14 +1454,14 @@ export function CRMEmailsPage() {
   });
 
   const aiContextBrief = useMutation({
-    mutationFn: (payload: ReturnType<typeof aiReplyPayload>) => api.suggestCRMEmailDraftReply({ ...payload, mode: "context" }),
+    mutationFn: (payload: ReturnType<typeof aiReplyPayload>) => crmApi.suggestCRMEmailDraftReply({ ...payload, mode: "context" }),
     onSuccess: (data: any) => {
       setAIAssistantTurns((items) => [{ id: `context-${Date.now()}`, role: "system", content: data.chinese || data.customer_reply || "已加载邮件背景。" }, ...items.filter((turn) => turn.role !== "system")]);
     },
   });
 
   const aiReplySuggestion = useMutation({
-    mutationFn: (payload?: ReturnType<typeof aiReplyPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiReplyPayload()),
+    mutationFn: (payload?: ReturnType<typeof aiReplyPayload>) => crmApi.suggestCRMEmailDraftReply(payload ?? aiReplyPayload()),
     onMutate: (payload) => {
       const raw = String(payload?.prompt || aiReplyPrompt.trim() || "继续优化邮件内容");
       const text = raw.includes("本轮用户要求：") ? raw.split("本轮用户要求：").pop()?.trim() || raw : raw;
@@ -1506,7 +1507,7 @@ export function CRMEmailsPage() {
   };
 
   const recipientLookup = useMutation({
-    mutationFn: () => api.suggestCRMEmailDraftReply({ ...aiDraftPayload(composeDraft), mode: "recipient_lookup" }),
+    mutationFn: () => crmApi.suggestCRMEmailDraftReply({ ...aiDraftPayload(composeDraft), mode: "recipient_lookup" }),
     onSuccess: (data: any) => {
       const localTerms = Array.isArray(data.to_emails) ? data.to_emails.filter(Boolean).join(" ").trim() : "";
       const keywords = localTerms || String(data.subject || "").trim();
@@ -1520,7 +1521,7 @@ export function CRMEmailsPage() {
   });
 
   const createAIDraft = useMutation({
-    mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => api.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
+    mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => crmApi.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
     onMutate: (payload) => {
       const text = String(payload?.prompt || aiDraftDialog?.prompt.trim() || "创建邮件草稿");
       setAIAssistantTurns((items) => [...items, { id: `user-${Date.now()}`, role: "user", content: text }]);
@@ -1659,12 +1660,12 @@ export function CRMEmailsPage() {
           email: associationDraft.contactEmail.trim() || null,
           is_primary: false,
         };
-        const contact = await api.createCRMContact(associationDraft.accountId, payload);
+        const contact = await crmApi.createCRMContact(associationDraft.accountId, payload);
         contactId = contact.id;
       }
       const results = [];
       for (const thread of targetThreads) {
-        results.push(await api.updateCRMEmailThreadAssociation(thread.id, {
+        results.push(await crmApi.updateCRMEmailThreadAssociation(thread.id, {
           account_id: associationDraft.accountId || null,
           contact_id: contactId,
         }));
@@ -1701,7 +1702,7 @@ export function CRMEmailsPage() {
   const updateEmailLinks = useMutation({
     mutationFn: async () => {
       if (!selectedThread || !emailLinkDraft) throw new Error("No email link draft selected");
-      return api.updateCRMEmailThreadAssociation(selectedThread.id, {
+      return crmApi.updateCRMEmailThreadAssociation(selectedThread.id, {
         account_id: selectedThread.account_id ?? null,
         contact_id: selectedThread.contact_id ?? null,
         project_id: emailLinkDraft.projectId || null,
@@ -1730,7 +1731,7 @@ export function CRMEmailsPage() {
       onCreated: async (issue: Issue) => {
         const nextIssueIds = Array.from(new Set([...emailLinkDraft.issueIds, issue.id]));
         setEmailLinkDraft({ ...emailLinkDraft, issueIds: nextIssueIds });
-        await api.updateCRMEmailThreadAssociation(selectedThread.id, {
+        await crmApi.updateCRMEmailThreadAssociation(selectedThread.id, {
           account_id: selectedThread.account_id ?? null,
           contact_id: selectedThread.contact_id ?? null,
           project_id: emailLinkDraft.projectId || null,
@@ -2470,7 +2471,7 @@ export function CRMEmailsPage() {
                   size="sm"
                   className="ml-auto"
                   disabled={saveMailbox.isPending}
-                  onClick={() => api.toggleCRMIMAPSyncCron(wsId, mailboxDraft.id!, mailboxDraft.sync_enabled).then(() => queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] }))}
+                  onClick={() => crmApi.toggleCRMIMAPSyncCron(wsId, mailboxDraft.id!, mailboxDraft.sync_enabled).then(() => queryClient.invalidateQueries({ queryKey: ["crm", wsId, "imap-settings"] }))}
                 >
                   <RefreshCw className="mr-1 size-3" />Apply
                 </Button>
