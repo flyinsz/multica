@@ -149,7 +149,8 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 	defer cancel()
 
 	h := &Handler{DB: s.db}
-	result := map[string]any{"automation_key": item.AutomationKey, "checked_at": time.Now().UTC().Format(time.RFC3339)}
+	startedAt := time.Now().UTC()
+	result := map[string]any{"automation_key": item.AutomationKey, "checked_at": startedAt.Format(time.RFC3339)}
 	approvedSent, notifiedSent := h.runCRMApprovedDraftStateAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun)
 	if approvedSent > 0 {
 		result["approved_done_drafts_sent"] = approvedSent
@@ -179,18 +180,37 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 		slog.Warn("CRM AI automation run failed", "key", item.AutomationKey, "workspace_id", uuidToString(item.WorkspaceID), "error", err)
 	}
 	payload, _ := json.Marshal(result)
+	status := "success"
+	var errorText *string
+	if err != nil {
+		status = "failed"
+		errString := err.Error()
+		errorText = &errString
+	}
+	if skipped, _ := result["skipped"].(string); skipped != "" {
+		status = "skipped"
+	}
 	_, _ = s.db.Exec(context.Background(), `UPDATE crm_ai_setting SET last_checked_at=now(), last_result=$3, updated_at=now() WHERE workspace_id=$1 AND automation_key=$2`, item.WorkspaceID, item.AutomationKey, payload)
+	_, _ = s.db.Exec(context.Background(), `INSERT INTO crm_ai_run (workspace_id, automation_key, status, started_at, finished_at, result, error) VALUES ($1,$2,$3,$4,now(),$5,$6)`, item.WorkspaceID, item.AutomationKey, status, startedAt, payload, errorText)
 }
 
 func crmAIDailyWindowDue(config json.RawMessage) bool {
 	var cfg struct {
-		Time string `json:"time"`
+		Time     string `json:"time"`
+		Timezone string `json:"timezone"`
 	}
 	_ = json.Unmarshal(config, &cfg)
 	if cfg.Time == "" {
 		cfg.Time = "03:00"
 	}
-	now := time.Now()
+	if cfg.Timezone == "" {
+		cfg.Timezone = "Asia/Shanghai"
+	}
+	loc, err := time.LoadLocation(cfg.Timezone)
+	if err != nil {
+		loc = time.FixedZone("Asia/Shanghai", 8*60*60)
+	}
+	now := time.Now().In(loc)
 	want, err := time.Parse("15:04", cfg.Time)
 	if err != nil {
 		return true
@@ -217,6 +237,7 @@ func (h *Handler) runCRMRecentActivityProfileRefresh(ctx context.Context, worksp
 		WHERE i.workspace_id=$1
 		  AND i.account_id IS NOT NULL
 		  AND i.occurred_at > now() - interval '24 hours'
+		  AND NOT (i.channel IN ('manual_note','other') AND i.direction='note' AND i.subject='AI 客户画像已刷新')
 		  AND (p.updated_at IS NULL OR p.updated_at < i.occurred_at OR p.updated_at < now() - interval '1 hour')
 		ORDER BY i.account_id
 		LIMIT $2`, workspaceID, limit)

@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeft, Bot, Clock, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { crmKeys } from "@multica/core/crm/queries";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -31,6 +30,7 @@ type CRMAIConfig = {
   stale_done_issue_days?: number;
   profile_refresh_min_interval_minutes?: number;
   time?: string;
+  timezone?: string;
   issue_creator_type?: "member" | "agent";
   issue_creator_id?: string;
   issue_todo_assignee_type?: "member" | "agent";
@@ -78,7 +78,7 @@ type CRMAIHistoryItem = {
 };
 
 type ActorType = "member" | "agent";
-type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time">> & {
+type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone">> & {
   issue_creator_type: ActorType;
   issue_creator_id: string;
   issue_todo_assignee_type: ActorType;
@@ -105,12 +105,12 @@ const meta: Record<SettingKey, { title: string; description: string; icon: typeo
   },
   profile_daily_refresh: {
     title: "每日客户画像全量刷新",
-    description: "按每天指定时间批量刷新客户画像，用于补齐长期未更新资料。",
+    description: "按每天指定时间（Asia/Shanghai）批量刷新客户画像，用于补齐长期未更新资料。",
     icon: RefreshCw,
   },
 };
 
-const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time">>> = {
+const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone">>> = {
   email_pending_reply: {
     follow_up_lead_days: 0,
     duplicate_protection_days: 7,
@@ -119,6 +119,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     stale_done_issue_days: 7,
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
+    timezone: "Asia/Shanghai",
   },
   due_followup: {
     follow_up_lead_days: 0,
@@ -128,6 +129,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     stale_done_issue_days: 7,
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
+    timezone: "Asia/Shanghai",
   },
   profile_new_activity_refresh: {
     follow_up_lead_days: 0,
@@ -137,6 +139,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     stale_done_issue_days: 7,
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
+    timezone: "Asia/Shanghai",
   },
   profile_daily_refresh: {
     follow_up_lead_days: 0,
@@ -146,6 +149,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     stale_done_issue_days: 7,
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
+    timezone: "Asia/Shanghai",
   },
 };
 
@@ -173,6 +177,7 @@ function buildForm(setting: CRMAISetting): FormState {
     stale_done_issue_days: c.stale_done_issue_days ?? d.stale_done_issue_days,
     profile_refresh_min_interval_minutes: c.profile_refresh_min_interval_minutes ?? d.profile_refresh_min_interval_minutes,
     time: c.time ?? d.time,
+    timezone: c.timezone ?? d.timezone,
     issue_creator_type: c.issue_creator_type || "agent",
     issue_creator_id: c.issue_creator_id || "",
     issue_todo_assignee_type: c.issue_todo_assignee_type || "agent",
@@ -184,7 +189,6 @@ function buildForm(setting: CRMAISetting): FormState {
 
 function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   const wsId = useWorkspaceId();
-  const paths = useCRMWorkspacePaths();
   const [limit, setLimit] = useState(20);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const { data, isLoading, isFetching } = useQuery({
@@ -209,13 +213,13 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
           </label>
         </div>
         {isLoading ? <Skeleton className="h-16 w-full" /> : latest ? (
-          <a href={paths.issueDetail(latest.id)} className="block rounded-md border bg-background p-3 hover:bg-muted/40">
+          <div className="block rounded-md border bg-background p-3">
             <div className="flex items-center justify-between gap-3">
               <div className="truncate text-sm font-medium">{latest.title}</div>
               <Badge variant="secondary">{latest.status}</Badge>
             </div>
             <div className="mt-1 text-xs text-muted-foreground">{fmt(latest.created_at)}</div>
-          </a>
+          </div>
         ) : <div className="text-sm text-muted-foreground">暂无运行记录</div>}
       </section>
       <section className="mt-4 rounded-lg border bg-card">
@@ -228,11 +232,11 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
         ) : items.length ? (
           <div className="divide-y">
             {items.map((item) => (
-              <a key={item.id} href={paths.issueDetail(item.id)} className="grid grid-cols-[minmax(220px,1fr)_120px_180px] items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40">
+              <div key={item.id} className="grid grid-cols-[minmax(220px,1fr)_120px_180px] items-center gap-3 px-4 py-3 text-sm">
                 <div className="truncate font-medium">{item.title}</div>
                 <Badge variant="secondary" className="w-fit">{item.status}</Badge>
                 <div className="text-xs text-muted-foreground">{fmt(item.created_at)}</div>
-              </a>
+              </div>
             ))}
           </div>
         ) : <div className="p-4 text-sm text-muted-foreground">暂无运行记录</div>}
@@ -306,6 +310,7 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
         config.profile_refresh_min_interval_minutes = numberValue(form.profile_refresh_min_interval_minutes, 0, 24 * 60);
       } else if (setting.automation_key === "profile_daily_refresh") {
         config.time = form.time || "03:00";
+        config.timezone = "Asia/Shanghai";
       }
       return crmApi.updateCRMAISetting(setting.automation_key, {
         enabled: form.enabled,
@@ -362,7 +367,7 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
           </label>
         ) : setting.automation_key === "profile_daily_refresh" ? (
           <label className="space-y-1 text-sm">
-            <span className="text-muted-foreground">每日刷新时间</span>
+            <span className="text-muted-foreground">每日刷新时间（Asia/Shanghai）</span>
             <Input type="time" value={form.time} onChange={(e) => setForm((s) => ({ ...s, time: e.target.value }))} />
           </label>
         ) : (

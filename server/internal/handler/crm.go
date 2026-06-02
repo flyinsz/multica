@@ -4791,6 +4791,23 @@ func (h *Handler) ListCRMAIHistory(w http.ResponseWriter, r *http.Request) {
 			WHERE workspace_id=$1
 			  AND (origin_type='crm_ai' OR title LIKE 'CRM 邮件待回复：%' OR title LIKE '回复邮件：%' OR title LIKE '跟进客户：%')
 			  AND created_at >= now() - ($4::int * interval '1 day')
+			UNION ALL
+			SELECT r.id,
+				CASE r.automation_key
+					WHEN 'profile_new_activity_refresh' THEN '新互动客户画像刷新'
+					WHEN 'profile_daily_refresh' THEN '每日客户画像全量刷新'
+					WHEN 'email_pending_reply' THEN '待回复邮件检查'
+					WHEN 'due_followup' THEN '客户跟进检查'
+					ELSE r.automation_key
+				END || ' · ' || r.status AS title,
+				r.status,
+				NULL::uuid AS origin_id,
+				r.started_at AS created_at,
+				r.finished_at AS updated_at,
+				r.automation_key
+			FROM crm_ai_run r
+			WHERE r.workspace_id=$1
+			  AND r.started_at >= now() - ($4::int * interval '1 day')
 		)
 		SELECT id, title, status, origin_id, created_at, updated_at, automation_key
 		FROM history
