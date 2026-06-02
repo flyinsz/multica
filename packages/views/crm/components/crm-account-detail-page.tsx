@@ -638,18 +638,9 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
 
   const refreshProfile = useMutation({
     mutationFn: () => api.refreshCRMAccountProfile(accountId),
-    onSuccess: async (nextProfile) => {
-      await api.createCRMCommunicationNote(accountId, {
-        channel: "manual",
-        direction: "note",
-        subject: "AI 客户画像已刷新",
-        body: [
-          nextProfile.summary ? `摘要：${nextProfile.summary}` : "摘要：—",
-          profileFollowUpValue(nextProfile.profile_json) ? `下次跟进建议：${profileFollowUpValue(nextProfile.profile_json)}` : "下次跟进建议：—",
-          nextProfile.source_summary ? `来源：${nextProfile.source_summary}` : "来源：AI profile refresh",
-        ].join("\n"),
-      });
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: crmKeys.profile(wsId, accountId), refetchType: "active" });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.detail(wsId, accountId), refetchType: "active" });
       await queryClient.invalidateQueries({ queryKey: crmKeys.notes(wsId, accountId), refetchType: "active" });
     },
   });

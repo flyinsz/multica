@@ -852,7 +852,7 @@ func profileValueFromEvidence(emailSnippets, noteSnippets []string, label, fallb
 		}
 	}
 	if len(matches) == 0 {
-		return "——"
+		return "-"
 	}
 	return label + "：" + strings.Join(matches, "；")
 }
@@ -870,7 +870,7 @@ func summarizeCRMProfileEvidence(emailSnippets, noteSnippets []string) string {
 func cleanCRMProfileValue(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "——"
+		return "-"
 	}
 	parts := strings.FieldsFunc(value, func(r rune) bool {
 		return r == '；' || r == ';' || r == '\n' || r == '\r'
@@ -888,7 +888,7 @@ func cleanCRMProfileValue(value string) string {
 		kept = append(kept, part)
 	}
 	if len(kept) == 0 {
-		return "——"
+		return "-"
 	}
 	return strings.Join(kept, "；")
 }
@@ -896,6 +896,48 @@ func cleanCRMProfileValue(value string) string {
 func isVagueCRMProfileFragment(part string) bool {
 	part = strings.TrimSpace(part)
 	return strings.HasPrefix(part, "具体") && len([]rune(part)) <= 12
+}
+
+func isCRMProfilePlaceholder(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "-" || value == "--" || value == "—" || value == "——"
+}
+
+func crmProfileFollowUpRecommendation(profile map[string]any) (time.Time, string, bool) {
+	rec, _ := profile["follow_up_recommendation"].(map[string]any)
+	if rec == nil {
+		return time.Time{}, "", false
+	}
+	confidence := strings.ToLower(strings.TrimSpace(crmProfileAnyText(rec["confidence"])))
+	high := confidence == "high" || confidence == "高"
+	if !high {
+		if n, ok := rec["confidence"].(float64); ok && n >= 0.8 {
+			high = true
+		}
+	}
+	if !high {
+		return time.Time{}, "", false
+	}
+	raw := strings.TrimSpace(crmProfileAnyText(rec["next_follow_up_at"]))
+	if raw == "" {
+		raw = strings.TrimSpace(crmProfileAnyText(rec["date"]))
+	}
+	if raw == "" || isCRMProfilePlaceholder(raw) {
+		return time.Time{}, "", false
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		if parsedDate, err := time.Parse("2006-01-02", raw); err == nil {
+			parsed = parsedDate
+		} else {
+			return time.Time{}, "", false
+		}
+	}
+	if parsed.Before(time.Now().Add(-24 * time.Hour)) {
+		return time.Time{}, "", false
+	}
+	reason := strings.TrimSpace(crmProfileAnyText(rec["reason"]))
+	return parsed.UTC(), reason, true
 }
 
 func cleanCRMProfile(profile map[string]any) map[string]any {
@@ -912,11 +954,11 @@ func normalizeCRMCustomerWikiProfile(profile map[string]any) map[string]any {
 		profile = map[string]any{}
 	}
 	setText := func(key string, fallbackKeys ...string) {
-		if strings.TrimSpace(crmProfileAnyText(profile[key])) != "" && strings.TrimSpace(crmProfileAnyText(profile[key])) != "——" {
+		if text := strings.TrimSpace(crmProfileAnyText(profile[key])); text != "" && !isCRMProfilePlaceholder(text) {
 			return
 		}
 		for _, fallbackKey := range fallbackKeys {
-			if text := strings.TrimSpace(crmProfileAnyText(profile[fallbackKey])); text != "" && text != "——" {
+			if text := strings.TrimSpace(crmProfileAnyText(profile[fallbackKey])); text != "" && !isCRMProfilePlaceholder(text) {
 				profile[key] = text
 				return
 			}
@@ -935,12 +977,12 @@ func normalizeCRMCustomerWikiProfile(profile map[string]any) map[string]any {
 			switch v := value.(type) {
 			case []any:
 				for _, item := range v {
-					if text := strings.TrimSpace(crmProfileAnyText(item)); text != "" && text != "——" {
+					if text := strings.TrimSpace(crmProfileAnyText(item)); text != "" && !isCRMProfilePlaceholder(text) {
 						items = append(items, item)
 					}
 				}
 			case string:
-				if text := strings.TrimSpace(v); text != "" && text != "——" {
+				if text := strings.TrimSpace(v); text != "" && !isCRMProfilePlaceholder(text) {
 					items = append(items, text)
 				}
 			}
@@ -999,7 +1041,7 @@ func (h *Handler) generateCRMAccountProfileWithLLM(ctx context.Context, accountN
 	if baseURL == "" || apiKey == "" || model == "" {
 		return nil, nil
 	}
-	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions,follow_up_recommendation,aliases,search_keywords,source_refs,confidence。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“——”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容；6) follow_up_recommendation 输出对象，字段为 next_follow_up_at（ISO8601或空字符串）、reason、confidence（high/medium/low或0到1数字）、source_refs（数组），需结合最新入站/出站状态、无回复时长、open issue、购买信号和风险判断；7) aliases/search_keywords 输出数组，包含客户简称、人名、邮箱前缀、域名、WhatsApp/微信/LinkedIn等可检索别名；8) source_refs 输出数组，记录依据类型和简短来源；9) confidence 输出0到1数字。\n\n" +
+	prompt := "你是外贸CRM客户画像分析助手。请根据客户资料、邮件往来、项目、issue、备注，总结并填写JSON。只输出JSON，不要Markdown。字段必须包含：customer_summary,business_model,main_products,procurement_needs,pain_points,decision_process,communication_preference,recent_progress,risk_notes,cooperation_history,next_step_suggestions,follow_up_recommendation,aliases,search_keywords,source_refs,confidence。要求：1) 用中文；2) 基于证据总结，不要直接堆原文；3) 未明确的字段只写“-”，不要写解释；4) 不要输出“具体业务模式——”“具体产品——”这类半句；有证据的部分单独成句，未知部分直接省略；5) 每个已明确字段写可执行、具体内容；6) follow_up_recommendation 输出对象，字段为 next_follow_up_at（ISO8601或空字符串）、reason、confidence（high/medium/low或0到1数字）、source_refs（数组），需结合最新入站/出站状态、无回复时长、open issue、购买信号和风险判断；7) aliases/search_keywords 输出数组，包含客户简称、人名、邮箱前缀、域名、WhatsApp/微信/LinkedIn等可检索别名；8) source_refs 输出数组，记录依据类型和简短来源；9) confidence 输出0到1数字。\n\n" +
 		"客户名：" + accountName + "\n基础摘要：" + fallbackSummary + "\n项目：" + projectSource + "\nIssue：" + issueSource + "\n邮件往来：" + emailEvidence + "\n沟通备注：" + noteEvidence + "\n客户备注：" + notes
 	payload := map[string]any{
 		"model": model,
@@ -3737,7 +3779,8 @@ func crmTextValue(t pgtype.Text) string {
 func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, accountID pgtype.UUID) (CRMAccountProfileResponse, error) {
 	var name, status, rating, priority string
 	var website, countryName, industry, notes pgtype.Text
-	if err := h.DB.QueryRow(ctx, `SELECT name, status, rating, priority, website, country_name, industry, notes FROM crm_account WHERE id=$1 AND workspace_id=$2`, accountID, workspaceID).Scan(&name, &status, &rating, &priority, &website, &countryName, &industry, &notes); err != nil {
+	var currentNextFollowUp pgtype.Timestamptz
+	if err := h.DB.QueryRow(ctx, `SELECT name, status, rating, priority, website, country_name, industry, notes, next_follow_up_at FROM crm_account WHERE id=$1 AND workspace_id=$2`, accountID, workspaceID).Scan(&name, &status, &rating, &priority, &website, &countryName, &industry, &notes, &currentNextFollowUp); err != nil {
 		return CRMAccountProfileResponse{}, err
 	}
 	rows, err := h.DB.Query(ctx, `SELECT channel, direction, COALESCE(subject,''), body FROM crm_communication_note WHERE account_id=$1 AND workspace_id=$2 ORDER BY occurred_at DESC, created_at DESC LIMIT 5`, accountID, workspaceID)
@@ -3857,6 +3900,21 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	var createdAt, updatedAt pgtype.Timestamptz
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_account_profile (workspace_id, account_id, summary, profile_json, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (account_id) DO UPDATE SET summary=EXCLUDED.summary, profile_json=EXCLUDED.profile_json, updated_at=now() RETURNING id, profile_json, created_at, updated_at`, workspaceID, accountID, summary, profileJSON).Scan(&id, &rawProfile, &createdAt, &updatedAt); err != nil {
 		return CRMAccountProfileResponse{}, err
+	}
+	if suggestedFollowUp, reason, ok := crmProfileFollowUpRecommendation(profile); ok && (!currentNextFollowUp.Valid || suggestedFollowUp.Before(currentNextFollowUp.Time)) {
+		_, _ = h.DB.Exec(ctx, `UPDATE crm_account SET next_follow_up_at=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, accountID, workspaceID, suggestedFollowUp)
+		_, _ = h.DB.Exec(ctx, `INSERT INTO crm_communication_note (workspace_id, account_id, channel, direction, subject, body, occurred_at) VALUES ($1,$2,'other','note',$3,$4,now())`, workspaceID, accountID, "AI 客户画像已刷新", strings.TrimSpace(strings.Join([]string{
+			"画像刷新完成",
+			"摘要：" + summary,
+			"高置信度 AI 建议已更新实际下次跟进时间：" + suggestedFollowUp.Format(time.RFC3339),
+			"原因：" + reason,
+		}, "\n")))
+	} else {
+		_, _ = h.DB.Exec(ctx, `INSERT INTO crm_communication_note (workspace_id, account_id, channel, direction, subject, body, occurred_at) VALUES ($1,$2,'other','note',$3,$4,now())`, workspaceID, accountID, "AI 客户画像已刷新", strings.TrimSpace(strings.Join([]string{
+			"画像刷新完成",
+			"摘要：" + summary,
+			"AI 建议下次跟进：" + crmProfileAnyText(profile["follow_up_recommendation"]),
+		}, "\n")))
 	}
 	h.syncCRMCustomerAliases(ctx, workspaceID, accountID, profile)
 	return CRMAccountProfileResponse{ID: uuidToString(id), WorkspaceID: uuidToString(workspaceID), AccountID: uuidToString(accountID), Summary: &summary, ProfileJSON: rawProfile, SourceSummary: buildCRMProfileSourceSummary(trimCRMProfileList(communicationSnippets, 5, 160), trimCRMProfileList(projectTitles, 5, 120), trimCRMProfileList(issueTitles, 5, 120)), CreatedAt: timestampToString(createdAt), UpdatedAt: timestampToString(updatedAt)}, nil
