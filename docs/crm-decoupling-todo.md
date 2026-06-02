@@ -27,7 +27,7 @@
 - [x] 解耦 CRM paths
 - [x] 解耦 sidebar CRM 导航
 - [x] 解耦 CRM scheduler 启动逻辑
-- [ ] 审计 sqlc/generated 与 DB 查询边界
+- [x] 审计 sqlc/generated 与 DB 查询边界
 - [ ] 全量测试、GHCR 构建、部署验证
 
 ## 1. 已完成：server router 解耦
@@ -340,24 +340,30 @@ h.StartCRMServices(ctx)
 
 无。启动位置改变，不改变任务执行逻辑。
 
-## 8. 待做：sqlc/generated 与 DB 查询边界审计
+## 8. 已完成：sqlc/generated 与 DB 查询边界审计
 
 ### 当前风险
 
-`server/pkg/db/generated/*` 可能因 CRM SQL 或核心 SQL 变动产生大面积 diff。
+`server/pkg/db/generated/*` 是 sqlc shared generated 层，CRM 查询会生成到同一 package，无法完全物理隔离；重点是避免改官方非 CRM query 和避免无来源的大面积 generated diff。
 
-### 目标
+### 处理
 
-- [ ] 确认 CRM SQL 都集中在 CRM 命名文件或 CRM query 段。
-- [ ] 不修改官方非 CRM query，除非必要。
-- [ ] 若必须新增 query，命名带 CRM 前缀。
-- [ ] 生成文件无法完全避免，但要保证来源清楚。
+- [x] 确认 CRM SQL 集中在：
+
+```text
+server/pkg/db/queries/crm.sql
+```
+
+- [x] 搜索 `server/pkg/db/queries/*.sql`，`crm_` / `CRM` 命中只在 `crm.sql`。
+- [x] 本轮无新增/修改非 CRM query。
+- [x] 本轮无 sqlc generated diff；无需重新生成，避免制造无功能变更的大面积 generated 改动。
+- [x] generated 层保留必要 shared package 现状：`crm.sql.go` 与 `models.go` 中 CRM 表模型属于 sqlc 输出边界，可接受。
 
 ### 验证
 
-- [ ] `sqlc generate` 后 diff 可解释
-- [ ] 非 CRM query 无功能变更
-- [ ] 后端 `go test ./...` 通过
+- [x] 非 CRM query 无功能变更
+- [x] 本轮无 `server/pkg/db/generated/*` 改动
+- [ ] 后端 `go test ./...` in CI（本机禁止）
 
 ## 9. 全量验证计划
 
