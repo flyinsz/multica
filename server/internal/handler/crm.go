@@ -3894,6 +3894,9 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 		slog.Warn("CRM account profile LLM generation failed; using deterministic fallback", "account_id", uuidToString(accountID), "error", err)
 	}
 	profile = cleanCRMProfile(profile)
+	if profileSummary := strings.TrimSpace(crmProfileAnyText(profile["customer_summary"])); profileSummary != "" && !isCRMProfilePlaceholder(profileSummary) {
+		summary = profileSummary
+	}
 	profileJSON, _ := json.Marshal(profile)
 	var id pgtype.UUID
 	var rawProfile []byte
