@@ -7,40 +7,9 @@ import {
   EMPTY_CRM_EMAILENGINE_STATUS,
   EMPTY_CRM_IMAP_IMPORT_RESPONSE,
   EMPTY_CRM_IMAP_PREVIEW_RESPONSE,
-} from "../api/schemas";
-import type {
-  CreateCRMAccountRequest,
-  CreateCRMCommunicationNoteRequest,
-  CreateCRMContactRequest,
-  CreateCRMEmailMessageRequest,
-  CreateCRMEmailThreadRequest,
-  CreateCRMFollowUpIssueRequest,
-  CRMAccount,
-  CRMAccountProfile,
-  CRMCommunicationNote,
-  CRMContact,
-  CRMEmailEngineStatus,
-  CRMEmailMessage,
-  CRMEmailThread,
-  CRMIMAPImportResponse,
-  CRMIMAPPreviewResponse,
-  CRMIMAPSetting,
-  CRMIMAPTestResponse,
-  LinkCRMAccountProjectRequest,
-  LinkCRMAccountProjectsResponse,
-  ListCRMAccountsResponse,
-  ListCRMCommunicationNotesResponse,
-  ListCRMContactsResponse,
-  ListCRMEmailMessagesResponse,
-  ListCRMEmailThreadAssociationSuggestionsResponse,
-  ListCRMEmailThreadsResponse,
-  ListCRMIMAPSettingsResponse,
-  UpsertCRMAccountProfileRequest,
-  UpsertCRMIMAPSettingRequest,
-  UpdateCRMEmailThreadAssociationRequest,
-  Issue,
-  ProjectResource,
-} from "../types";
+} from "./schemas";
+import type { CreateCRMAccountRequest, CreateCRMCommunicationNoteRequest, CreateCRMContactRequest, CreateCRMEmailMessageRequest, CreateCRMEmailThreadRequest, CreateCRMFollowUpIssueRequest, CRMAccount, CRMAccountProfile, CRMCommunicationNote, CRMContact, CRMEmailEngineStatus, CRMEmailMessage, CRMEmailThread, CRMIMAPImportResponse, CRMIMAPPreviewResponse, CRMIMAPSetting, CRMIMAPTestResponse, LinkCRMAccountProjectRequest, LinkCRMAccountProjectsResponse, ListCRMAccountsResponse, ListCRMCommunicationNotesResponse, ListCRMContactsResponse, ListCRMEmailMessagesResponse, ListCRMEmailThreadAssociationSuggestionsResponse, ListCRMEmailThreadsResponse, ListCRMIMAPSettingsResponse, UpsertCRMAccountProfileRequest, UpsertCRMIMAPSettingRequest, UpdateCRMEmailThreadAssociationRequest } from "./types";
+import type { Issue, ProjectResource } from "../types";
 
 export const crmApi = {
   async listCRMAccounts(params?: {

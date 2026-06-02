@@ -6,7 +6,7 @@ import { Bot, Flame, Mail, PenLine, Plus, Sparkles, TrendingUp, Users } from "lu
 import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/crm/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
-import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountStatus } from "@multica/core/types";
+import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountStatus } from "@multica/core/crm/types";
 
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";

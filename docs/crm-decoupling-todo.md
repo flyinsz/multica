@@ -23,7 +23,7 @@
 - [x] 解耦 server 核心 router 中的 CRM 路由
 - [x] 回退 Project API 内嵌 resources 的核心改动
 - [x] 解耦前端 CRM API client
-- [ ] 解耦 CRM schemas/types
+- [x] 解耦 CRM schemas/types
 - [x] 解耦 CRM paths
 - [x] 解耦 sidebar CRM 导航
 - [ ] 解耦 CRM scheduler 启动逻辑
@@ -165,14 +165,14 @@ packages/views/crm/components/*.tsx
 rg 'api\.(listCRM|getCRM|createCRM|updateCRM|deleteCRM|upsertCRM|refreshCRM|suggestCRM|applyCRM|testCRM|previewCRM|importCRM|syncCRM|trashCRM|restoreCRM|moveCRM|downloadCRM|getCRMEmailAttachment|toggleCRM)' packages
 ```
 
-- [ ] 前端 build 通过
+- [x] 前端 typecheck 通过（未在本机跑 Go test）。
 - [ ] CRM dashboard / customers / account detail / emails / AI settings 基本流程验证
 
 ### 性能影响
 
 无。仍走同一个 fetch/request、同一个后端 endpoint。
 
-## 4. 待做：CRM schemas/types 解耦
+## 4. 已完成：CRM schemas/types 解耦
 
 ### 当前强耦合
 
@@ -187,20 +187,22 @@ packages/core/crm/schemas.ts
 packages/core/crm/types.ts
 ```
 
-- [ ] CRM schema 迁移到 CRM 专属文件。
-- [ ] `packages/core/api/schemas.ts` 回退官方核心 schema。
-- [ ] CRM API 使用 CRM schema 做 parse/fallback。
+CRM types no longer exported from `packages/core/types/index.ts`; CRM callers import `@multica/core/crm/types`.
+
+- [x] CRM schema 迁移到 CRM 专属文件。
+- [x] `packages/core/api/schemas.ts` 回退官方核心 schema。
+- [x] CRM API 使用 CRM schema 做 parse/fallback。
 
 ### 验证
 
-- [ ] 搜索确认核心 schemas 中无 CRM：
+- [x] 搜索确认核心 schemas 中无 CRM：
 
 ```bash
 rg 'CRM|crm' packages/core/api/schemas.ts
 ```
 
-- [ ] 前端 build 通过
-- [ ] CRM API fallback 行为不变
+- [x] 前端 typecheck 通过（未在本机跑 Go test）。
+- [x] CRM API fallback 行为不变：schema/fallback 搬迁，调用点不变。
 
 ## 5. 已完成：CRM paths 解耦
 
@@ -456,7 +458,7 @@ docker compose down -v
 2. [ ] sidebar 导航解耦
 3. [ ] scheduler 启动解耦
 4. [x] CRM API client 解耦
-5. [ ] CRM schemas/types 解耦
+5. [x] CRM schemas/types 解耦
 6. [ ] sqlc/generated 审计
 7. [ ] 前后端测试
 8. [ ] GHCR 构建

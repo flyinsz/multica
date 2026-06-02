@@ -20,22 +20,8 @@ import { projectKeys, projectListOptions } from "@multica/core/projects";
 import { projectResourceKeys, projectResourcesOptions } from "@multica/core/projects/resource-queries";
 import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { useNavigation } from "../../navigation";
-import type {
-  CRMAccount,
-  CRMAccountPriority,
-  CRMAccountRating,
-  CRMAccountSource,
-  CRMAccountStatus,
-  CRMAccountType,
-  CRMCommunicationChannel,
-  CRMCommunicationDirection,
-  CRMContact,
-  CRMContactDecisionRole,
-  CreateCRMContactRequest,
-  Issue,
-  Project,
-  ProjectResource,
-} from "@multica/core/types";
+import type { CRMAccount, CRMAccountPriority, CRMAccountRating, CRMAccountSource, CRMAccountStatus, CRMAccountType, CRMCommunicationChannel, CRMCommunicationDirection, CRMContact, CRMContactDecisionRole, CreateCRMContactRequest } from "@multica/core/crm/types";
+import type { Issue, Project, ProjectResource } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {

@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { crmApi } from "./api";
-import type { ListCRMAccountsParams } from "../types";
+import type { ListCRMAccountsParams } from "./types";
 
 export const crmKeys = {
   all: (wsId: string) => ["crm", wsId] as const,

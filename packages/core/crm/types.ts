@@ -1,4 +1,4 @@
-import type { ProjectResource } from "./project";
+import type { ProjectResource } from "../types";
 
 export type CRMAccountStatus = "active" | "inactive" | "prospect" | "archived";
 export type CRMAccountType = "prospect" | "customer" | "partner" | "supplier" | "competitor" | "other";

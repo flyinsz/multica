@@ -61,6 +61,8 @@
     "./crm": "./crm/index.ts",
     "./crm/api": "./crm/api.ts",
     "./crm/paths": "./crm/paths.ts",
+    "./crm/schemas": "./crm/schemas.ts",
+    "./crm/types": "./crm/types.ts",
     "./crm/queries": "./crm/queries.ts",
     "./labels": "./labels/index.ts",
     "./labels/queries": "./labels/queries.ts",

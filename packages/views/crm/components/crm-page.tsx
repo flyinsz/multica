@@ -8,7 +8,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { crmAccountListOptions, crmKeys } from "@multica/core/crm/queries";
 import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { useNavigation } from "../../navigation";
-import type { CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountSort, CRMAccountSource, CRMAccountStatus, CRMAccountType, ListCRMAccountsParams } from "@multica/core/types";
+import type { CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountSort, CRMAccountSource, CRMAccountStatus, CRMAccountType, ListCRMAccountsParams } from "@multica/core/crm/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
