@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeft, Bot, Clock, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { crmKeys } from "@multica/core/crm/queries";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -184,7 +184,7 @@ function buildForm(setting: CRMAISetting): FormState {
 
 function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   const wsId = useWorkspaceId();
-  const paths = useWorkspacePaths();
+  const paths = useCRMWorkspacePaths();
   const [limit, setLimit] = useState(20);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const { data, isLoading, isFetching } = useQuery({

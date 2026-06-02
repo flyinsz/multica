@@ -9,7 +9,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
 import { useModalStore } from "@multica/core/modals";
 import { crmAccountListOptions, crmContactListOptions, crmEmailMessageListOptions, crmEmailThreadListOptions, crmKeys } from "@multica/core/crm/queries";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import type { CRMAccount, CRMContact, CRMEmailListCounts, CRMEmailListItem, CRMEmailMessage, CRMEmailThread, CRMEmailThreadAssociationSuggestion, CRMIMAPSetting, CreateCRMContactRequest, Issue, Project } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -329,7 +329,7 @@ export function CRMEmailsPage() {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
-  const paths = useWorkspacePaths();
+  const paths = useCRMWorkspacePaths();
   const { t, i18n } = useT("crm");
   const initialDraftId = navigation.searchParams.get("draft");
   const initialThreadId = navigation.searchParams.get("thread");
@@ -2097,7 +2097,7 @@ export function CRMEmailsPage() {
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.related_project)} value={selectedProject?.title ?? t(($) => $.emails.no_project_link)} />
                   <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssues.length ? selectedIssues.map((issue) => issue.identifier).join(", ") : t(($) => $.emails.no_issue_link)} onClick={selectedIssueIds.length ? () => { if (selectedIssueIds.length === 1) setIssueDialogId(selectedIssueIds[0]!); else setIssuePickerOpen(true); } : undefined} />
                   {selectedAccount && (
-                    <Button variant="ghost" size="sm" onClick={() => navigation.push(paths.crmCustomerDetail(selectedAccount.id))}>
+                    <Button variant="ghost" size="sm" onClick={() => navigation.push(paths.customerDetail(selectedAccount.id))}>
                       {t(($) => $.emails.open_customer)} <ArrowRight className="ml-1 size-3" />
                     </Button>
                   )}
@@ -2224,7 +2224,7 @@ export function CRMEmailsPage() {
               {detailDialog.account.notes ? <div className="rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">{detailDialog.account.notes}</div> : null}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setDetailDialog(null)}>{t(($) => $.actions.cancel)}</Button>
-                <Button onClick={() => window.open(paths.crmCustomerDetail(detailDialog.account.id), "_blank", "noopener,noreferrer")}>客户详情</Button>
+                <Button onClick={() => window.open(paths.customerDetail(detailDialog.account.id), "_blank", "noopener,noreferrer")}>客户详情</Button>
               </DialogFooter>
             </>
           )}
@@ -2250,7 +2250,7 @@ export function CRMEmailsPage() {
               {detailDialog.contact.notes ? <div className="rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">{detailDialog.contact.notes}</div> : null}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setDetailDialog(null)}>{t(($) => $.actions.cancel)}</Button>
-                <Button onClick={() => window.open(paths.crmCustomerDetail(detailDialog.contact.account_id || "") + `#contact-${detailDialog.contact.id}`, "_blank", "noopener,noreferrer")}>联系人详情</Button>
+                <Button onClick={() => window.open(paths.customerDetail(detailDialog.contact.account_id || "") + `#contact-${detailDialog.contact.id}`, "_blank", "noopener,noreferrer")}>联系人详情</Button>
               </DialogFooter>
             </>
           )}

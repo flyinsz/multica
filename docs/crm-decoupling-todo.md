@@ -24,8 +24,8 @@
 - [x] 回退 Project API 内嵌 resources 的核心改动
 - [ ] 解耦前端 CRM API client
 - [ ] 解耦 CRM schemas/types
-- [ ] 解耦 CRM paths
-- [ ] 解耦 sidebar CRM 导航
+- [x] 解耦 CRM paths
+- [x] 解耦 sidebar CRM 导航
 - [ ] 解耦 CRM scheduler 启动逻辑
 - [ ] 审计 sqlc/generated 与 DB 查询边界
 - [ ] 全量测试、GHCR 构建、部署验证
@@ -202,7 +202,7 @@ rg 'CRM|crm' packages/core/api/schemas.ts
 - [ ] 前端 build 通过
 - [ ] CRM API fallback 行为不变
 
-## 5. 待做：CRM paths 解耦
+## 5. 已完成：CRM paths 解耦
 
 ### 当前强耦合
 
@@ -216,13 +216,13 @@ rg 'CRM|crm' packages/core/api/schemas.ts
 
 ### 目标结构
 
-- [ ] 新建：
+- [x] 新建：
 
 ```text
 packages/core/crm/paths.ts
 ```
 
-- [ ] 提供：
+- [x] 提供：
 
 ```ts
 crmPaths.workspace(slug).dashboard()
@@ -232,12 +232,12 @@ crmPaths.workspace(slug).emails()
 crmPaths.workspace(slug).aiSettings()
 ```
 
-- [ ] CRM 页面改用 `crmPaths`。
-- [ ] 核心 `paths.ts` 回退官方内容。
+- [x] CRM 页面改用 `useCRMWorkspacePaths`。
+- [x] 核心 `paths.ts` 回退官方内容。
 
 ### 验证
 
-- [ ] 搜索确认核心 paths 中无 CRM：
+- [x] 搜索确认核心 paths 中无 CRM：
 
 ```bash
 rg 'crm' packages/core/paths/paths.ts
@@ -250,7 +250,7 @@ rg 'crm' packages/core/paths/paths.ts
 
 无。纯字符串函数。
 
-## 6. 待做：sidebar CRM 导航解耦
+## 6. 已完成：sidebar CRM 导航解耦
 
 ### 当前强耦合
 
@@ -260,13 +260,13 @@ rg 'crm' packages/core/paths/paths.ts
 
 优先方案：核心只保留 extension slot。
 
-- [ ] 新建 CRM nav provider：
+- [x] 新建 CRM nav provider：
 
 ```text
 packages/views/crm/sidebar-nav.tsx
 ```
 
-- [ ] 核心 sidebar 只保留：
+- [x] 核心 sidebar 只保留最小桥接：
 
 ```tsx
 <SidebarExtensions workspaceSlug={workspaceSlug} />
@@ -278,14 +278,14 @@ packages/views/crm/sidebar-nav.tsx
 <CRMNavGroup />
 ```
 
-- [ ] CRM nav 内部自己处理：
+- [x] CRM nav 内部自己处理：
   - icon
   - title
   - active path
   - CRM paths
   - i18n 文案
 
-- [ ] layout locale 中 CRM 文案若必须存在，改为 CRM locale 自有文案。
+- [x] layout locale 中 CRM 文案已移出，改用 CRM locale 自有文案。
 
 ### 验证
 

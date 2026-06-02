@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Bot, Flame, Mail, PenLine, Plus, Sparkles, TrendingUp, Users } from "lucide-react";
 import { crmAccountListOptions, crmEmailThreadListOptions } from "@multica/core/crm/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import type { CRMAccount, CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountStatus } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -89,7 +89,7 @@ function ReportPanel({
 
 export function CRMDashboardPage() {
   const wsId = useWorkspaceId();
-  const paths = useWorkspacePaths();
+  const paths = useCRMWorkspacePaths();
   const navigation = useNavigation();
   const { t } = useT("crm");
   const { data: todayFollowUps = [], isLoading: todayLoading } = useQuery(crmAccountListOptions(wsId, { follow_up_bucket: "today", sort: "next_follow_up" }));
@@ -127,10 +127,10 @@ export function CRMDashboardPage() {
     Object.entries(filter).forEach(([key, value]) => {
       if (value) params.set(key, value);
     });
-    navigation.push(`${paths.crmCustomers()}${params.size ? `?${params.toString()}` : ""}`);
+    navigation.push(`${paths.customers()}${params.size ? `?${params.toString()}` : ""}`);
   };
 
-  const openAIEmailComposer = () => navigation.push(`${paths.crmEmails()}?compose=ai`);
+  const openAIEmailComposer = () => navigation.push(`${paths.emails()}?compose=ai`);
 
   const reportGroups = useMemo(() => {
     const statuses = countBy(allAccounts, (account) => account.status);
@@ -148,7 +148,7 @@ export function CRMDashboardPage() {
   const accountList = (items: CRMAccount[], empty: string) => {
     if (items.length === 0) return <p className="text-sm text-muted-foreground">{empty}</p>;
     return <div className="space-y-2">{items.map((account) => (
-      <button key={account.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(paths.crmCustomerDetail(account.id))}>
+      <button key={account.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(paths.customerDetail(account.id))}>
         <span className="truncate font-medium">{account.name}</span>
         <span className="ml-2 shrink-0 text-xs text-muted-foreground">{formatDate(account.next_follow_up_at || account.updated_at)}</span>
       </button>
@@ -164,14 +164,14 @@ export function CRMDashboardPage() {
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={openAIEmailComposer}><PenLine className="mr-1 size-4" />{t(($) => $.dashboard.ai_write_email)}</Button>
-          <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmEmails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
-          <Button size="sm" onClick={() => navigation.push(paths.crmCustomers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
+          <Button size="sm" variant="outline" onClick={() => navigation.push(paths.emails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
+          <Button size="sm" onClick={() => navigation.push(paths.customers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
       </PageHeader>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 pb-11">
         <div className="grid gap-3 md:grid-cols-5">
           {stats.map(({ label, value, icon: Icon, filter }) => (
-            <button key={label} type="button" className="rounded-lg border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-muted/30" onClick={() => filter === "ai" ? navigation.push(paths.crmAISettings()) : filter ? navigateToCustomers(filter) : navigation.push(paths.crmEmails())}>
+            <button key={label} type="button" className="rounded-lg border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-muted/30" onClick={() => filter === "ai" ? navigation.push(paths.aiSettings()) : filter ? navigateToCustomers(filter) : navigation.push(paths.emails())}>
               <div className="flex items-center justify-between text-xs text-muted-foreground"><span>{label}</span><Icon className="size-4" /></div>
               <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
             </button>
@@ -213,14 +213,14 @@ export function CRMDashboardPage() {
               <h2 className="flex items-center gap-2 text-sm font-medium"><Sparkles className="size-4 text-primary" />{t(($) => $.dashboard.ai_board_title)}</h2>
               <p className="mt-1 text-xs text-muted-foreground">{t(($) => $.dashboard.ai_board_help)}</p>
             </div>
-            <Button size="sm" variant="outline" onClick={() => navigation.push(paths.crmAISettings())}>{t(($) => $.dashboard.ai_settings)}</Button>
+            <Button size="sm" variant="outline" onClick={() => navigation.push(paths.aiSettings())}>{t(($) => $.dashboard.ai_settings)}</Button>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => navigation.push(paths.crmEmails())}>
+            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => navigation.push(paths.emails())}>
               <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_pending_replies)}</div>
               <div className="mt-2 text-2xl font-semibold tabular-nums">{pendingReplyThreads.length}</div>
             </button>
-            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => navigation.push(paths.crmAISettings())}>
+            <button type="button" className="rounded-lg border p-3 text-left hover:bg-muted/40" onClick={() => navigation.push(paths.aiSettings())}>
               <div className="text-xs text-muted-foreground">{t(($) => $.dashboard.ai_enabled_automations)}</div>
               <div className="mt-2 text-2xl font-semibold tabular-nums">{aiSettingsLoading ? "—" : enabledAISettings.length}</div>
             </button>
@@ -238,7 +238,7 @@ export function CRMDashboardPage() {
               <h3 className="text-xs font-medium text-muted-foreground">{t(($) => $.dashboard.ai_work_queue)}</h3>
               <div className="mt-3 space-y-2">
                 {pendingReplyThreads.slice(0, 4).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.dashboard.ai_no_pending)}</p> : pendingReplyThreads.slice(0, 4).map((thread: any) => {
-                  const emailPath = `${paths.crmEmails()}?thread=${encodeURIComponent(thread.thread_id ?? thread.id)}&folder=${encodeURIComponent(thread.folder ?? "inbox")}`;
+                  const emailPath = `${paths.emails()}?thread=${encodeURIComponent(thread.thread_id ?? thread.id)}&folder=${encodeURIComponent(thread.folder ?? "inbox")}`;
                   return <button key={thread.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(emailPath)}><span className="truncate font-medium">{thread.subject || t(($) => $.notes.untitled)}</span><Mail className="ml-2 size-4 text-muted-foreground" /></button>;
                 })}
               </div>
@@ -274,7 +274,7 @@ export function CRMDashboardPage() {
               {emailLoading ? <Skeleton className="h-24" /> : topEmailThreads.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.dashboard.no_emails)}</p> : (
                 <div className="space-y-2">{topEmailThreads.map((item) => {
                   const subject = item.subject || t(($) => $.notes.untitled);
-                  const emailPath = `${paths.crmEmails()}?thread=${encodeURIComponent((item as any).thread_id ?? item.id)}&folder=${encodeURIComponent((item as any).folder ?? "inbox")}`;
+                  const emailPath = `${paths.emails()}?thread=${encodeURIComponent((item as any).thread_id ?? item.id)}&folder=${encodeURIComponent((item as any).folder ?? "inbox")}`;
                   return (
                     <button key={item.id} type="button" className="flex w-full items-center justify-between rounded-md border p-2 text-left text-sm hover:bg-muted/50" onClick={() => navigation.push(emailPath)}>
                       <span className="truncate font-medium">{subject}</span>

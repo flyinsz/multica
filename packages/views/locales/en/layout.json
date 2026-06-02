@@ -4,10 +4,6 @@
     "my_issues": "My Issues",
     "issues": "Issues",
     "projects": "Projects",
-    "crm": "CRM",
-    "customers": "Customers",
-    "emails": "Emails",
-    "ai_settings": "AI settings",
     "autopilots": "Autopilots",
     "agents": "Agents",
     "runtimes": "Runtimes",
@@ -37,7 +33,6 @@
     "new_issue_shortcut": "C",
     "pinned_label": "Pinned",
     "workspace_group": "Workspace",
-    "crm_group": "CRM",
     "configure_group": "Configure",
     "unread_overflow": "99+"
   }

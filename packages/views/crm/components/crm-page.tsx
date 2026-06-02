@@ -6,7 +6,7 @@ import { Building2, Plus, Search } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { crmAccountListOptions, crmKeys } from "@multica/core/crm/queries";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { useNavigation } from "../../navigation";
 import type { CRMAccountFollowUpBucket, CRMAccountPriority, CRMAccountRating, CRMAccountSort, CRMAccountSource, CRMAccountStatus, CRMAccountType, ListCRMAccountsParams } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -215,7 +215,7 @@ export function CRMPage() {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
-  const paths = useWorkspacePaths();
+  const paths = useCRMWorkspacePaths();
   const { t: rawT, i18n } = useT("crm");
   const t = rawT as Translation;
   const locale = normalizeLocale(i18n.language);
@@ -288,7 +288,7 @@ export function CRMPage() {
       setForm(blankAccountForm());
       setCreateOpen(false);
       await queryClient.invalidateQueries({ queryKey: crmKeys.accounts(wsId) });
-      navigation.push(paths.crmCustomerDetail(account.id));
+      navigation.push(paths.customerDetail(account.id));
     },
   });
 
@@ -390,7 +390,7 @@ export function CRMPage() {
                   <TableRow
                     key={account.id}
                     className="cursor-pointer"
-                    onClick={() => navigation.push(paths.crmCustomerDetail(account.id))}
+                    onClick={() => navigation.push(paths.customerDetail(account.id))}
                   >
                     <TableCell className="font-medium">{account.name}</TableCell>
                     <TableCell><AccountTypeLabel type={account.account_type} t={t} /></TableCell>

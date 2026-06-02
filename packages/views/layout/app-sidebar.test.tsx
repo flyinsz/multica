@@ -84,17 +84,13 @@ vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "user-1" } }),
 }));
 vi.mock("@multica/core/paths", () => ({
-  paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues`, crm: () => `/${slug}/crm/dashboard` }) },
+  paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
   useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
-    crm: () => "/acme/crm/dashboard",
-    crmCustomers: () => "/acme/crm/customers",
-    crmEmails: () => "/acme/crm/emails",
-    crmAISettings: () => "/acme/crm/ai-settings",
     autopilots: () => "/acme/autopilots",
     agents: () => "/acme/agents",
     runtimes: () => "/acme/runtimes",
@@ -102,6 +98,15 @@ vi.mock("@multica/core/paths", () => ({
     settings: () => "/acme/settings",
     issueDetail: (id: string) => `/acme/issues/${id}`,
     projectDetail: (id: string) => `/acme/projects/${id}`,
+  }),
+}));
+vi.mock("@multica/core/crm/paths", () => ({
+  useCRMWorkspacePaths: () => ({
+    dashboard: () => "/acme/crm/dashboard",
+    customers: () => "/acme/crm/customers",
+    customerDetail: (id: string) => `/acme/crm/customers/${id}`,
+    emails: () => "/acme/crm/emails",
+    aiSettings: () => "/acme/crm/ai-settings",
   }),
 }));
 vi.mock("@multica/core/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@multica/core/api")>()), api: {} }));

@@ -18,7 +18,7 @@ import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
 import { useModalStore } from "@multica/core/modals";
 import { projectKeys, projectListOptions } from "@multica/core/projects";
 import { projectResourceKeys, projectResourcesOptions } from "@multica/core/projects/resource-queries";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useCRMWorkspacePaths } from "@multica/core/crm/paths";
 import { useNavigation } from "../../navigation";
 import type {
   CRMAccount,
@@ -482,7 +482,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
-  const paths = useWorkspacePaths();
+  const paths = useCRMWorkspacePaths();
   const { t: rawT, i18n } = useT("crm");
   const t = rawT as Translation;
   const locale = normalizeLocale(i18n.language);
@@ -611,7 +611,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
 
   const deleteAccount = useMutation({
     mutationFn: () => api.deleteCRMAccount(accountId),
-    onSuccess: () => navigation.push(paths.crmCustomers()),
+    onSuccess: () => navigation.push(paths.customers()),
   });
 
   const saveContact = useMutation({
@@ -745,7 +745,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
           <button
             type="button"
             className="rounded px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => navigation.push(paths.crmCustomers())}
+            onClick={() => navigation.push(paths.customers())}
           >
             {t(($) => $.customers.title)}
           </button>
@@ -974,7 +974,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                     const when = item.received_at || item.sent_at || item.last_message_at || item.updated_at;
                     const sender = item.direction === "outbound" ? (item.to_emails || []).join(", ") : [item.from_name, item.from_email].filter(Boolean).join(" <").replace(/ <$/, "");
                     return (
-                      <button key={item.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => window.open(`${paths.crmEmails()}?thread=${encodeURIComponent(threadId)}&folder=${encodeURIComponent(folder)}`, "_blank", "noopener,noreferrer") }>
+                      <button key={item.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => window.open(`${paths.emails()}?thread=${encodeURIComponent(threadId)}&folder=${encodeURIComponent(folder)}`, "_blank", "noopener,noreferrer") }>
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 truncate font-medium">{item.subject || t(($) => $.notes.untitled)}</div>
                           <Badge variant={item.direction === "outbound" ? "secondary" : "default"}>{item.direction === "outbound" ? "发件箱" : "收件箱"}</Badge>
