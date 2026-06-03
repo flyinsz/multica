@@ -510,8 +510,14 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			continue
 		}
 		if issueID.Valid {
-			if err := h.createCRMPendingReplyDraft(ctx, workspaceID, issueID, candidate, reviewerLine, aiContext); err != nil {
-				slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
+			if len(missingReasons) == 0 {
+				if err := h.createCRMPendingReplyDraft(ctx, workspaceID, issueID, candidate, reviewerLine, aiContext); err != nil {
+					slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
+				}
+			} else {
+				if err := h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "上下文不足，未自动创建邮件草稿。请先补全 Customer Wiki / 客户身份 / 联系人信息 / 历史往来，再由负责人判断是否进入草稿生成。阻断原因："+strings.Join(missingReasons, "；")); err != nil {
+					slog.Warn("CRM pending reply missing context comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
+				}
 			}
 			created++
 			kind := "created"
@@ -679,10 +685,7 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 	}
 	contextSummary := crmAIContextIssueSummary(aiContext)
 	base := fmt.Sprintf("CRM 邮件待回复巡检自动创建。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\nCustomer Wiki 上下文（不含全量历史）：\n%s\n\n", accountName, candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, contextSummary)
-	if len(missingReasons) > 0 {
-		return base + fmt.Sprintf("处理类型：需要 Researcher 先补全上下文，暂不生成回复草稿。\n阻断原因：%s\n\nResearcher 任务：\n1. 先刷新/补充 Customer Wiki，再基于发件人邮箱、域名、签名、历史邮件、CRM 现有资料调研客户背景。\n2. 判断是否可关联已有客户/联系人；如可关联，给出 account/contact 建议和依据。\n3. 若不能关联，判断是否应创建潜在客户。\n4. 判断是否需要回复；缺上下文不是“不需要回复”的理由。\n5. 输出草稿生成所需上下文；不直接发送邮件。\n\n后续流转：Researcher 返回足够上下文后，按 Multica 原生 issue assignee/status 机制转交 CRM-Assistant/Jarvis 生成草稿；草稿生成后转交客户所有人 review。\n%s", strings.Join(missingReasons, "；"), reviewerLine)
-	}
-	defaultInstructions := fmt.Sprintf("处理类型：上下文足够，可进入回复草稿生成。\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须优先使用上方 Customer Wiki 上下文，并可通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来补充；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号。\n3. 草稿说明必须先用中文阐述：回复立场、用意、风险考量、哪些事实需要人工确认，让用户知道为什么这样写。\n4. 随后创建一封待审核邮件草稿；邮件正文必须使用原邮件语言撰写。若原邮件是英文，草稿正文写英文；若原邮件是中文，草稿正文写中文；其他语言按原邮件语言回复。\n5. 邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n6. 事实、报价、交期、质量承诺、售后承诺、附件内容必须客户所有人审核后才能发送。\n7. 草稿生成完成后，必须在 Issue 评论中附上草稿链接，把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n8. %s\n\n流转说明：使用 Multica 原生 issue assignee/status 自动流转；Issue 只放 Customer Wiki 精简上下文，不展开全量邮件/客户档案。", reviewerLine)
+	defaultInstructions := fmt.Sprintf("处理类型：先判断上下文是否足够，再决定进入哪条流程。\n\nA. 上下文不足：\n1. 暂不创建回复草稿，先转交 Researcher 补全上下文。\n2. 阻断原因：{{missing_reasons}}\n3. Researcher 先刷新/补充 Customer Wiki，再基于发件人邮箱、域名、签名、历史邮件、CRM 现有资料调研客户背景。\n4. 判断是否可关联已有客户/联系人；如可关联，给出 account/contact 建议和依据；若不能关联，判断是否应创建潜在客户。\n5. 判断是否需要回复；缺上下文不是“不需要回复”的理由。\n6. 输出草稿生成所需上下文；不直接发送邮件。\n\nB. 上下文足够：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须优先使用上方 Customer Wiki 上下文，并可通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来补充；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号。\n3. 草稿说明必须先用中文阐述：回复立场、用意、风险考量、哪些事实需要人工确认，让用户知道为什么这样写。\n4. 随后创建一封待审核邮件草稿；邮件正文必须使用原邮件语言撰写。若原邮件是英文，草稿正文写英文；若原邮件是中文，草稿正文写中文；其他语言按原邮件语言回复。\n5. 邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n6. 事实、报价、交期、质量承诺、售后承诺、附件内容必须客户所有人审核后才能发送。\n7. 草稿生成完成后，必须在 Issue 评论中附上草稿链接，把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n8. %s\n\n流转说明：使用 Multica 原生 issue assignee/status 自动流转；Issue 只放 Customer Wiki 精简上下文，不展开全量邮件/客户档案。", reviewerLine)
 	instructions := strings.TrimSpace(template)
 	if instructions == "" {
 		instructions = defaultInstructions
@@ -698,6 +701,7 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 		"latest_at":       latestAt,
 		"reviewer_line":   reviewerLine,
 		"context_summary": contextSummary,
+		"missing_reasons": strings.Join(missingReasons, "；"),
 	})
 }
 
