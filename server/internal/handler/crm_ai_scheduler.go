@@ -136,7 +136,7 @@ func ensureDefaultCRMAISettings(ctx context.Context, db *pgxpool.Pool) error {
 		SELECT w.id, v.key, v.enabled, v.interval_minutes, v.max_items, v.config::jsonb
 		FROM workspace w
 		CROSS JOIN (VALUES
-			('email_pending_reply', true, 5, 10, '{}'::text),
+			('email_pending_reply', true, 1, 10, '{}'::text),
 			('due_followup', true, 60, 20, '{}'::text),
 			('profile_new_activity_refresh', true, 5, 20, '{"trigger":"new_activity"}'::text),
 			('profile_daily_refresh', false, 1440, 100, '{"time":"03:00"}'::text)

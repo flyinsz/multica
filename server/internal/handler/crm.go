@@ -4719,8 +4719,8 @@ type UpdateCRMAISettingRequest struct {
 func defaultCRMAISettings(workspaceID pgtype.UUID) []CRMAISettingResponse {
 	now := time.Now().UTC()
 	return []CRMAISettingResponse{
-		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "email_pending_reply", Enabled: true, IntervalMinutes: 5, MaxItemsPerRun: 5, Config: json.RawMessage(`{"email_default_language":"zh-Hans"}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
-		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "due_followup", Enabled: true, IntervalMinutes: 15, MaxItemsPerRun: 10, Config: json.RawMessage(`{}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "email_pending_reply", Enabled: true, IntervalMinutes: 1, MaxItemsPerRun: 5, Config: json.RawMessage(`{"email_default_language":"zh-Hans"}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "due_followup", Enabled: true, IntervalMinutes: 60, MaxItemsPerRun: 10, Config: json.RawMessage(`{}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
 		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "profile_new_activity_refresh", Enabled: true, IntervalMinutes: 5, MaxItemsPerRun: 20, Config: json.RawMessage(`{"trigger":"new_activity"}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
 		{WorkspaceID: uuidToString(workspaceID), AutomationKey: "profile_daily_refresh", Enabled: false, IntervalMinutes: 1440, MaxItemsPerRun: 100, Config: json.RawMessage(`{"time":"03:00"}`), LastResult: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
 	}
@@ -4734,9 +4734,9 @@ func (h *Handler) ListCRMAISettings(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.DB.Query(r.Context(), `
 		WITH defaults AS (
-			SELECT $1::uuid AS workspace_id, 'email_pending_reply'::text AS automation_key, true AS enabled, 5::int AS interval_minutes, NULL::uuid AS assignee_agent_id, 5::int AS max_items_per_run, '{"email_default_language":"zh-Hans"}'::jsonb AS config
+			SELECT $1::uuid AS workspace_id, 'email_pending_reply'::text AS automation_key, true AS enabled, 1::int AS interval_minutes, NULL::uuid AS assignee_agent_id, 5::int AS max_items_per_run, '{"email_default_language":"zh-Hans"}'::jsonb AS config
 			UNION ALL
-			SELECT $1::uuid, 'due_followup'::text, true, 15::int, NULL::uuid, 10::int, '{}'::jsonb
+			SELECT $1::uuid, 'due_followup'::text, true, 60::int, NULL::uuid, 10::int, '{}'::jsonb
 			UNION ALL
 			SELECT $1::uuid, 'profile_new_activity_refresh'::text, true, 5::int, NULL::uuid, 20::int, '{"trigger":"new_activity"}'::jsonb
 			UNION ALL
