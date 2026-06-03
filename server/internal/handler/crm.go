@@ -4110,7 +4110,6 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	threadIDText := strings.TrimSpace(chi.URLParam(r, "threadId"))
-	workspaceIDText := uuidToString(workspaceID)
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT id, workspace_id, thread_id, account_id, contact_id, external_message_id,
 		       in_reply_to, reference_ids, COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(COALESCE(attachments, '[]'::jsonb)) AS elem), '[]'::jsonb), sent_append_warning,
@@ -4119,9 +4118,9 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 		       sent_at, received_at, body_text, body_html, snippet, direction,
 		       created_at, updated_at
 		FROM crm_email_message
-		WHERE workspace_id::text = $1 AND thread_id::text = $2
+		WHERE thread_id::text = $1
 		ORDER BY COALESCE(sent_at, received_at, created_at) ASC
-	`, workspaceIDText, threadIDText)
+	`, threadIDText)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
