@@ -303,6 +303,31 @@ func (h *Handler) refreshProfilesFromRows(ctx context.Context, workspaceID pgtyp
 	return map[string]any{"automation_key": key, "refreshed": refreshed, "failed": failed, "followup_updated": followupUpdated}, nil
 }
 
+func (h *Handler) loadCRMAccountProfileForAutomation(ctx context.Context, workspaceID, accountID pgtype.UUID) (CRMAccountProfileResponse, error) {
+	var id, wsID, accID pgtype.UUID
+	var summary, sourceSummary, updatedBy pgtype.Text
+	var profileJSON []byte
+	var createdAt, updatedAt pgtype.Timestamptz
+	err := h.DB.QueryRow(ctx, `
+		SELECT id, workspace_id, account_id, summary, COALESCE(profile_json, '{}'::jsonb), source_summary, updated_by, created_at, updated_at
+		FROM crm_account_profile
+		WHERE workspace_id=$1 AND account_id=$2`, workspaceID, accountID).Scan(&id, &wsID, &accID, &summary, &profileJSON, &sourceSummary, &updatedBy, &createdAt, &updatedAt)
+	if err != nil {
+		return CRMAccountProfileResponse{}, err
+	}
+	return CRMAccountProfileResponse{
+		ID:            uuidToString(id),
+		WorkspaceID:   uuidToString(wsID),
+		AccountID:     uuidToString(accID),
+		Summary:       textToPtr(summary),
+		ProfileJSON:   json.RawMessage(profileJSON),
+		SourceSummary: textToPtr(sourceSummary),
+		UpdatedBy:     textToPtr(updatedBy),
+		CreatedAt:     timestampToString(createdAt),
+		UpdatedAt:     timestampToString(updatedAt),
+	}, nil
+}
+
 func crmFollowupRecommendationFromProfile(profile CRMAccountProfileResponse) map[string]any {
 	if len(profile.ProfileJSON) == 0 {
 		return nil
@@ -576,19 +601,14 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		}
 		title := stringsTrimForCRM(fmt.Sprintf("跟进客户：%s", name), 120)
 		lowConfidenceNote := ""
-		profile, profileErr := h.regenerateCRMAccountProfile(ctx, workspaceID, accountID)
+		profile, profileErr := h.loadCRMAccountProfileForAutomation(ctx, workspaceID, accountID)
 		if profileErr == nil {
 			rec := crmFollowupRecommendationFromProfile(profile)
 			confidence := crmFollowupRecommendationConfidence(rec)
 			if confidence == "low" {
 				lowConfidenceNote = fmt.Sprintf("\n\n低置信跟进时间建议需人工确认：%s", strings.TrimSpace(crmProfileAnyText(rec["reason"])))
 			} else if next, ok := parseCRMAIFollowupTime(strings.TrimSpace(crmProfileAnyText(rec["next_follow_up_at"]))); ok && next.After(time.Now()) {
-				updated := h.applyCRMFollowupRecommendation(ctx, workspaceID, accountID, profile, "due_followup_review")
-				kind := "followup_date_already_future"
-				if updated {
-					kind = "followup_date_updated"
-				}
-				createdIssues = append(createdIssues, map[string]string{"title": title, "account_id": uuidToString(accountID), "kind": kind})
+				createdIssues = append(createdIssues, map[string]string{"title": title, "account_id": uuidToString(accountID), "kind": "followup_date_already_future"})
 				continue
 			}
 		}
@@ -752,7 +772,11 @@ func (h *Handler) createCRMPendingReplyDraft(ctx context.Context, workspaceID, i
 	var mailboxID pgtype.UUID
 	var fromEmail, subject, bodyText, inReplyTo string
 	var refs []string
-	if err := h.DB.QueryRow(ctx, `SELECT m.mailbox_id, COALESCE(m.from_email,''), COALESCE(m.subject,''), COALESCE(m.body_text,''), COALESCE(m.message_id,''), m.reference_ids FROM crm_email_message m WHERE m.workspace_id=$1 AND m.id=$2`, workspaceID, candidate.MessageID).Scan(&mailboxID, &fromEmail, &subject, &bodyText, &inReplyTo, &refs); err != nil {
+	if err := h.DB.QueryRow(ctx, `
+		SELECT NULLIF(m.source_metadata->>'mailbox_id','')::uuid,
+		       COALESCE(m.from_email,''), COALESCE(m.subject,''), COALESCE(m.body_text,''), COALESCE(m.in_reply_to, m.external_message_id, ''), m.reference_ids
+		FROM crm_email_message m
+		WHERE m.workspace_id=$1 AND m.id=$2`, workspaceID, candidate.MessageID).Scan(&mailboxID, &fromEmail, &subject, &bodyText, &inReplyTo, &refs); err != nil {
 		return err
 	}
 	if strings.TrimSpace(fromEmail) == "" {
@@ -821,7 +845,7 @@ func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID
 		SELECT i.id, COALESCE(i.status, '')
 		FROM crm_email_thread_issue_link l
 		JOIN issue i ON i.id=l.issue_id AND i.workspace_id=$1
-		WHERE l.thread_id=$2 AND i.origin_type='crm_ai' AND i.parent_issue_id IS NULL AND i.status <> 'cancelled'
+		WHERE l.thread_id=$2 AND i.parent_issue_id IS NULL AND i.status <> 'cancelled'
 		ORDER BY CASE WHEN i.status NOT IN ('done','cancelled') THEN 0 WHEN i.status='done' THEN 1 ELSE 2 END, i.created_at ASC
 		LIMIT 1`, workspaceID, threadID).Scan(&issueID, &status)
 	if errors.Is(err, pgx.ErrNoRows) {

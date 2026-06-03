@@ -11,7 +11,7 @@ import (
 func runCRMSchedulers(ctx context.Context, pool *pgxpool.Pool) {
 	go handler.NewCRMIMAPAutoSyncScheduler(
 		pool,
-		envDuration("CRM_IMAP_AUTO_SYNC_INTERVAL", 5*time.Minute),
+		envDuration("CRM_IMAP_AUTO_SYNC_INTERVAL", time.Minute),
 		envPositiveInt("CRM_IMAP_AUTO_SYNC_LIMIT", 100),
 	).Run(ctx)
 	go handler.NewCRMAIAutoScheduler(
