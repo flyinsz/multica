@@ -4136,7 +4136,7 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		messages = append(messages, crmEmailMessageToResponse(message))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "total": len(messages)})
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "total": len(messages), "source": "crm_email_messages_handler"})
 }
 
 func (h *Handler) CreateCRMEmailMessage(w http.ResponseWriter, r *http.Request) {
