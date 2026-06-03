@@ -232,15 +232,16 @@ func (h *Handler) runCRMRecentActivityProfileRefresh(ctx context.Context, worksp
 		limit = 20
 	}
 	rows, err := h.DB.Query(ctx, `
-		SELECT DISTINCT i.account_id
+		SELECT i.account_id
 		FROM crm_interaction i
 		LEFT JOIN crm_account_profile p ON p.workspace_id=i.workspace_id AND p.account_id=i.account_id
 		WHERE i.workspace_id=$1
 		  AND i.account_id IS NOT NULL
 		  AND i.occurred_at > now() - interval '24 hours'
 		  AND NOT (i.channel IN ('manual_note','other') AND i.direction='note' AND i.subject='AI 客户画像已刷新')
-		  AND (p.updated_at IS NULL OR p.updated_at < i.occurred_at OR p.updated_at < now() - interval '1 hour')
-		ORDER BY i.account_id
+		GROUP BY i.account_id, p.updated_at
+		HAVING p.updated_at IS NULL OR MAX(i.occurred_at) > p.updated_at
+		ORDER BY MAX(i.occurred_at) DESC
 		LIMIT $2`, workspaceID, limit)
 	if err != nil {
 		return nil, err
