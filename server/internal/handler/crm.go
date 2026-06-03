@@ -1289,6 +1289,32 @@ func normalizeCRMName(s string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
+func (h *Handler) crmEmailDraftURL(r *http.Request, workspaceID pgtype.UUID, draftID string) string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/")
+	if base == "" {
+		base = strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/")
+	}
+	if base == "" && r != nil {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		} else if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+			scheme = strings.Split(forwarded, ",")[0]
+		}
+		if host := strings.TrimSpace(r.Host); host != "" {
+			base = scheme + "://" + host
+		}
+	}
+	var slug string
+	if h != nil && h.DB != nil {
+		_ = h.DB.QueryRow(context.Background(), `SELECT slug FROM workspace WHERE id=$1`, workspaceID).Scan(&slug)
+	}
+	if strings.TrimSpace(slug) == "" {
+		return fmt.Sprintf("%s/crm/emails?draft=%s", base, url.QueryEscape(draftID))
+	}
+	return fmt.Sprintf("%s/%s/crm/emails?draft=%s", base, url.PathEscape(slug), url.QueryEscape(draftID))
+}
+
 func normalizedCRMKey(s string) string {
 	return strings.ToLowerSpecial(unicode.TurkishCase, normalizeCRMName(s))
 }
@@ -3544,7 +3570,8 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create CRM email draft")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": uuidToString(id)})
+	draftID := uuidToString(id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": draftID, "draft_url": h.crmEmailDraftURL(r, workspaceID, draftID)})
 }
 
 func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
