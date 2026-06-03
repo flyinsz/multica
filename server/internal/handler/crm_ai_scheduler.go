@@ -529,7 +529,7 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			}
 			continue
 		}
-		assigneeType, assigneeID := issueActors.CreatorType, mustParsePgUUID(issueActors.CreatorID)
+		assigneeType, assigneeID := issueActors.TodoAssigneeType, mustParsePgUUID(issueActors.TodoAssigneeID)
 		issueID, err := h.createCRMEmailPendingReplyIssue(ctx, workspaceID, title, body, candidate.ThreadID, candidate.MessageID, parentIssueID, projectID, issueActors, assigneeType, assigneeID)
 		if err != nil {
 			slog.Warn("CRM pending reply issue creation failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
@@ -642,11 +642,16 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 }
 
 func stringsTrimForCRM(value string, limit int) string {
+	value = crmSanitizeText(value)
 	if len([]rune(value)) <= limit {
 		return value
 	}
 	r := []rune(value)
 	return string(r[:limit])
+}
+
+func crmSanitizeText(value string) string {
+	return strings.ToValidUTF8(value, "�")
 }
 
 func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.UUID, ownerType string, reviewerMemberID, reviewerAgentID pgtype.UUID) string {
@@ -739,7 +744,7 @@ func (h *Handler) buildCRMPendingReplyMergeComment(candidate crmPendingReplyCand
 	if len(missingReasons) > 0 {
 		contextLine = "上下文不足，请先转交 Researcher 补全背景；阻断原因：" + strings.Join(missingReasons, "；")
 	}
-	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复流程。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要把历史往来/profile 摘要展开写进 Issue。缺上下文不是“不回复”的理由；缺上下文时先交 Researcher 深度调研。只有明显 spam/no-reply/系统通知/营销群发才不建议回复。草稿必须中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, contextLine, reviewerLine)
+	return fmt.Sprintf("同一邮件线程收到新的入站邮件，请由 Multica Issue 流程把新内容合并进当前未处理的回复流程。\n\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n%s\n\n处理要求：通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号；不要把历史往来/profile 摘要展开写进 Issue。缺上下文不是“不回复”的理由；缺上下文时先交 Researcher 深度调研。只有明显 spam/no-reply/系统通知/营销群发才不建议回复。草稿说明用中文写给内部审核人；邮件正文必须跟随原邮件语言（英文来信用英文，中文来信用中文，其他语言按原邮件语言）。邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。%s", candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, contextLine, reviewerLine)
 }
 
 func crmAIContextIssueSummary(aiContext crmEmailAIContext) string {
@@ -891,6 +896,8 @@ func (h *Handler) ensureCRMAccountProject(ctx context.Context, workspaceID, acco
 }
 
 func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID, actors crmAIIssueActorConfig, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {
+	title = crmSanitizeText(title)
+	body = crmSanitizeText(body)
 	var issueID pgtype.UUID
 	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
 	err := h.DB.QueryRow(ctx, `
@@ -1024,6 +1031,7 @@ func (h *Handler) addCRMInternalIssueComment(ctx context.Context, workspaceID, i
 	if err != nil {
 		return err
 	}
+	content = crmSanitizeText(content)
 	_, err = h.DB.Exec(ctx, `INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type) VALUES ($1,$2,$3,$4,$5,'system')`, issueID, workspaceID, authorType, authorID, content)
 	return err
 }
