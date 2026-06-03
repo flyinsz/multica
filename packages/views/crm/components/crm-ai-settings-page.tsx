@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowLeft, Bot, Clock, Mail, MoreHorizontal, RefreshCw, Settings, Users } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { crmKeys } from "@multica/core/crm/queries";
-import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
+import { agentListOptions, memberListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -34,7 +34,7 @@ type CRMAIConfig = {
   issue_template?: string;
   issue_creator_type?: "member" | "agent";
   issue_creator_id?: string;
-  issue_todo_assignee_type?: "member" | "agent";
+  issue_todo_assignee_type?: "member" | "agent" | "squad";
   issue_todo_assignee_id?: string;
   email_default_agent_id?: string;
   email_default_language?: string;
@@ -78,7 +78,7 @@ type CRMAIHistoryItem = {
   updated_at: string;
 };
 
-type ActorType = "member" | "agent";
+type ActorType = "member" | "agent" | "squad";
 type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone" | "issue_template">> & {
   issue_creator_type: ActorType;
   issue_creator_id: string;
@@ -262,14 +262,20 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   );
 }
 
-function actorLabel(actor: { type: ActorType; id: string }, agents: Array<{ id: string; name: string }>, members: Array<{ id: string; name?: string; email?: string }>) {
+function actorLabel(actor: { type: ActorType; id: string }, agents: Array<{ id: string; name: string }>, members: Array<{ id: string; name?: string; email?: string }>, squads: Array<{ id: string; name: string }>) {
   if (!actor.id) return "默认";
   if (actor.type === "agent") return agents.find((agent) => agent.id === actor.id)?.name ?? "未知 Agent";
+  if (actor.type === "squad") return squads.find((squad) => squad.id === actor.id)?.name ?? "未知小队";
   const member = members.find((item) => item.id === actor.id);
   return member?.name || member?.email || "未知成员";
 }
 
-function ActorSelect({ label, type, value, agents, members, onChange }: { label: string; type: ActorType; value: string; agents: Array<{ id: string; name: string }>; members: Array<{ id: string; name?: string; email?: string }>; onChange: (next: { type: ActorType; id: string }) => void }) {
+function ActorSelect({ label, type, value, agents, members, squads, allowSquads = false, onChange }: { label: string; type: ActorType; value: string; agents: Array<{ id: string; name: string }>; members: Array<{ id: string; name?: string; email?: string }>; squads: Array<{ id: string; name: string }>; allowSquads?: boolean; onChange: (next: { type: ActorType; id: string }) => void }) {
+  const options = type === "agent"
+    ? agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)
+    : type === "squad"
+      ? squads.map((squad) => <option key={squad.id} value={squad.id}>{squad.name}</option>)
+      : members.map((member) => <option key={member.id} value={member.id}>{member.name || member.email || member.id}</option>);
   return (
     <label className="space-y-1 text-sm">
       <span className="text-muted-foreground">{label}</span>
@@ -277,19 +283,18 @@ function ActorSelect({ label, type, value, agents, members, onChange }: { label:
         <select className="h-9 rounded-md border bg-background px-2 text-sm" value={type} onChange={(e) => onChange({ type: e.target.value as ActorType, id: "" })}>
           <option value="agent">Agent</option>
           <option value="member">成员</option>
+          {allowSquads ? <option value="squad">小队</option> : null}
         </select>
         <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={value} onChange={(e) => onChange({ type, id: e.target.value })}>
           <option value="">默认</option>
-          {type === "agent"
-            ? agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)
-            : members.map((member) => <option key={member.id} value={member.id}>{member.name || member.email || member.id}</option>)}
+          {options}
         </select>
       </div>
     </label>
   );
 }
 
-function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agents: Array<{ id: string; name: string }>; members: Array<{ id: string; name?: string; email?: string }> }) {
+function SettingCard({ setting, agents, members, squads }: { setting: CRMAISetting; agents: Array<{ id: string; name: string }>; members: Array<{ id: string; name?: string; email?: string }>; squads: Array<{ id: string; name: string }> }) {
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const info = meta[setting.automation_key];
@@ -331,8 +336,8 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
         max_items_per_run: numberValue(form.max_items_per_run, 1, 100),
         config: {
           ...config,
-          issue_creator_type: form.issue_creator_type,
-          issue_creator_id: form.issue_creator_id || undefined,
+          issue_creator_type: form.issue_creator_type === "squad" ? "agent" : form.issue_creator_type,
+          issue_creator_id: form.issue_creator_type === "squad" ? undefined : form.issue_creator_id || undefined,
           issue_todo_assignee_type: form.issue_todo_assignee_type,
           issue_todo_assignee_id: form.issue_todo_assignee_id || undefined,
           issue_template: form.issue_template || undefined,
@@ -391,8 +396,8 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
         )}
         {setting.automation_key === "email_pending_reply" || setting.automation_key === "due_followup" ? (
           <>
-            <ActorSelect label="Issue 创建人" type={form.issue_creator_type} value={form.issue_creator_id} agents={agents} members={members} onChange={(next) => setForm((s) => ({ ...s, issue_creator_type: next.type, issue_creator_id: next.id }))} />
-            <ActorSelect label="Issue todo 负责人" type={form.issue_todo_assignee_type} value={form.issue_todo_assignee_id} agents={agents} members={members} onChange={(next) => setForm((s) => ({ ...s, issue_todo_assignee_type: next.type, issue_todo_assignee_id: next.id, assignee_agent_id: next.type === "agent" ? next.id : "" }))} />
+            <ActorSelect label="Issue 创建人" type={form.issue_creator_type} value={form.issue_creator_id} agents={agents} members={members} squads={squads} onChange={(next) => setForm((s) => ({ ...s, issue_creator_type: next.type === "squad" ? "agent" : next.type, issue_creator_id: next.type === "squad" ? "" : next.id }))} />
+            <ActorSelect label="Issue todo 负责人" type={form.issue_todo_assignee_type} value={form.issue_todo_assignee_id} agents={agents} members={members} squads={squads} allowSquads onChange={(next) => setForm((s) => ({ ...s, issue_todo_assignee_type: next.type, issue_todo_assignee_id: next.id, assignee_agent_id: next.type === "agent" ? next.id : "" }))} />
           </>
         ) : (
           <label className="space-y-1 text-sm">
@@ -514,6 +519,7 @@ export function CRMAISettingsPage() {
   const { data = [], isLoading } = useQuery({ queryKey: crmKeys.aiSettings(wsId), queryFn: () => crmApi.listCRMAISettings(), select: (res) => res.settings as CRMAISetting[] });
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: squads = [] } = useQuery(squadListOptions(wsId));
   const [selectedKey, setSelectedKey] = useState<SettingKey | null>(null);
   const [mode, setMode] = useState<"config" | "history">("config");
 
@@ -545,7 +551,7 @@ export function CRMAISettingsPage() {
           <SettingHistory automationKey={selectedSetting.automation_key} />
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto p-5 pb-10">
-            <SettingCard setting={selectedSetting} agents={agents} members={members} />
+            <SettingCard setting={selectedSetting} agents={agents} members={members} squads={squads} />
           </div>
         )
       ) : (
@@ -573,7 +579,7 @@ export function CRMAISettingsPage() {
                   <SettingListRow
                     key={setting.automation_key}
                     setting={setting}
-                    agentName={actorLabel({ type: setting.config?.issue_todo_assignee_type || "agent", id: setting.config?.issue_todo_assignee_id || setting.assignee_agent_id || "" }, agents, members)}
+                    agentName={actorLabel({ type: setting.config?.issue_todo_assignee_type || "agent", id: setting.config?.issue_todo_assignee_id || setting.assignee_agent_id || "" }, agents, members, squads)}
                     onConfigure={() => { setSelectedKey(setting.automation_key); setMode("config"); }}
                     onHistory={() => { setSelectedKey(setting.automation_key); setMode("history"); }}
                   />

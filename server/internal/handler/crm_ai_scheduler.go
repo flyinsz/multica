@@ -942,6 +942,8 @@ func (h *Handler) validateCRMIssueActor(ctx context.Context, workspaceID pgtype.
 		return h.DB.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND id=$2`, workspaceID, parsed).Scan(&parsed)
 	case "agent":
 		return h.DB.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL`, workspaceID, parsed).Scan(&parsed)
+	case "squad":
+		return h.DB.QueryRow(ctx, `SELECT id FROM squad WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL`, workspaceID, parsed).Scan(&parsed)
 	default:
 		return fmt.Errorf("unsupported actor type %q", actorType)
 	}
