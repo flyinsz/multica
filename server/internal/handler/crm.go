@@ -4112,7 +4112,7 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 	threadIDText := strings.TrimSpace(chi.URLParam(r, "threadId"))
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT id, workspace_id, thread_id, account_id, contact_id, external_message_id,
-		       in_reply_to, reference_ids, COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(COALESCE(attachments, '[]'::jsonb)) AS elem), '[]'::jsonb), sent_append_warning,
+		       in_reply_to, reference_ids, COALESCE((SELECT jsonb_agg(elem - 'content' - 'data' - 'body') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(attachments) = 'array' THEN attachments ELSE '[]'::jsonb END) AS elem), '[]'::jsonb), sent_append_warning,
 		       raw_size_bytes, '{}'::jsonb, from_email, from_name,
 		       to_emails, cc_emails, bcc_emails, subject,
 		       sent_at, received_at, body_text, body_html, snippet, direction,
@@ -4135,26 +4135,11 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		messages = append(messages, crmEmailMessageToResponse(message))
 	}
-	debug := map[string]any{
-		"thread_id_param": threadIDText,
-		"workspace_id":     uuidToString(workspaceID),
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to iterate CRM email messages")
+		return
 	}
-	var currentDatabase, currentSchema string
-	var totalCount, byThreadCount, byWorkspaceThreadCount int64
-	if err := h.DB.QueryRow(r.Context(), `SELECT current_database(), current_schema()`).Scan(&currentDatabase, &currentSchema); err == nil {
-		debug["current_database"] = currentDatabase
-		debug["current_schema"] = currentSchema
-	}
-	if err := h.DB.QueryRow(r.Context(), `SELECT COUNT(*) FROM crm_email_message`).Scan(&totalCount); err == nil {
-		debug["count_total"] = totalCount
-	}
-	if err := h.DB.QueryRow(r.Context(), `SELECT COUNT(*) FROM crm_email_message WHERE thread_id::text = $1`, threadIDText).Scan(&byThreadCount); err == nil {
-		debug["count_by_thread"] = byThreadCount
-	}
-	if err := h.DB.QueryRow(r.Context(), `SELECT COUNT(*) FROM crm_email_message WHERE workspace_id::text = $1 AND thread_id::text = $2`, uuidToString(workspaceID), threadIDText).Scan(&byWorkspaceThreadCount); err == nil {
-		debug["count_by_workspace_thread"] = byWorkspaceThreadCount
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "total": len(messages), "source": "crm_email_messages_handler", "debug": debug})
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "total": len(messages)})
 }
 
 func (h *Handler) CreateCRMEmailMessage(w http.ResponseWriter, r *http.Request) {
