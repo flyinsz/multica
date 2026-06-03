@@ -483,6 +483,17 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			SELECT 1 FROM issue i
 			WHERE i.workspace_id=$1 AND i.origin_type='crm_ai' AND i.origin_id=latest.message_id AND i.status <> 'cancelled'
 		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM crm_email_thread_issue_link l
+			JOIN issue i ON i.id=l.issue_id AND i.workspace_id=$1
+			WHERE l.thread_id=t.id
+			  AND i.status <> 'cancelled'
+			  AND (
+				i.origin_id=latest.message_id
+				OR (i.metadata->'crm_ai_processed_message_ids') ? latest.message_id::text
+			  )
+		  )
 		ORDER BY COALESCE(latest.received_at, latest.sent_at, latest.created_at, t.last_message_at, t.updated_at) DESC
 		LIMIT $2`, workspaceID, limit, threadFilter)
 	if err != nil {
@@ -515,6 +526,9 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 		if parentIssueID.Valid && parentIssueStatus != "done" {
 			created++
 			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": "merged_comment"})
+			if err := h.markCRMEmailPendingReplyMessageProcessed(ctx, workspaceID, parentIssueID, candidate.MessageID); err != nil {
+				slog.Warn("CRM pending reply message marker update failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "message_id", uuidToString(candidate.MessageID), "error", err)
+			}
 			comment := h.buildCRMPendingReplyMergeComment(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons)
 			if err := h.addCRMInternalIssueComment(ctx, workspaceID, parentIssueID, comment); err != nil {
 				slog.Warn("CRM pending reply merge comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
@@ -538,6 +552,9 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			continue
 		}
 		if issueID.Valid {
+			if err := h.markCRMEmailPendingReplyMessageProcessed(ctx, workspaceID, issueID, candidate.MessageID); err != nil {
+				slog.Warn("CRM pending reply message marker update failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "message_id", uuidToString(candidate.MessageID), "error", err)
+			}
 			if len(missingReasons) == 0 {
 				if err := h.createCRMPendingReplyDraft(ctx, workspaceID, issueID, candidate, reviewerLine, aiContext, issueActors); err != nil {
 					slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
@@ -944,6 +961,27 @@ func (h *Handler) ensureCRMAccountProject(ctx context.Context, workspaceID, acco
 		return pgtype.UUID{}, nil
 	}
 	return projectID, err
+}
+
+func (h *Handler) markCRMEmailPendingReplyMessageProcessed(ctx context.Context, workspaceID, issueID, messageID pgtype.UUID) error {
+	if !issueID.Valid || !messageID.Valid {
+		return nil
+	}
+	_, err := h.DB.Exec(ctx, `
+		UPDATE issue
+		SET metadata = jsonb_set(
+			COALESCE(metadata, '{}'::jsonb),
+			'{crm_ai_processed_message_ids}',
+			(
+				SELECT jsonb_agg(DISTINCT value)
+				FROM jsonb_array_elements_text(
+					COALESCE(metadata->'crm_ai_processed_message_ids', '[]'::jsonb) || to_jsonb(ARRAY[$3::text])
+				) AS t(value)
+			),
+			true
+		), updated_at=now()
+		WHERE workspace_id=$1 AND id=$2`, workspaceID, issueID, uuidToString(messageID))
+	return err
 }
 
 func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspaceID pgtype.UUID, title, body string, threadID, messageID, parentIssueID, projectID pgtype.UUID, actors crmAIIssueActorConfig, assigneeType string, assigneeID pgtype.UUID) (pgtype.UUID, error) {

@@ -940,6 +940,20 @@ func crmProfileFollowUpRecommendation(profile map[string]any) (time.Time, string
 	return parsed.UTC(), reason, true
 }
 
+func shouldSyncCRMProfileFollowUp(current pgtype.Timestamptz, suggested time.Time) bool {
+	if suggested.IsZero() {
+		return false
+	}
+	if !current.Valid {
+		return true
+	}
+	now := time.Now()
+	if current.Time.Before(now) {
+		return true
+	}
+	return suggested.Before(current.Time)
+}
+
 func cleanCRMProfile(profile map[string]any) map[string]any {
 	for _, key := range []string{"summary", "business_background", "communication_summary", "customer_summary", "business_model", "main_products", "procurement_needs", "pain_points", "decision_process", "communication_preference", "recent_progress", "risk_notes", "cooperation_history", "next_step_suggestions"} {
 		if value, ok := profile[key].(string); ok {
@@ -3931,7 +3945,7 @@ func (h *Handler) regenerateCRMAccountProfile(ctx context.Context, workspaceID, 
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_account_profile (workspace_id, account_id, summary, profile_json, updated_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (account_id) DO UPDATE SET summary=EXCLUDED.summary, profile_json=EXCLUDED.profile_json, updated_at=now() RETURNING id, profile_json, created_at, updated_at`, workspaceID, accountID, summary, profileJSON).Scan(&id, &rawProfile, &createdAt, &updatedAt); err != nil {
 		return CRMAccountProfileResponse{}, err
 	}
-	if suggestedFollowUp, reason, ok := crmProfileFollowUpRecommendation(profile); ok && (!currentNextFollowUp.Valid || suggestedFollowUp.Before(currentNextFollowUp.Time)) {
+	if suggestedFollowUp, reason, ok := crmProfileFollowUpRecommendation(profile); ok && shouldSyncCRMProfileFollowUp(currentNextFollowUp, suggestedFollowUp) {
 		_, _ = h.DB.Exec(ctx, `UPDATE crm_account SET next_follow_up_at=$3, updated_at=now() WHERE id=$1 AND workspace_id=$2`, accountID, workspaceID, suggestedFollowUp)
 		_, _ = h.DB.Exec(ctx, `INSERT INTO crm_communication_note (workspace_id, account_id, channel, direction, subject, body, occurred_at) VALUES ($1,$2,'other','note',$3,$4,now())`, workspaceID, accountID, "AI 客户画像已刷新", strings.TrimSpace(strings.Join([]string{
 			"画像刷新完成",
