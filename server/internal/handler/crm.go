@@ -4117,9 +4117,9 @@ func (h *Handler) ListCRMEmailMessages(w http.ResponseWriter, r *http.Request) {
 		       sent_at, received_at, body_text, body_html, snippet, direction,
 		       created_at, updated_at
 		FROM crm_email_message
-		WHERE workspace_id = $1 AND thread_id = $2
+		WHERE workspace_id::text = $1 AND thread_id::text = $2
 		ORDER BY COALESCE(sent_at, received_at, created_at) ASC
-	`, workspaceID, threadID)
+	`, uuidToString(workspaceID), uuidToString(threadID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list CRM email messages")
 		return
