@@ -111,6 +111,12 @@ const meta: Record<SettingKey, { title: string; description: string; icon: typeo
   },
 };
 
+const DEFAULT_PENDING_REPLY_ISSUE_TEMPLATE = `处理类型：上下文足够，可进入回复草稿生成。\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须优先使用上方 Customer Wiki 上下文，并可通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来补充；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号。\n3. 草稿说明必须先用中文阐述：回复立场、用意、风险考量、哪些事实需要人工确认，让用户知道为什么这样写。\n4. 随后创建一封待审核邮件草稿；邮件正文必须使用原邮件语言撰写。若原邮件是英文，草稿正文写英文；若原邮件是中文，草稿正文写中文；其他语言按原邮件语言回复。\n5. 邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n6. 事实、报价、交期、质量承诺、售后承诺、附件内容必须客户所有人审核后才能发送。\n7. 草稿生成完成后，必须在 Issue 评论中附上草稿链接，把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n8. {{reviewer_line}}\n\n流转说明：使用 Multica 原生 issue assignee/status 自动流转；Issue 只放 Customer Wiki 精简上下文，不展开全量邮件/客户档案。`;
+
+const DEFAULT_DUE_FOLLOWUP_ISSUE_TEMPLATE = `CRM 到期客户跟进自动创建。\n客户：{{account_name}}\n客户ID：{{account_id}}\n到期时间：{{latest_at}}\n\nAI上下文摘要（profile + 近期互动，不含全量历史）：\n{{context_summary}}\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 先检查近期邮件/未来 WhatsApp 互动，确认是否仍需跟进；若客户已回复或到期日已过期处理，请更新 next_follow_up_at 或关闭该 Issue。\n3. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n4. {{reviewer_line}}\n5. 审核通过后才能发送邮件。`;
+
+const DEFAULT_PROFILE_REFRESH_ISSUE_TEMPLATE = `当前自动化不创建 Issue；此模板作为后续 Issue 创建默认要求预留。\n\n处理要求：\n1. 优先读取客户画像、近期互动和 Customer Wiki 上下文。\n2. 输出应说明刷新原因、依据、风险和需要人工确认的事实。\n3. 不要把全量历史邮件展开写入 Issue；只保留必要摘要。`;
+
 const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone" | "issue_template">>> = {
   email_pending_reply: {
     follow_up_lead_days: 0,
@@ -121,7 +127,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
-    issue_template: "",
+    issue_template: DEFAULT_PENDING_REPLY_ISSUE_TEMPLATE,
   },
   due_followup: {
     follow_up_lead_days: 0,
@@ -132,7 +138,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
-    issue_template: "",
+    issue_template: DEFAULT_DUE_FOLLOWUP_ISSUE_TEMPLATE,
   },
   profile_new_activity_refresh: {
     follow_up_lead_days: 0,
@@ -143,7 +149,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
-    issue_template: "",
+    issue_template: DEFAULT_PROFILE_REFRESH_ISSUE_TEMPLATE,
   },
   profile_daily_refresh: {
     follow_up_lead_days: 0,
@@ -154,7 +160,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
-    issue_template: "",
+    issue_template: DEFAULT_PROFILE_REFRESH_ISSUE_TEMPLATE,
   },
 };
 
@@ -183,7 +189,7 @@ function buildForm(setting: CRMAISetting): FormState {
     profile_refresh_min_interval_minutes: c.profile_refresh_min_interval_minutes ?? d.profile_refresh_min_interval_minutes,
     time: c.time ?? d.time,
     timezone: c.timezone ?? d.timezone,
-    issue_template: c.issue_template ?? d.issue_template,
+    issue_template: c.issue_template?.trim() ? c.issue_template : d.issue_template,
     issue_creator_type: c.issue_creator_type || "agent",
     issue_creator_id: c.issue_creator_id || "",
     issue_todo_assignee_type: c.issue_todo_assignee_type || "agent",
@@ -418,8 +424,8 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
         ) : null}
         <label className="space-y-1 text-sm md:col-span-2 xl:col-span-3">
           <span className="text-muted-foreground">Issue 创建模板</span>
-          <textarea className="min-h-32 w-full rounded-md border bg-background px-3 py-2 text-sm" value={form.issue_template} placeholder="留空使用系统默认模板。可用变量：{{account_name}} {{subject}} {{thread_id}} {{message_id}} {{account_id}} {{contact_id}} {{message_link}} {{latest_at}} {{reviewer_line}} {{context_summary}}" onChange={(e) => setForm((s) => ({ ...s, issue_template: e.target.value }))} />
-          <span className="block text-xs text-muted-foreground">留空使用默认模板；保存后写入当前 AI 功能配置。</span>
+          <textarea className="min-h-32 w-full rounded-md border bg-background px-3 py-2 text-sm" value={form.issue_template} placeholder="可用变量：{{account_name}} {{subject}} {{thread_id}} {{message_id}} {{account_id}} {{contact_id}} {{message_link}} {{latest_at}} {{reviewer_line}} {{context_summary}}" onChange={(e) => setForm((s) => ({ ...s, issue_template: e.target.value }))} />
+          <span className="block text-xs text-muted-foreground">默认显示当前系统模板；修改后保存会覆盖此 AI 功能的 Issue 创建模板。</span>
         </label>
         {setting.automation_key === "email_pending_reply" || setting.automation_key === "due_followup" ? (
           <>
