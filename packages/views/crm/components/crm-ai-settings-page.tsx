@@ -31,6 +31,7 @@ type CRMAIConfig = {
   profile_refresh_min_interval_minutes?: number;
   time?: string;
   timezone?: string;
+  issue_template?: string;
   issue_creator_type?: "member" | "agent";
   issue_creator_id?: string;
   issue_todo_assignee_type?: "member" | "agent";
@@ -78,7 +79,7 @@ type CRMAIHistoryItem = {
 };
 
 type ActorType = "member" | "agent";
-type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone">> & {
+type FormState = Pick<CRMAISetting, "enabled" | "interval_minutes" | "assignee_agent_id" | "max_items_per_run"> & Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone" | "issue_template">> & {
   issue_creator_type: ActorType;
   issue_creator_id: string;
   issue_todo_assignee_type: ActorType;
@@ -110,7 +111,7 @@ const meta: Record<SettingKey, { title: string; description: string; icon: typeo
   },
 };
 
-const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone">>> = {
+const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_days" | "duplicate_protection_days" | "handled_window_hours" | "same_subject_dedupe_days" | "stale_done_issue_days" | "profile_refresh_min_interval_minutes" | "time" | "timezone" | "issue_template">>> = {
   email_pending_reply: {
     follow_up_lead_days: 0,
     duplicate_protection_days: 7,
@@ -120,6 +121,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
+    issue_template: "",
   },
   due_followup: {
     follow_up_lead_days: 0,
@@ -130,6 +132,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
+    issue_template: "",
   },
   profile_new_activity_refresh: {
     follow_up_lead_days: 0,
@@ -140,6 +143,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
+    issue_template: "",
   },
   profile_daily_refresh: {
     follow_up_lead_days: 0,
@@ -150,6 +154,7 @@ const defaults: Record<SettingKey, Required<Pick<CRMAIConfig, "follow_up_lead_da
     profile_refresh_min_interval_minutes: 60,
     time: "03:00",
     timezone: "Asia/Shanghai",
+    issue_template: "",
   },
 };
 
@@ -178,6 +183,7 @@ function buildForm(setting: CRMAISetting): FormState {
     profile_refresh_min_interval_minutes: c.profile_refresh_min_interval_minutes ?? d.profile_refresh_min_interval_minutes,
     time: c.time ?? d.time,
     timezone: c.timezone ?? d.timezone,
+    issue_template: c.issue_template ?? d.issue_template,
     issue_creator_type: c.issue_creator_type || "agent",
     issue_creator_id: c.issue_creator_id || "",
     issue_todo_assignee_type: c.issue_todo_assignee_type || "agent",
@@ -323,6 +329,7 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
           issue_creator_id: form.issue_creator_id || undefined,
           issue_todo_assignee_type: form.issue_todo_assignee_type,
           issue_todo_assignee_id: form.issue_todo_assignee_id || undefined,
+          issue_template: form.issue_template || undefined,
           email_default_agent_id: form.email_default_agent_id || undefined,
           email_default_language: form.email_default_language || "zh-Hans",
         },
@@ -409,6 +416,11 @@ function SettingCard({ setting, agents, members }: { setting: CRMAISetting; agen
             </label>
           </>
         ) : null}
+        <label className="space-y-1 text-sm md:col-span-2 xl:col-span-3">
+          <span className="text-muted-foreground">Issue 创建模板</span>
+          <textarea className="min-h-32 w-full rounded-md border bg-background px-3 py-2 text-sm" value={form.issue_template} placeholder="留空使用系统默认模板。可用变量：{{account_name}} {{subject}} {{thread_id}} {{message_id}} {{account_id}} {{contact_id}} {{message_link}} {{latest_at}} {{reviewer_line}} {{context_summary}}" onChange={(e) => setForm((s) => ({ ...s, issue_template: e.target.value }))} />
+          <span className="block text-xs text-muted-foreground">留空使用默认模板；保存后写入当前 AI 功能配置。</span>
+        </label>
         {setting.automation_key === "email_pending_reply" || setting.automation_key === "due_followup" ? (
           <>
             <label className="space-y-1 text-sm">

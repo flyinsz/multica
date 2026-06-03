@@ -62,6 +62,7 @@ type crmAIIssueActorConfig struct {
 	TodoAssigneeID   string `json:"issue_todo_assignee_id"`
 	ResearcherType   string `json:"issue_researcher_assignee_type"`
 	ResearcherID     string `json:"issue_researcher_assignee_id"`
+	IssueTemplate    string `json:"issue_template"`
 }
 
 type crmPendingReplyCandidate struct {
@@ -474,7 +475,7 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 		messageLink := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?message="+uuidToString(candidate.MessageID)+"&thread="+uuidToString(candidate.ThreadID))
 		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, candidate.OwnerType, candidate.OwnerMemberID, candidate.OwnerAgentID)
 		aiContext := h.buildCRMEmailAIContext(ctx, workspaceID, candidate.AccountID, candidate.ContactID, candidate.ThreadID, "crm_pending_reply_issue", 6)
-		body := h.buildCRMPendingReplyIssueBody(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons, aiContext)
+		body := h.buildCRMPendingReplyIssueBody(candidate, messageLink, timestampToString(candidate.LatestAt), reviewerLine, missingReasons, aiContext, issueActors.IssueTemplate)
 		parentIssueID, parentIssueStatus, err := h.findCRMEmailThreadParentIssue(ctx, workspaceID, candidate.ThreadID)
 		if err != nil {
 			slog.Warn("CRM pending reply parent issue lookup failed", "workspace_id", uuidToString(workspaceID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
@@ -509,6 +510,9 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			continue
 		}
 		if issueID.Valid {
+			if err := h.createCRMPendingReplyDraft(ctx, workspaceID, issueID, candidate, reviewerLine, aiContext); err != nil {
+				slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
+			}
 			created++
 			kind := "created"
 			if parentIssueID.Valid {
@@ -585,7 +589,18 @@ func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID p
 		_ = h.DB.QueryRow(ctx, `SELECT (SELECT m.id FROM member m WHERE m.workspace_id=$1 AND m.user_id=a.owner_member_id LIMIT 1) FROM crm_account a WHERE a.workspace_id=$1 AND a.id=$2`, workspaceID, accountID).Scan(&ownerMemberID)
 		reviewerLine := h.crmDraftReviewerLine(ctx, workspaceID, "member", ownerMemberID, pgtype.UUID{})
 		aiContext := h.buildCRMEmailAIContext(ctx, workspaceID, accountID, pgtype.UUID{}, pgtype.UUID{}, "due_followup", 6)
-		body := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\nAI上下文摘要（profile + 近期互动，不含全量历史）：\n%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 先检查近期邮件/未来 WhatsApp 互动，确认是否仍需跟进；若客户已回复或到期日已过期处理，请更新 next_follow_up_at 或关闭该 Issue。\n3. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n4. %s\n5. 审核通过后才能发送邮件。%s", name, uuidToString(accountID), timestampToString(due), crmAIContextIssueSummary(aiContext), reviewerLine, lowConfidenceNote)
+		contextSummary := crmAIContextIssueSummary(aiContext)
+		defaultBody := fmt.Sprintf("CRM 到期客户跟进自动创建。\n客户：%s\n客户ID：%s\n到期时间：%s\n\nAI上下文摘要（profile + 近期互动，不含全量历史）：\n%s\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成客户跟进邮件草稿。\n2. 先检查近期邮件/未来 WhatsApp 互动，确认是否仍需跟进；若客户已回复或到期日已过期处理，请更新 next_follow_up_at 或关闭该 Issue。\n3. 草稿生成完成后，必须把 Issue 从 todo 转入审核阶段，并把负责人改为邮件草稿审核人。\n4. %s\n5. 审核通过后才能发送邮件。%s", name, uuidToString(accountID), timestampToString(due), contextSummary, reviewerLine, lowConfidenceNote)
+		body := defaultBody
+		if strings.TrimSpace(issueActors.IssueTemplate) != "" {
+			body = h.renderCRMAIIssueTemplate(issueActors.IssueTemplate, map[string]string{
+				"account_name":    name,
+				"account_id":      uuidToString(accountID),
+				"latest_at":       timestampToString(due),
+				"reviewer_line":   reviewerLine,
+				"context_summary": contextSummary,
+			})
+		}
 		issueID, err := h.createCRMInternalIssue(ctx, workspaceID, title, body, uuidToString(accountID), issueActors)
 		if err == nil && issueID.Valid {
 			created++
@@ -657,7 +672,7 @@ func (h *Handler) crmWorkspaceOwnerMember(ctx context.Context, workspaceID pgtyp
 	return memberID, label, nil
 }
 
-func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandidate, messageLink, latestAt, reviewerLine string, missingReasons []string, aiContext crmEmailAIContext) string {
+func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandidate, messageLink, latestAt, reviewerLine string, missingReasons []string, aiContext crmEmailAIContext, template string) string {
 	accountName := candidate.AccountName
 	if strings.TrimSpace(accountName) == "" {
 		accountName = "未绑定客户"
@@ -667,7 +682,31 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 	if len(missingReasons) > 0 {
 		return base + fmt.Sprintf("处理类型：需要 Researcher 先补全上下文，暂不生成回复草稿。\n阻断原因：%s\n\nResearcher 任务：\n1. 先刷新/补充 Customer Wiki，再基于发件人邮箱、域名、签名、历史邮件、CRM 现有资料调研客户背景。\n2. 判断是否可关联已有客户/联系人；如可关联，给出 account/contact 建议和依据。\n3. 若不能关联，判断是否应创建潜在客户。\n4. 判断是否需要回复；缺上下文不是“不需要回复”的理由。\n5. 输出草稿生成所需上下文；不直接发送邮件。\n\n后续流转：Researcher 返回足够上下文后，按 Multica 原生 issue assignee/status 机制转交 CRM-Assistant/Jarvis 生成草稿；草稿生成后转交客户所有人 review。\n%s", strings.Join(missingReasons, "；"), reviewerLine)
 	}
-	return base + fmt.Sprintf("处理类型：上下文足够，可进入回复草稿生成。\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须优先使用上方 Customer Wiki 上下文，并可通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来补充；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号。\n3. 草稿必须使用中文撰写，邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n4. 草稿应结合客户历史往来、客户资料、当前邮件线程和最新入站邮件内容。\n5. 事实、报价、交期、质量承诺、售后承诺、附件内容必须客户所有人审核后才能发送。\n6. 草稿生成完成后，必须把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n7. %s\n\n流转说明：使用 Multica 原生 issue assignee/status 自动流转；Issue 只放 Customer Wiki 精简上下文，不展开全量邮件/客户档案。", reviewerLine)
+	defaultInstructions := fmt.Sprintf("处理类型：上下文足够，可进入回复草稿生成。\n\n处理要求：\n1. Issue 初始负责人使用 CRM AI 配置中的 todo 阶段负责人，由其生成待审核邮件草稿。\n2. 生成草稿前，必须优先使用上方 Customer Wiki 上下文，并可通过 CRM MCP 查询客户 profile、当前邮件线程、最新原邮件和历史往来补充；调用 MCP 时 UUID 参数必须使用纯 UUID 字符串，不要包含花括号。\n3. 草稿说明必须先用中文阐述：回复立场、用意、风险考量、哪些事实需要人工确认，让用户知道为什么这样写。\n4. 随后创建一封待审核邮件草稿；邮件正文必须使用原邮件语言撰写。若原邮件是英文，草稿正文写英文；若原邮件是中文，草稿正文写中文；其他语言按原邮件语言回复。\n5. 邮件正文先写正式回复，再按照系统中回复邮件的逻辑在正文下方引用原邮件内容；不要在开头引用或概括原邮件关键问题。\n6. 事实、报价、交期、质量承诺、售后承诺、附件内容必须客户所有人审核后才能发送。\n7. 草稿生成完成后，必须在 Issue 评论中附上草稿链接，把 Issue 转入审核阶段，并把负责人改为邮件草稿审核人。\n8. %s\n\n流转说明：使用 Multica 原生 issue assignee/status 自动流转；Issue 只放 Customer Wiki 精简上下文，不展开全量邮件/客户档案。", reviewerLine)
+	instructions := strings.TrimSpace(template)
+	if instructions == "" {
+		instructions = defaultInstructions
+	}
+	return base + h.renderCRMAIIssueTemplate(instructions, map[string]string{
+		"account_name":    accountName,
+		"subject":         candidate.Subject,
+		"thread_id":       uuidToString(candidate.ThreadID),
+		"message_id":      uuidToString(candidate.MessageID),
+		"account_id":      uuidToString(candidate.AccountID),
+		"contact_id":      uuidToString(candidate.ContactID),
+		"message_link":    messageLink,
+		"latest_at":       latestAt,
+		"reviewer_line":   reviewerLine,
+		"context_summary": contextSummary,
+	})
+}
+
+func (h *Handler) renderCRMAIIssueTemplate(template string, values map[string]string) string {
+	out := template
+	for key, value := range values {
+		out = strings.ReplaceAll(out, "{{"+key+"}}", value)
+	}
+	return out
 }
 
 func (h *Handler) buildCRMPendingReplyMergeComment(candidate crmPendingReplyCandidate, messageLink, latestAt, reviewerLine string, missingReasons []string) string {
@@ -699,6 +738,51 @@ func crmAIContextIssueSummary(aiContext crmEmailAIContext) string {
 		return "暂无结构化上下文；请通过 CRM MCP 查询 customer profile、当前线程和近期互动。"
 	}
 	return strings.Join(items, "\n")
+}
+
+func (h *Handler) createCRMPendingReplyDraft(ctx context.Context, workspaceID, issueID pgtype.UUID, candidate crmPendingReplyCandidate, reviewerLine string, aiContext crmEmailAIContext) error {
+	if !candidate.MessageID.Valid || !candidate.ThreadID.Valid {
+		return nil
+	}
+	var mailboxID pgtype.UUID
+	var fromEmail, subject, bodyText, inReplyTo string
+	var refs []string
+	if err := h.DB.QueryRow(ctx, `SELECT m.mailbox_id, COALESCE(m.from_email,''), COALESCE(m.subject,''), COALESCE(m.body_text,''), COALESCE(m.message_id,''), m.reference_ids FROM crm_email_message m WHERE m.workspace_id=$1 AND m.id=$2`, workspaceID, candidate.MessageID).Scan(&mailboxID, &fromEmail, &subject, &bodyText, &inReplyTo, &refs); err != nil {
+		return err
+	}
+	if strings.TrimSpace(fromEmail) == "" {
+		return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "未生成待审核回复草稿：最新邮件缺少发件人地址。")
+	}
+	if strings.TrimSpace(subject) == "" {
+		subject = candidate.Subject
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
+		subject = "Re: " + strings.TrimSpace(subject)
+	}
+	wikiContext := strings.TrimSpace(aiContext.String())
+	if wikiContext == "" {
+		wikiContext = "Customer Wiki 暂无可用内容。"
+	}
+	reason := fmt.Sprintf("草稿思路：这是邮件待回复巡检自动生成的待审核回复草稿。请先阅读本段中文说明，再审核邮件正文。\n\n立场：礼貌、稳妥、以客户当前问题为中心回复，避免过度承诺。\n用意：先确认已收到客户来信，回应可确定事项，并把需要人工确认的报价、交期、技术细节或附件事项留给负责人审核。\n风险考量：发送前必须人工确认事实、报价、交期、质量承诺、售后承诺、附件和客户称呼。邮件正文按原邮件语言生成；如原邮件是英文，则回复草稿正文为英文。\n\n%s\n\nCustomer Wiki 摘要：\n%s", reviewerLine, wikiContext)
+	body := "Hello,\n\nThank you for your email. We have received your message and are reviewing the details. I will confirm the relevant information and get back to you soon.\n\nBest regards"
+	if strings.TrimSpace(bodyText) != "" && containsCJK(bodyText) {
+		body = "您好，\n\n感谢您的来信。我们已收到您的信息，正在核对相关细节。确认后会尽快回复您。\n\n祝好"
+	}
+	var draftID pgtype.UUID
+	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, subject, body_text, in_reply_to, reference_ids, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending_approval',true,$12) RETURNING id`, workspaceID, mailboxID, candidate.ThreadID, candidate.AccountID, candidate.ContactID, issueID, []string{fromEmail}, subject, body, inReplyTo, refs, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
+		return err
+	}
+	draftURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?draft="+uuidToString(draftID))
+	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核回复邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
+}
+
+func containsCJK(value string) bool {
+	for _, r := range value {
+		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, issueID, accountID pgtype.UUID, accountName, dueText string) error {
