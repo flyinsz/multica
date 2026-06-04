@@ -784,13 +784,19 @@ export function CRMEmailsPage() {
     void queryClient.invalidateQueries({ queryKey: ["crm", wsId, "email-drafts"] });
     if (!visibleMailboxDrafts.length) {
       setComposeDraft(null);
-      setSelectedDraftId(null);
+      if (!initialDraftId) setSelectedDraftId(null);
       return;
     }
-    if (selectedDraftId) {
-      if (visibleMailboxDrafts.some((draft: any) => draft.id === selectedDraftId)) return;
-      if (initialDraftId === selectedDraftId) return;
+    if (initialDraftId) {
+      const targetDraft = visibleMailboxDrafts.find((draft: any) => draft.id === initialDraftId);
+      if (targetDraft) {
+        if (selectedDraftId !== initialDraftId) openDraftPreview(targetDraft);
+        return;
+      }
+      setSelectedDraftId(initialDraftId);
+      return;
     }
+    if (selectedDraftId && visibleMailboxDrafts.some((draft: any) => draft.id === selectedDraftId)) return;
     openDraftPreview(visibleMailboxDrafts[0]);
   }, [activeFolder, visibleMailboxDrafts, selectedDraftId, initialDraftId]);
 
