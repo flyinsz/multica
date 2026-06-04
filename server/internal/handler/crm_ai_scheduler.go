@@ -1040,10 +1040,14 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 			SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id=$1)) + 1
 			WHERE id=$1
 			RETURNING issue_counter
+		), next_position AS (
+			SELECT COALESCE(MIN(position), EXTRACT(EPOCH FROM now())) - 1 AS position
+			FROM issue
+			WHERE workspace_id=$1 AND status='todo'
 		), inserted AS (
-			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
-			SELECT $1, $2, $3, 'todo', 'medium', $5, $6, $7, $8, $9, 'crm_ai', $4, issue_counter, $11
-			FROM next_number
+			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id, position)
+			SELECT $1, $2, $3, 'todo', 'medium', $5, $6, $7, $8, $9, 'crm_ai', $4, issue_counter, $11, next_position.position
+			FROM next_number CROSS JOIN next_position
 			WHERE NOT EXISTS (
 				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4
 			)
@@ -1091,13 +1095,6 @@ func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID,
 			cfg.ResearcherID = uuidToString(agentID)
 		}
 	}
-	if cfg.TodoAssigneeType == "squad" {
-		memberID, err := h.crmSquadVisibleMemberAssignee(ctx, workspaceID, mustParsePgUUID(cfg.TodoAssigneeID))
-		if err == nil && memberID.Valid {
-			cfg.TodoAssigneeType = "member"
-			cfg.TodoAssigneeID = uuidToString(memberID)
-		}
-	}
 	if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.CreatorType, cfg.CreatorID); err != nil {
 		return cfg, fmt.Errorf("invalid CRM AI issue creator: %w", err)
 	}
@@ -1110,26 +1107,6 @@ func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID,
 		}
 	}
 	return cfg, nil
-}
-
-func (h *Handler) crmSquadVisibleMemberAssignee(ctx context.Context, workspaceID, squadID pgtype.UUID) (pgtype.UUID, error) {
-	var memberID pgtype.UUID
-	err := h.DB.QueryRow(ctx, `
-		SELECT sm.member_id
-		FROM squad_member sm
-		JOIN member m ON m.id = sm.member_id AND m.workspace_id = $1
-		WHERE sm.squad_id = $2 AND sm.member_type = 'member'
-		ORDER BY CASE COALESCE(sm.role, '') WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2 ELSE 3 END, sm.created_at ASC
-		LIMIT 1`, workspaceID, squadID).Scan(&memberID)
-	if err == nil && memberID.Valid {
-		return memberID, nil
-	}
-	return h.crmWorkspaceOwnerMemberID(ctx, workspaceID)
-}
-
-func (h *Handler) crmWorkspaceOwnerMemberID(ctx context.Context, workspaceID pgtype.UUID) (pgtype.UUID, error) {
-	memberID, _, err := h.crmWorkspaceOwnerMember(ctx, workspaceID)
-	return memberID, err
 }
 
 func (h *Handler) validateCRMIssueActor(ctx context.Context, workspaceID pgtype.UUID, actorType, actorID string) error {
@@ -1176,10 +1153,14 @@ func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype
 			SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id=$1)) + 1
 			WHERE id=$1
 			RETURNING issue_counter
+		), next_position AS (
+			SELECT COALESCE(MIN(position), EXTRACT(EPOCH FROM now())) - 1 AS position
+			FROM issue
+			WHERE workspace_id=$1 AND status='todo'
 		)
-		INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, origin_type, origin_id, number)
-		SELECT $1, $2, $3, 'todo', 'medium', NULLIF($7::text,''), $8, $5::text, $6, 'crm_ai', $4, issue_counter
-		FROM next_number
+		INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, origin_type, origin_id, number, position)
+		SELECT $1, $2, $3, 'todo', 'medium', NULLIF($7::text,''), $8, $5::text, $6, 'crm_ai', $4, issue_counter, next_position.position
+		FROM next_number CROSS JOIN next_position
 		WHERE NOT EXISTS (
 			SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
 		)
