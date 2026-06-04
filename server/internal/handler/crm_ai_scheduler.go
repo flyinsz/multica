@@ -168,6 +168,10 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 	switch item.AutomationKey {
 	case "email_pending_reply":
 		result, err = h.runCRMPendingReplyAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun, item.Config)
+		orphaned := s.enqueueOrphanedCRMAIIssueTasks(ctx, item.WorkspaceID)
+		if orphaned > 0 {
+			result["orphaned_issue_tasks_enqueued"] = orphaned
+		}
 	case "due_followup":
 		result, err = h.runCRMDueFollowupAutomation(ctx, item.WorkspaceID, item.MaxItemsPerRun, item.Config)
 	case "profile_new_activity_refresh":
@@ -204,6 +208,35 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 		return
 	}
 	_, _ = s.db.Exec(context.Background(), `INSERT INTO crm_ai_run (workspace_id, automation_key, status, started_at, finished_at, result, error) VALUES ($1,$2,$3,$4,now(),$5,$6)`, item.WorkspaceID, item.AutomationKey, status, startedAt, payload, errorText)
+}
+
+func (s *CRMAIAutoScheduler) enqueueOrphanedCRMAIIssueTasks(ctx context.Context, workspaceID pgtype.UUID) int64 {
+	if s == nil || s.db == nil || !workspaceID.Valid {
+		return 0
+	}
+	cmd, err := s.db.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		SELECT i.assignee_id, a.runtime_id, i.id, 'queued', 0,
+		       jsonb_build_object('trigger','crm_ai_orphan_backfill','origin_type',i.origin_type,'origin_id',i.origin_id::text)
+		FROM issue i
+		JOIN agent a ON a.id = i.assignee_id AND a.workspace_id = i.workspace_id
+		WHERE i.workspace_id = $1
+		  AND i.origin_type = 'crm_ai'
+		  AND i.status = 'todo'
+		  AND i.assignee_type = 'agent'
+		  AND i.assignee_id IS NOT NULL
+		  AND a.runtime_id IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM agent_task_queue q WHERE q.issue_id = i.id)
+	`, workspaceID)
+	if err != nil {
+		slog.Warn("CRM AI orphan issue task enqueue failed", "workspace_id", uuidToString(workspaceID), "error", err)
+		return 0
+	}
+	if n := cmd.RowsAffected(); n > 0 {
+		slog.Info("CRM AI orphan issue tasks enqueued", "workspace_id", uuidToString(workspaceID), "count", n)
+		return n
+	}
+	return 0
 }
 
 func crmAIRunShouldRecord(automationKey string, result map[string]any) bool {
