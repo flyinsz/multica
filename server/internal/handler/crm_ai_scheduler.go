@@ -631,10 +631,10 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			}
 			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(issueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": kind})
 			if h.TaskService != nil {
-				if issue, err := h.Queries.GetIssue(ctx, issueID); err == nil && h.shouldEnqueueAgentTask(ctx, issue) {
-					if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
-						slog.Warn("CRM pending reply agent enqueue failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "error", err)
-					}
+				if issue, err := h.Queries.GetIssue(ctx, issueID); err == nil {
+					h.crmEnqueueCreatedIssue(ctx, issue, issueActors.CreatorType, issueActors.CreatorID)
+				} else {
+					slog.Warn("CRM pending reply created issue reload failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "error", err)
 				}
 			}
 			if candidate.AccountID.Valid || candidate.ContactID.Valid {
