@@ -1078,6 +1078,14 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	if getErr == nil {
 		prefix := h.getIssuePrefix(ctx, workspaceID)
 		h.publish(protocol.EventIssueCreated, uuidToString(workspaceID), creatorType, uuidToString(creatorID), map[string]any{"issue": issueToResponse(issue, prefix)})
+		if issue.AssigneeType.Valid && issue.AssigneeID.Valid {
+			if h.shouldEnqueueAgentTask(ctx, issue) {
+				h.TaskService.EnqueueTaskForIssue(ctx, issue)
+			}
+			if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
+				h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, uuidToString(creatorID))
+			}
+		}
 	} else {
 		slog.Warn("CRM AI created issue but failed to load it for publish", "error", getErr, "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID))
 	}
