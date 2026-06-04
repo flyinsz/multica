@@ -213,7 +213,6 @@ func crmAIRunShouldRecord(automationKey string, result map[string]any) bool {
 	return true
 }
 
-
 func crmAIDailyWindowDue(config json.RawMessage) bool {
 	var cfg struct {
 		Time     string `json:"time"`
@@ -862,7 +861,7 @@ func (h *Handler) createCRMPendingReplyDraft(ctx context.Context, workspaceID, i
 	}
 	wikiContext := crmAIContextIssueSummary(aiContext)
 	reason := fmt.Sprintf("草稿思路：自动生成待审核回复草稿。\n\n审核要点：发送前确认事实、报价、交期、质量承诺、售后承诺、附件和客户称呼。邮件正文语言和格式遵循 CRM AI 配置；language=%s；reply_format=%s。\n\n%s\n\nCustomer Wiki 精简摘要：\n%s", crmConfigValueOrDefault(cfg.EmailDefaultLanguage, "auto"), crmConfigValueOrDefault(cfg.EmailReplyFormat, "reply_body_only"), reviewerLine, wikiContext)
-	body := crmPendingReplyDefaultDraftBody(bodyText, cfg.EmailDefaultLanguage)
+	body := crmPendingReplyContextualDraftBody(bodyText, subject, aiContext, cfg.EmailDefaultLanguage)
 	if strings.EqualFold(strings.TrimSpace(cfg.EmailReplyFormat), "quote_original") && strings.TrimSpace(bodyText) != "" {
 		body = strings.TrimRight(body, "\n") + "\n\n--- Original message ---\n" + strings.TrimSpace(bodyText)
 	}
@@ -874,21 +873,51 @@ func (h *Handler) createCRMPendingReplyDraft(ctx context.Context, workspaceID, i
 	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核回复邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
 }
 
-func crmPendingReplyDefaultDraftBody(originalBody, configuredLanguage string) string {
+func crmPendingReplyContextualDraftBody(originalBody, subject string, aiContext crmEmailAIContext, configuredLanguage string) string {
 	lang := strings.ToLower(strings.TrimSpace(configuredLanguage))
 	useChinese := false
 	switch lang {
 	case "zh", "zh-cn", "zh-hans", "chinese":
 		useChinese = true
 	case "", "auto", "follow_original", "original", "source":
-		useChinese = strings.TrimSpace(originalBody) != "" && containsCJK(originalBody)
+		useChinese = containsCJK(originalBody) || containsCJK(subject)
 	default:
 		useChinese = false
 	}
+
+	originalLower := strings.ToLower(originalBody + " " + subject)
+	openIssueText := strings.ToLower(strings.Join(aiContext.OpenIssues, " "))
+	needPI := strings.Contains(originalLower, "pi") || strings.Contains(openIssueText, "pi") || strings.Contains(openIssueText, "proforma") || strings.Contains(openIssueText, "形式发票")
+	needCE := strings.Contains(openIssueText, "ce") || strings.Contains(openIssueText, "合规") || strings.Contains(openIssueText, "认证")
+	needTerms := strings.Contains(openIssueText, "payment") || strings.Contains(openIssueText, "付款") || strings.Contains(openIssueText, "交期") || strings.Contains(openIssueText, "delivery") || strings.Contains(openIssueText, "price") || strings.Contains(openIssueText, "价格")
+
 	if useChinese {
-		return "您好，\n\n感谢您的来信。我们已收到您的信息，正在核对相关细节。确认后会尽快回复您。\n\n祝好"
+		lines := []string{"您好，", "", "抱歉让您等待。关于PI，我们已经收到您的提醒。"}
+		if needPI {
+			lines = append(lines, "我会马上核对PI内容，并尽快把确认后的PI发给您。")
+		}
+		if needCE {
+			lines = append(lines, "如您还需要A101的CE/合规资料，我也会一并整理给您确认。")
+		}
+		if needTerms {
+			lines = append(lines, "我会同时复核价格、交期和付款条件，避免信息不一致。")
+		}
+		lines = append(lines, "", "谢谢您的耐心。", "", "祝好")
+		return strings.Join(lines, "\n")
 	}
-	return "Hello,\n\nThank you for your email. We have received your message and are reviewing the details. I will confirm the relevant information and get back to you soon.\n\nBest regards"
+
+	lines := []string{"Hi,", "", "Sorry for keeping you waiting. We have received your reminder about the PI."}
+	if needPI {
+		lines = append(lines, "I will check the PI details right away and send you the confirmed PI as soon as possible.")
+	}
+	if needCE {
+		lines = append(lines, "If you still need the CE/compliance documents for A101, I will also prepare them for your review.")
+	}
+	if needTerms {
+		lines = append(lines, "I will also double-check the price, lead time, and payment terms to make sure everything is consistent.")
+	}
+	lines = append(lines, "", "Thank you for your patience.", "", "Best regards")
+	return strings.Join(lines, "\n")
 }
 
 func containsCJK(value string) bool {
