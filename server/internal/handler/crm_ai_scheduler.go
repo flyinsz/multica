@@ -14,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type CRMAIAutoScheduler struct {
@@ -197,7 +200,7 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 		status = "skipped"
 	}
 	_, _ = s.db.Exec(context.Background(), `UPDATE crm_ai_setting SET last_checked_at=now(), last_result=$3, updated_at=now() WHERE workspace_id=$1 AND automation_key=$2`, item.WorkspaceID, item.AutomationKey, payload)
-	if err == nil && !crmAIRunShouldRecord(item.AutomationKey, result) {
+	if !crmAIRunShouldRecord(item.AutomationKey, result) {
 		return
 	}
 	_, _ = s.db.Exec(context.Background(), `INSERT INTO crm_ai_run (workspace_id, automation_key, status, started_at, finished_at, result, error) VALUES ($1,$2,$3,$4,now(),$5,$6)`, item.WorkspaceID, item.AutomationKey, status, startedAt, payload, errorText)
@@ -207,11 +210,11 @@ func crmAIRunShouldRecord(automationKey string, result map[string]any) bool {
 	if result == nil {
 		return false
 	}
-	if _, ok := result["error"]; ok {
-		return true
-	}
 	if automationKey == "email_pending_reply" || automationKey == "due_followup" {
 		return false
+	}
+	if _, ok := result["error"]; ok {
+		return true
 	}
 	return true
 }
@@ -1058,7 +1061,7 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 			ON CONFLICT DO NOTHING
 		), thread_update AS (
 			UPDATE crm_email_thread
-			SET issue_id=COALESCE(NULLIF($9, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)),
+			SET issue_id=(SELECT id FROM inserted),
 				project_id=COALESCE(project_id, $11),
 				updated_at=now()
 			WHERE workspace_id=$1 AND id=$10 AND EXISTS (SELECT 1 FROM inserted)
@@ -1067,7 +1070,18 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, nil
 	}
-	return issueID, err
+	if err != nil {
+		return issueID, err
+	}
+
+	issue, getErr := db.New(h.DB).GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
+	if getErr == nil {
+		prefix := h.getIssuePrefix(ctx, workspaceID)
+		h.publish(protocol.EventIssueCreated, uuidToString(workspaceID), creatorType, uuidToString(creatorID), map[string]any{"issue": issueToResponse(issue, prefix)})
+	} else {
+		slog.Warn("CRM AI created issue but failed to load it for publish", "error", getErr, "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID))
+	}
+	return issueID, nil
 }
 
 func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID, config json.RawMessage) (crmAIIssueActorConfig, error) {
