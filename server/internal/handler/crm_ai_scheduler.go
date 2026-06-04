@@ -1045,7 +1045,9 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 			ON CONFLICT DO NOTHING
 		), thread_update AS (
 			UPDATE crm_email_thread
-			SET issue_id=COALESCE(NULLIF($9, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)), updated_at=now()
+			SET issue_id=COALESCE(NULLIF($9, '00000000-0000-0000-0000-000000000000'::uuid), (SELECT id FROM inserted)),
+				project_id=COALESCE(project_id, $11),
+				updated_at=now()
 			WHERE workspace_id=$1 AND id=$10 AND EXISTS (SELECT 1 FROM inserted)
 		)
 		SELECT id FROM inserted`, workspaceID, title, body, messageID, assigneeType, assigneeID, creatorType, creatorID, parentIssueID, threadID, projectID).Scan(&issueID)

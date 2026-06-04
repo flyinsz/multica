@@ -1421,12 +1421,11 @@ export function CRMEmailsPage() {
   const selectedContact = contacts.find((contact) => contact.id === (selectedThread?.contact_id ?? "")) ?? null;
   const selectedProject = projects.find((project) => project.id === (selectedThread?.project_id ?? "")) ?? null;
   const selectedIssueIds = Array.from(new Set(selectedThread?.issue_ids?.length ? selectedThread.issue_ids : selectedThread?.issue_id ? [selectedThread.issue_id] : []));
-  const selectedIssues = issues.filter((issue) => selectedIssueIds.includes(issue.id));
+  const selectedIssueSummaries = selectedThread?.issues?.length ? selectedThread.issues : selectedIssueIds.map((id) => issues.find((issue) => issue.id === id)).filter(Boolean).map((issue) => ({ id: issue!.id, identifier: issue!.identifier, title: issue!.title, status: issue!.status }));
+  const selectedIssues = selectedIssueSummaries.map((summary) => ({ ...summary, identifier: summary.identifier || (summary.number ? `#${summary.number}` : "") }));
   const selectedIssueLabel = selectedIssues.length
     ? selectedIssues.map((issue) => issue.identifier || issue.title || issue.id.slice(0, 8)).join(", ")
-    : selectedIssueIds.length
-      ? selectedIssueIds.map((id) => id.slice(0, 8)).join(", ")
-      : t(($) => $.emails.no_issue_link);
+    : t(($) => $.emails.no_issue_link);
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 

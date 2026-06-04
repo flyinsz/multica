@@ -276,27 +276,36 @@ type CreateCRMContactRequest struct {
 
 type UpdateCRMContactRequest = CreateCRMContactRequest
 
+type CRMEmailThreadIssueSummary struct {
+	ID         string `json:"id"`
+	Number     int64  `json:"number"`
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+}
+
 type CRMEmailThreadResponse struct {
-	ID               string   `json:"id"`
-	WorkspaceID      string   `json:"workspace_id"`
-	AccountID        *string  `json:"account_id"`
-	ContactID        *string  `json:"contact_id"`
-	ProjectID        *string  `json:"project_id"`
-	IssueID          *string  `json:"issue_id"`
-	IssueIDs         []string `json:"issue_ids,omitempty"`
-	Subject          string   `json:"subject"`
-	ExternalThreadID *string  `json:"external_thread_id"`
-	Mailbox          *string  `json:"mailbox"`
-	Direction        string   `json:"direction"`
-	Status           string   `json:"status"`
-	LastMessageAt    *string  `json:"last_message_at"`
-	LastSnippet      *string  `json:"last_snippet"`
-	MessageCount     int64    `json:"message_count"`
-	IsRead           bool     `json:"is_read"`
-	IsStarred        bool     `json:"is_starred"`
-	IsTrashed        bool     `json:"is_trashed"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	ID               string                       `json:"id"`
+	WorkspaceID      string                       `json:"workspace_id"`
+	AccountID        *string                      `json:"account_id"`
+	ContactID        *string                      `json:"contact_id"`
+	ProjectID        *string                      `json:"project_id"`
+	IssueID          *string                      `json:"issue_id"`
+	IssueIDs         []string                     `json:"issue_ids,omitempty"`
+	Issues           []CRMEmailThreadIssueSummary `json:"issues,omitempty"`
+	Subject          string                       `json:"subject"`
+	ExternalThreadID *string                      `json:"external_thread_id"`
+	Mailbox          *string                      `json:"mailbox"`
+	Direction        string                       `json:"direction"`
+	Status           string                       `json:"status"`
+	LastMessageAt    *string                      `json:"last_message_at"`
+	LastSnippet      *string                      `json:"last_snippet"`
+	MessageCount     int64                        `json:"message_count"`
+	IsRead           bool                         `json:"is_read"`
+	IsStarred        bool                         `json:"is_starred"`
+	IsTrashed        bool                         `json:"is_trashed"`
+	CreatedAt        string                       `json:"created_at"`
+	UpdatedAt        string                       `json:"updated_at"`
 }
 
 type CRMEmailListItemResponse struct {
@@ -385,6 +394,7 @@ type crmEmailListThreadRow struct {
 	IsStarred        bool
 	IsTrashed        bool
 	IssueIDs         []string
+	Issues           []CRMEmailThreadIssueSummary
 }
 
 type crmEmailThreadRow struct {
@@ -408,6 +418,7 @@ type crmEmailThreadRow struct {
 	IsRead           bool
 	IsStarred        bool
 	IsTrashed        bool
+	Issues           []CRMEmailThreadIssueSummary
 }
 
 type CRMEmailMessageResponse struct {
@@ -554,6 +565,33 @@ func (h *Handler) loadCRMEmailThreadIssueIDs(ctx context.Context, threadID pgtyp
 	return ids
 }
 
+func (h *Handler) loadCRMEmailThreadIssues(ctx context.Context, threadID pgtype.UUID) []CRMEmailThreadIssueSummary {
+	rows, err := h.DB.Query(ctx, `
+		SELECT i.id, i.number, i.title, i.status
+		FROM crm_email_thread_issue_link l
+		JOIN issue i ON i.id = l.issue_id
+		WHERE l.thread_id = $1
+		ORDER BY l.created_at ASC`, threadID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var items []CRMEmailThreadIssueSummary
+	for rows.Next() {
+		var id pgtype.UUID
+		var number int64
+		var title, status string
+		if err := rows.Scan(&id, &number, &title, &status); err == nil {
+			identifier := ""
+			if number > 0 {
+				identifier = fmt.Sprintf("#%d", number)
+			}
+			items = append(items, CRMEmailThreadIssueSummary{ID: uuidToString(id), Number: number, Identifier: identifier, Title: title, Status: status})
+		}
+	}
+	return items
+}
+
 func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
 	issueID := row.IssueID
 	if !issueID.Valid && len(row.IssueIDs) > 0 {
@@ -567,6 +605,7 @@ func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
 		ProjectID:        uuidToPtr(row.ProjectID),
 		IssueID:          uuidToPtr(issueID),
 		IssueIDs:         uuidSliceToStrings(row.IssueIDs),
+		Issues:           row.Issues,
 		Subject:          row.Subject,
 		ExternalThreadID: textToPtr(row.ExternalThreadID),
 		Mailbox:          textToPtr(row.Mailbox),
@@ -634,6 +673,7 @@ func crmEmailListThreadToResponse(row crmEmailListThreadRow) CRMEmailThreadRespo
 		ProjectID:        uuidToPtr(row.ProjectID),
 		IssueID:          issueID,
 		IssueIDs:         row.IssueIDs,
+		Issues:           row.Issues,
 		Subject:          crmTextValue(row.Subject),
 		ExternalThreadID: textToPtr(row.ExternalThreadID),
 		Mailbox:          textToPtr(row.Mailbox),
@@ -2356,6 +2396,7 @@ func (h *Handler) ListCRMEmailThreads(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to scan CRM email thread")
 				return
 			}
+			thread.Issues = h.loadCRMEmailThreadIssues(r.Context(), thread.ID)
 			threads = append(threads, crmEmailListThreadToResponse(thread))
 		}
 		if err := threadRows.Err(); err != nil {
@@ -2782,6 +2823,7 @@ func (h *Handler) UpdateCRMEmailThreadState(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
+	thread.Issues = h.loadCRMEmailThreadIssues(r.Context(), thread.ID)
 	h.trySyncCRMEmailThreadFlags(r.Context(), workspaceID, threadID, req.IsRead, req.IsStarred)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
 }
@@ -5243,6 +5285,7 @@ func (h *Handler) MoveCRMEmailThread(w http.ResponseWriter, r *http.Request) {
 		WHERE thread_id = $1 AND workspace_id = $2
 	`, threadID, workspaceID, req.Folder)
 	thread.IssueIDs = h.loadCRMEmailThreadIssueIDs(r.Context(), thread.ID)
+	thread.Issues = h.loadCRMEmailThreadIssues(r.Context(), thread.ID)
 	writeJSON(w, http.StatusOK, crmEmailThreadToResponse(thread))
 }
 
