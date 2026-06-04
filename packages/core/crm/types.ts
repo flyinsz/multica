@@ -224,6 +224,7 @@ export interface CRMEmailThread {
   project_id?: string | null;
   issue_id?: string | null;
   issue_ids?: string[];
+  issues?: Array<{ id: string; number?: number; identifier?: string; title?: string; status?: string }>;
   subject: string;
   external_thread_id?: string | null;
   mailbox?: string | null;
