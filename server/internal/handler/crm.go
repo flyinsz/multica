@@ -4835,7 +4835,7 @@ func (h *Handler) ListCRMAIHistory(w http.ResponseWriter, r *http.Request) {
 	automationKey := strings.TrimSpace(r.URL.Query().Get("automation_key"))
 	rows, err := h.DB.Query(r.Context(), `
 		WITH history AS (
-			SELECT id, title, status, origin_id, created_at, updated_at,
+			SELECT id, title, status, id AS origin_id, created_at, updated_at,
 				CASE
 					WHEN title LIKE '回复邮件：%' OR title LIKE 'CRM 邮件待回复：%' THEN 'email_pending_reply'
 					WHEN title LIKE '跟进客户：%' THEN 'due_followup'
