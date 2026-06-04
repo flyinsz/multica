@@ -19,6 +19,8 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { crmApi } from "@multica/core/crm/api";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { useNavigation } from "../../navigation";
 
 type SettingKey = "email_pending_reply" | "due_followup" | "profile_new_activity_refresh" | "profile_daily_refresh";
 
@@ -201,6 +203,8 @@ function buildForm(setting: CRMAISetting): FormState {
 
 function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
   const wsId = useWorkspaceId();
+  const navigation = useNavigation();
+  const paths = useWorkspacePaths();
   const [limit, setLimit] = useState(20);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const { data, isLoading, isFetching } = useQuery({
@@ -225,13 +229,18 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
           </label>
         </div>
         {isLoading ? <Skeleton className="h-16 w-full" /> : latest ? (
-          <div className="block rounded-md border bg-background p-3">
+          <button
+            type="button"
+            className="block w-full rounded-md border bg-background p-3 text-left hover:bg-muted/50 disabled:cursor-default disabled:hover:bg-background"
+            disabled={!latest.origin_id}
+            onClick={() => latest.origin_id && navigation.push(paths.issueDetail(latest.origin_id))}
+          >
             <div className="flex items-center justify-between gap-3">
               <div className="truncate text-sm font-medium">{latest.title}</div>
               <Badge variant="secondary">{latest.status}</Badge>
             </div>
             <div className="mt-1 text-xs text-muted-foreground">{fmt(latest.created_at)}</div>
-          </div>
+          </button>
         ) : <div className="text-sm text-muted-foreground">暂无运行记录</div>}
       </section>
       <section className="mt-4 rounded-lg border bg-card">
@@ -243,13 +252,29 @@ function SettingHistory({ automationKey }: { automationKey: SettingKey }) {
           <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
         ) : items.length ? (
           <div className="divide-y">
-            {items.map((item) => (
-              <div key={item.id} className="grid grid-cols-[minmax(220px,1fr)_120px_180px] items-center gap-3 px-4 py-3 text-sm">
-                <div className="truncate font-medium">{item.title}</div>
-                <Badge variant="secondary" className="w-fit">{item.status}</Badge>
-                <div className="text-xs text-muted-foreground">{fmt(item.created_at)}</div>
-              </div>
-            ))}
+            {items.map((item) => {
+              const canOpenIssue = Boolean(item.origin_id) && item.automation_key !== "other";
+              return (
+                <div
+                  key={item.id}
+                  className={`grid grid-cols-[minmax(220px,1fr)_120px_180px] items-center gap-3 px-4 py-3 text-sm ${canOpenIssue ? "cursor-pointer hover:bg-muted/50" : ""}`}
+                  role={canOpenIssue ? "button" : undefined}
+                  tabIndex={canOpenIssue ? 0 : undefined}
+                  onClick={() => canOpenIssue && navigation.push(paths.issueDetail(item.origin_id!))}
+                  onKeyDown={(event) => {
+                    if (!canOpenIssue) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      navigation.push(paths.issueDetail(item.origin_id!));
+                    }
+                  }}
+                >
+                  <div className="truncate font-medium">{item.title}</div>
+                  <Badge variant="secondary" className="w-fit">{item.status}</Badge>
+                  <div className="text-xs text-muted-foreground">{fmt(item.created_at)}</div>
+                </div>
+              );
+            })}
           </div>
         ) : <div className="p-4 text-sm text-muted-foreground">暂无运行记录</div>}
         {data?.has_more ? (
