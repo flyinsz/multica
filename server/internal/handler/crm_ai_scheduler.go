@@ -1078,18 +1078,31 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	if getErr == nil {
 		prefix := h.getIssuePrefix(ctx, workspaceID)
 		h.publish(protocol.EventIssueCreated, uuidToString(workspaceID), creatorType, uuidToString(creatorID), map[string]any{"issue": issueToResponse(issue, prefix)})
-		if issue.AssigneeType.Valid && issue.AssigneeID.Valid {
-			if h.shouldEnqueueAgentTask(ctx, issue) {
-				h.TaskService.EnqueueTaskForIssue(ctx, issue)
-			}
-			if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
-				h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, uuidToString(creatorID))
-			}
-		}
+		h.crmEnqueueCreatedIssue(ctx, issue, creatorType, uuidToString(creatorID))
 	} else {
 		slog.Warn("CRM AI created issue but failed to load it for publish", "error", getErr, "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID))
 	}
 	return issueID, nil
+}
+
+func (h *Handler) crmEnqueueCreatedIssue(ctx context.Context, issue db.Issue, creatorType, creatorID string) {
+	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		slog.Warn("CRM AI created issue without assignee; skip enqueue", "issue_id", uuidToString(issue.ID))
+		return
+	}
+	if h.TaskService == nil {
+		slog.Warn("CRM AI created issue cannot enqueue; task service missing", "issue_id", uuidToString(issue.ID), "assignee_type", issue.AssigneeType.String, "assignee_id", uuidToString(issue.AssigneeID))
+		return
+	}
+	if issue.AssigneeType.String == "agent" {
+		if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+			slog.Warn("CRM AI created issue agent enqueue failed", "issue_id", uuidToString(issue.ID), "agent_id", uuidToString(issue.AssigneeID), "error", err)
+		}
+		return
+	}
+	if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
+		h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, creatorID)
+	}
 }
 
 func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID, config json.RawMessage) (crmAIIssueActorConfig, error) {
