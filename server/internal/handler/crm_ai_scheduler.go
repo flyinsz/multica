@@ -1088,6 +1088,13 @@ func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID,
 			cfg.ResearcherID = uuidToString(agentID)
 		}
 	}
+	if cfg.TodoAssigneeType == "squad" {
+		memberID, err := h.crmSquadVisibleMemberAssignee(ctx, workspaceID, mustParsePgUUID(cfg.TodoAssigneeID))
+		if err == nil && memberID.Valid {
+			cfg.TodoAssigneeType = "member"
+			cfg.TodoAssigneeID = uuidToString(memberID)
+		}
+	}
 	if err := h.validateCRMIssueActor(ctx, workspaceID, cfg.CreatorType, cfg.CreatorID); err != nil {
 		return cfg, fmt.Errorf("invalid CRM AI issue creator: %w", err)
 	}
@@ -1100,6 +1107,26 @@ func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID,
 		}
 	}
 	return cfg, nil
+}
+
+func (h *Handler) crmSquadVisibleMemberAssignee(ctx context.Context, workspaceID, squadID pgtype.UUID) (pgtype.UUID, error) {
+	var memberID pgtype.UUID
+	err := h.DB.QueryRow(ctx, `
+		SELECT sm.member_id
+		FROM squad_member sm
+		JOIN member m ON m.id = sm.member_id AND m.workspace_id = $1
+		WHERE sm.squad_id = $2 AND sm.member_type = 'member'
+		ORDER BY CASE COALESCE(sm.role, '') WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2 ELSE 3 END, sm.created_at ASC
+		LIMIT 1`, workspaceID, squadID).Scan(&memberID)
+	if err == nil && memberID.Valid {
+		return memberID, nil
+	}
+	return h.crmWorkspaceOwnerMemberID(ctx, workspaceID)
+}
+
+func (h *Handler) crmWorkspaceOwnerMemberID(ctx context.Context, workspaceID pgtype.UUID) (pgtype.UUID, error) {
+	memberID, _, err := h.crmWorkspaceOwnerMember(ctx, workspaceID)
+	return memberID, err
 }
 
 func (h *Handler) validateCRMIssueActor(ctx context.Context, workspaceID pgtype.UUID, actorType, actorID string) error {
