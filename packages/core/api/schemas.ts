@@ -192,7 +192,7 @@ export const CommentsListSchema = z.array(CommentSchema);
 // Metadata is primitive-only by API/DB contract. Stay lenient on shape:
 // unknown keys land as `unknown` to a caller, but the field itself defaults
 // to {} so consumers never need to nil-guard `issue.metadata`.
-const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+const IssueMetadataSchema = z.record(z.string(), z.unknown()).default({});
 
 export const IssueSchema = z.object({
   id: z.string(),
