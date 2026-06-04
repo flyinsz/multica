@@ -178,6 +178,9 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 	default:
 		err = fmt.Errorf("unsupported CRM AI automation %s", item.AutomationKey)
 	}
+	if result == nil {
+		result = map[string]any{}
+	}
 	if err != nil {
 		result["error"] = err.Error()
 		slog.Warn("CRM AI automation run failed", "key", item.AutomationKey, "workspace_id", uuidToString(item.WorkspaceID), "error", err)
