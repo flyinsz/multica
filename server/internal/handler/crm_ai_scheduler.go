@@ -215,18 +215,38 @@ func (s *CRMAIAutoScheduler) enqueueOrphanedCRMAIIssueTasks(ctx context.Context,
 		return 0
 	}
 	cmd, err := s.db.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
-		SELECT i.assignee_id, a.runtime_id, i.id, 'queued', 0,
-		       jsonb_build_object('trigger','crm_ai_orphan_backfill','origin_type',i.origin_type,'origin_id',i.origin_id::text)
-		FROM issue i
-		JOIN agent a ON a.id = i.assignee_id AND a.workspace_id = i.workspace_id
-		WHERE i.workspace_id = $1
-		  AND i.origin_type = 'crm_ai'
-		  AND i.status = 'todo'
-		  AND i.assignee_type = 'agent'
-		  AND i.assignee_id IS NOT NULL
-		  AND a.runtime_id IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM agent_task_queue q WHERE q.issue_id = i.id)
+		WITH candidates AS (
+			SELECT
+				i.id AS issue_id,
+				CASE
+					WHEN i.assignee_type = 'agent' THEN i.assignee_id
+					WHEN i.assignee_type = 'squad' THEN s.leader_id
+				END AS agent_id,
+				CASE
+					WHEN i.assignee_type = 'squad' THEN true
+					ELSE false
+				END AS is_leader_task,
+				i.origin_type,
+				i.origin_id
+			FROM issue i
+			LEFT JOIN squad s ON s.id = i.assignee_id AND s.workspace_id = i.workspace_id AND s.archived_at IS NULL
+			WHERE i.workspace_id = $1
+			  AND i.origin_type = 'crm_ai'
+			  AND i.status = 'todo'
+			  AND i.assignee_type IN ('agent', 'squad')
+			  AND i.assignee_id IS NOT NULL
+			  AND NOT EXISTS (SELECT 1 FROM agent_task_queue q WHERE q.issue_id = i.id)
+		), enqueueable AS (
+			SELECT c.issue_id, c.agent_id, a.runtime_id, c.is_leader_task, c.origin_type, c.origin_id
+			FROM candidates c
+			JOIN agent a ON a.id = c.agent_id AND a.workspace_id = $1 AND a.archived_at IS NULL
+			WHERE c.agent_id IS NOT NULL AND a.runtime_id IS NOT NULL
+		)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+		SELECT agent_id, runtime_id, issue_id, 'queued', 0,
+		       jsonb_build_object('trigger','crm_ai_orphan_backfill','origin_type',origin_type,'origin_id',origin_id::text),
+		       is_leader_task
+		FROM enqueueable
 	`, workspaceID)
 	if err != nil {
 		slog.Warn("CRM AI orphan issue task enqueue failed", "workspace_id", uuidToString(workspaceID), "error", err)
@@ -1124,7 +1144,9 @@ func (h *Handler) crmEnqueueCreatedIssue(ctx context.Context, issue db.Issue, cr
 		return
 	}
 	if h.TaskService == nil {
-		slog.Warn("CRM AI created issue cannot enqueue; task service missing", "issue_id", uuidToString(issue.ID), "assignee_type", issue.AssigneeType.String, "assignee_id", uuidToString(issue.AssigneeID))
+		if err := h.crmEnqueueIssueTaskDirect(ctx, issue, creatorType, creatorID); err != nil {
+			slog.Warn("CRM AI created issue direct enqueue failed", "issue_id", uuidToString(issue.ID), "assignee_type", issue.AssigneeType.String, "assignee_id", uuidToString(issue.AssigneeID), "error", err)
+		}
 		return
 	}
 	if issue.AssigneeType.String == "agent" {
@@ -1136,6 +1158,38 @@ func (h *Handler) crmEnqueueCreatedIssue(ctx context.Context, issue db.Issue, cr
 	if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
 		h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, creatorID)
 	}
+}
+
+func (h *Handler) crmEnqueueIssueTaskDirect(ctx context.Context, issue db.Issue, creatorType, creatorID string) error {
+	if h == nil || h.DB == nil || !issue.ID.Valid || !issue.WorkspaceID.Valid || !issue.AssigneeID.Valid || !issue.AssigneeType.Valid {
+		return nil
+	}
+	if issue.AssigneeType.String == "agent" {
+		_, err := h.DB.Exec(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+			SELECT a.id, a.runtime_id, $1, 'queued', 0,
+			       jsonb_build_object('trigger','crm_ai_created_issue','creator_type',$4,'creator_id',$5),
+			       false
+			FROM agent a
+			WHERE a.workspace_id=$2 AND a.id=$3 AND a.archived_at IS NULL AND a.runtime_id IS NOT NULL
+			  AND NOT EXISTS (SELECT 1 FROM agent_task_queue q WHERE q.issue_id=$1)
+		`, issue.ID, issue.WorkspaceID, issue.AssigneeID, creatorType, creatorID)
+		return err
+	}
+	if issue.AssigneeType.String == "squad" {
+		_, err := h.DB.Exec(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+			SELECT s.leader_id, a.runtime_id, $1, 'queued', 0,
+			       jsonb_build_object('trigger','crm_ai_created_issue','creator_type',$4,'creator_id',$5,'squad_id',$3::text),
+			       true
+			FROM squad s
+			JOIN agent a ON a.id=s.leader_id AND a.workspace_id=s.workspace_id AND a.archived_at IS NULL
+			WHERE s.workspace_id=$2 AND s.id=$3 AND s.archived_at IS NULL AND s.leader_id IS NOT NULL AND a.runtime_id IS NOT NULL
+			  AND NOT EXISTS (SELECT 1 FROM agent_task_queue q WHERE q.issue_id=$1)
+		`, issue.ID, issue.WorkspaceID, issue.AssigneeID, creatorType, creatorID)
+		return err
+	}
+	return nil
 }
 
 func (h *Handler) crmAIIssueActors(ctx context.Context, workspaceID pgtype.UUID, config json.RawMessage) (crmAIIssueActorConfig, error) {
