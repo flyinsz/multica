@@ -1422,6 +1422,11 @@ export function CRMEmailsPage() {
   const selectedProject = projects.find((project) => project.id === (selectedThread?.project_id ?? "")) ?? null;
   const selectedIssueIds = Array.from(new Set(selectedThread?.issue_ids?.length ? selectedThread.issue_ids : selectedThread?.issue_id ? [selectedThread.issue_id] : []));
   const selectedIssues = issues.filter((issue) => selectedIssueIds.includes(issue.id));
+  const selectedIssueLabel = selectedIssues.length
+    ? selectedIssues.map((issue) => issue.identifier || issue.title || issue.id.slice(0, 8)).join(", ")
+    : selectedIssueIds.length
+      ? selectedIssueIds.map((id) => id.slice(0, 8)).join(", ")
+      : t(($) => $.emails.no_issue_link);
   const defaultProjectTitle = selectedAccount ? `CRM:${selectedAccount.name}` : "";
   const crmNamedProject = selectedAccount ? projects.find((project) => project.title === defaultProjectTitle) : null;
 
@@ -2097,7 +2102,7 @@ export function CRMEmailsPage() {
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.linked_customer)} value={selectedAccount?.name ?? t(($) => $.emails.no_customer)} onClick={selectedAccount ? () => setDetailDialog({ type: "account", account: selectedAccount }) : undefined} />
                   <AssociationChip icon={<UserRound className="size-4" />} label={t(($) => $.emails.linked_contact)} value={selectedContact?.name ?? t(($) => $.emails.no_contact)} onClick={selectedContact ? () => setDetailDialog({ type: "contact", contact: selectedContact }) : undefined} />
                   <AssociationChip icon={<Building2 className="size-4" />} label={t(($) => $.emails.related_project)} value={selectedProject?.title ?? t(($) => $.emails.no_project_link)} />
-                  <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssues.length ? selectedIssues.map((issue) => issue.identifier).join(", ") : t(($) => $.emails.no_issue_link)} onClick={selectedIssueIds.length ? () => { if (selectedIssueIds.length === 1) setIssueDialogId(selectedIssueIds[0]!); else setIssuePickerOpen(true); } : undefined} />
+                  <AssociationChip icon={<Link2 className="size-4" />} label={t(($) => $.emails.related_issue)} value={selectedIssueLabel} onClick={selectedIssueIds.length ? () => { if (selectedIssueIds.length === 1) setIssueDialogId(selectedIssueIds[0]!); else setIssuePickerOpen(true); } : undefined} />
                   {selectedAccount && (
                     <Button variant="ghost" size="sm" onClick={() => navigation.push(paths.customerDetail(selectedAccount.id))}>
                       {t(($) => $.emails.open_customer)} <ArrowRight className="ml-1 size-3" />
