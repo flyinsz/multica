@@ -555,13 +555,17 @@ func (h *Handler) loadCRMEmailThreadIssueIDs(ctx context.Context, threadID pgtyp
 }
 
 func crmEmailThreadToResponse(row crmEmailThreadRow) CRMEmailThreadResponse {
+	issueID := row.IssueID
+	if !issueID.Valid && len(row.IssueIDs) > 0 {
+		issueID = row.IssueIDs[0]
+	}
 	return CRMEmailThreadResponse{
 		ID:               uuidToString(row.ID),
 		WorkspaceID:      uuidToString(row.WorkspaceID),
 		AccountID:        uuidToPtr(row.AccountID),
 		ContactID:        uuidToPtr(row.ContactID),
 		ProjectID:        uuidToPtr(row.ProjectID),
-		IssueID:          uuidToPtr(row.IssueID),
+		IssueID:          uuidToPtr(issueID),
 		IssueIDs:         uuidSliceToStrings(row.IssueIDs),
 		Subject:          row.Subject,
 		ExternalThreadID: textToPtr(row.ExternalThreadID),
@@ -618,13 +622,17 @@ func crmEmailListItemToResponse(row crmEmailListItemRow) CRMEmailListItemRespons
 }
 
 func crmEmailListThreadToResponse(row crmEmailListThreadRow) CRMEmailThreadResponse {
+	issueID := uuidToPtr(row.IssueID)
+	if issueID == nil && len(row.IssueIDs) > 0 {
+		issueID = &row.IssueIDs[0]
+	}
 	return CRMEmailThreadResponse{
 		ID:               uuidToString(row.ID),
 		WorkspaceID:      uuidToString(row.WorkspaceID),
 		AccountID:        uuidToPtr(row.AccountID),
 		ContactID:        uuidToPtr(row.ContactID),
 		ProjectID:        uuidToPtr(row.ProjectID),
-		IssueID:          uuidToPtr(row.IssueID),
+		IssueID:          issueID,
 		IssueIDs:         row.IssueIDs,
 		Subject:          crmTextValue(row.Subject),
 		ExternalThreadID: textToPtr(row.ExternalThreadID),
@@ -4854,6 +4862,7 @@ func (h *Handler) ListCRMAIHistory(w http.ResponseWriter, r *http.Request) {
 			FROM crm_ai_run r
 			WHERE r.workspace_id=$1
 			  AND r.started_at >= now() - ($4::int * interval '1 day')
+			  AND NOT (r.automation_key IN ('email_pending_reply','due_followup') AND r.status='success')
 		)
 		SELECT id, title, status, origin_id, created_at, updated_at, automation_key
 		FROM history

@@ -194,8 +194,25 @@ func (s *CRMAIAutoScheduler) runSetting(parent context.Context, item crmAISettin
 		status = "skipped"
 	}
 	_, _ = s.db.Exec(context.Background(), `UPDATE crm_ai_setting SET last_checked_at=now(), last_result=$3, updated_at=now() WHERE workspace_id=$1 AND automation_key=$2`, item.WorkspaceID, item.AutomationKey, payload)
+	if err == nil && !crmAIRunShouldRecord(item.AutomationKey, result) {
+		return
+	}
 	_, _ = s.db.Exec(context.Background(), `INSERT INTO crm_ai_run (workspace_id, automation_key, status, started_at, finished_at, result, error) VALUES ($1,$2,$3,$4,now(),$5,$6)`, item.WorkspaceID, item.AutomationKey, status, startedAt, payload, errorText)
 }
+
+func crmAIRunShouldRecord(automationKey string, result map[string]any) bool {
+	if result == nil {
+		return false
+	}
+	if _, ok := result["error"]; ok {
+		return true
+	}
+	if automationKey == "email_pending_reply" || automationKey == "due_followup" {
+		return false
+	}
+	return true
+}
+
 
 func crmAIDailyWindowDue(config json.RawMessage) bool {
 	var cfg struct {
@@ -501,7 +518,9 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 	}
 	defer rows.Close()
 	created := 0
+	merged := 0
 	createdIssues := []map[string]string{}
+	mergedIssues := []map[string]string{}
 	candidates := 0
 	for rows.Next() {
 		var candidate crmPendingReplyCandidate
@@ -524,8 +543,8 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			slog.Warn("CRM pending reply project lookup failed", "workspace_id", uuidToString(workspaceID), "account_id", uuidToString(candidate.AccountID), "error", err)
 		}
 		if parentIssueID.Valid && parentIssueStatus != "done" {
-			created++
-			createdIssues = append(createdIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": "merged_comment"})
+			merged++
+			mergedIssues = append(mergedIssues, map[string]string{"id": uuidToString(parentIssueID), "title": title, "thread_id": uuidToString(candidate.ThreadID), "message_id": uuidToString(candidate.MessageID), "kind": "merged_comment"})
 			if err := h.markCRMEmailPendingReplyMessageProcessed(ctx, workspaceID, parentIssueID, candidate.MessageID); err != nil {
 				slog.Warn("CRM pending reply message marker update failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "message_id", uuidToString(candidate.MessageID), "error", err)
 			}
@@ -588,7 +607,7 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"automation_key": "email_pending_reply", "candidates": candidates, "created": created, "created_issues": createdIssues}, nil
+	return map[string]any{"automation_key": "email_pending_reply", "candidates": candidates, "created": created, "merged": merged, "created_issues": createdIssues, "merged_issues": mergedIssues}, nil
 }
 
 func (h *Handler) runCRMDueFollowupAutomation(ctx context.Context, workspaceID pgtype.UUID, limit int, config json.RawMessage) (map[string]any, error) {
