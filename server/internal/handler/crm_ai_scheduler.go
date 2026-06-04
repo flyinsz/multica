@@ -1032,9 +1032,15 @@ func (h *Handler) createCRMEmailPendingReplyIssue(ctx context.Context, workspace
 	var issueID pgtype.UUID
 	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
 	err := h.DB.QueryRow(ctx, `
-		WITH inserted AS (
+		WITH next_number AS (
+			UPDATE workspace
+			SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id=$1)) + 1
+			WHERE id=$1
+			RETURNING issue_counter
+		), inserted AS (
 			INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, origin_type, origin_id, number, project_id)
-			SELECT $1, $2, $3, 'todo', 'medium', $5, $6, $7, $8, $9, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1, $11
+			SELECT $1, $2, $3, 'todo', 'medium', $5, $6, $7, $8, $9, 'crm_ai', $4, issue_counter, $11
+			FROM next_number
 			WHERE NOT EXISTS (
 				SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4
 			)
@@ -1135,8 +1141,15 @@ func (h *Handler) createCRMInternalIssue(ctx context.Context, workspaceID pgtype
 	creatorType, creatorID := actors.CreatorType, mustParsePgUUID(actors.CreatorID)
 	assigneeType, assigneeID := actors.TodoAssigneeType, mustParsePgUUID(actors.TodoAssigneeID)
 	err = h.DB.QueryRow(ctx, `
+		WITH next_number AS (
+			UPDATE workspace
+			SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id=$1)) + 1
+			WHERE id=$1
+			RETURNING issue_counter
+		)
 		INSERT INTO issue (workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, origin_type, origin_id, number)
-		SELECT $1, $2, $3, 'todo', 'medium', NULLIF($7::text,''), $8, $5::text, $6, 'crm_ai', $4, COALESCE((SELECT MAX(number) FROM issue WHERE workspace_id=$1), 0) + 1
+		SELECT $1, $2, $3, 'todo', 'medium', NULLIF($7::text,''), $8, $5::text, $6, 'crm_ai', $4, issue_counter
+		FROM next_number
 		WHERE NOT EXISTS (
 			SELECT 1 FROM issue WHERE workspace_id=$1 AND origin_type='crm_ai' AND origin_id=$4 AND status NOT IN ('done','cancelled')
 		)
