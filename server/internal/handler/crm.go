@@ -3635,7 +3635,64 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	draftID := uuidToString(id)
+	if req.AIGenerated && issueID.Valid {
+		if err := h.enqueueCRMDraftReviewerTask(r.Context(), workspaceID, issueID, accountID, id); err != nil {
+			slog.Warn("CRM email draft reviewer enqueue failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "draft_id", draftID, "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": draftID, "draft_url": h.crmEmailDraftURL(r, workspaceID, draftID)})
+}
+
+func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, issueID, accountID, draftID pgtype.UUID) error {
+	if h == nil || h.DB == nil || !workspaceID.Valid || !issueID.Valid || !accountID.Valid || !draftID.Valid {
+		return nil
+	}
+	_, err := h.DB.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+		SELECT account.owner_agent_id,
+		       COALESCE((
+		           SELECT q.runtime_id
+		           FROM agent_task_queue q
+		           WHERE q.agent_id = account.owner_agent_id AND q.runtime_id IS NOT NULL
+		           ORDER BY q.created_at DESC
+		           LIMIT 1
+		       ), (
+		           SELECT ar.id
+		           FROM agent_runtime ar
+		           WHERE ar.workspace_id = account.workspace_id AND ar.status = 'online'
+		           ORDER BY ar.last_seen_at DESC
+		           LIMIT 1
+		       )),
+		       $2,
+		       'queued',
+		       100,
+		       jsonb_build_object('trigger','crm_draft_review','draft_id',$4::text,'account_id',$3::text),
+		       false
+		FROM crm_account account
+		WHERE account.workspace_id = $1
+		  AND account.id = $3
+		  AND account.owner_type = 'agent'
+		  AND account.owner_agent_id IS NOT NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM agent_task_queue existing
+		      WHERE existing.issue_id = $2
+		        AND existing.agent_id = account.owner_agent_id
+		        AND existing.status IN ('queued','dispatched','running')
+		  )
+		  AND COALESCE((
+		      SELECT q.runtime_id
+		      FROM agent_task_queue q
+		      WHERE q.agent_id = account.owner_agent_id AND q.runtime_id IS NOT NULL
+		      ORDER BY q.created_at DESC
+		      LIMIT 1
+		  ), (
+		      SELECT ar.id
+		      FROM agent_runtime ar
+		      WHERE ar.workspace_id = account.workspace_id AND ar.status = 'online'
+		      ORDER BY ar.last_seen_at DESC
+		      LIMIT 1
+		  )) IS NOT NULL`, workspaceID, issueID, accountID, draftID)
+	return err
 }
 
 func (h *Handler) UpdateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
