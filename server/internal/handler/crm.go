@@ -3663,20 +3663,20 @@ func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, 
 		           ORDER BY ar.last_seen_at DESC
 		           LIMIT 1
 		       )),
-		       $2,
+		       $2::uuid,
 		       'queued',
 		       100,
-		       jsonb_build_object('trigger','crm_draft_review','draft_id',$4::text,'account_id',$3::text),
+		       jsonb_build_object('trigger','crm_draft_review','draft_id',$4::uuid::text,'account_id',$3::uuid::text),
 		       false
 		FROM crm_account account
 		WHERE account.workspace_id = $1
-		  AND account.id = $3
+		  AND account.id = $3::uuid
 		  AND account.owner_type = 'agent'
 		  AND account.owner_agent_id IS NOT NULL
 		  AND NOT EXISTS (
 		      SELECT 1 FROM agent_task_queue existing
-		      WHERE existing.issue_id = $2
-		        AND existing.agent_id = account.owner_agent_id
+      WHERE existing.issue_id = $2::uuid
+        AND existing.agent_id = account.owner_agent_id
 		        AND existing.status IN ('queued','dispatched','running')
 		  )
 		  AND COALESCE((
