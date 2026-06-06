@@ -3648,7 +3648,7 @@ func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, 
 		return nil
 	}
 	_, err := h.DB.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, trigger_summary, force_fresh_session, is_leader_task)
 		SELECT account.owner_agent_id,
 		       COALESCE((
 		           SELECT q.runtime_id
@@ -3667,6 +3667,8 @@ func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, 
 		       'queued',
 		       100,
 		       jsonb_build_object('trigger','crm_draft_review','draft_id',$4::uuid::text,'account_id',$3::uuid::text),
+		       'CRM draft review: review existing email draft ' || $4::uuid::text || '. If acceptable, approve/send or mark issue done according to CRM workflow. If not acceptable, request concrete draft changes. Do not create another draft and do not wait for yourself as reviewer.',
+		       true,
 		       false
 		FROM crm_account account
 		WHERE account.workspace_id = $1
@@ -3675,8 +3677,8 @@ func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, 
 		  AND account.owner_agent_id IS NOT NULL
 		  AND NOT EXISTS (
 		      SELECT 1 FROM agent_task_queue existing
-      WHERE existing.issue_id = $2::uuid
-        AND existing.agent_id = account.owner_agent_id
+		      WHERE existing.issue_id = $2::uuid
+		        AND existing.agent_id = account.owner_agent_id
 		        AND existing.status IN ('queued','dispatched','running')
 		  )
 		  AND COALESCE((
