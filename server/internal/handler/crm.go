@@ -3644,53 +3644,55 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, issueID, accountID, draftID pgtype.UUID) error {
-	if h == nil || h.DB == nil || !workspaceID.Valid || !issueID.Valid || !accountID.Valid || !draftID.Valid {
+	if h == nil || h.DB == nil || !workspaceID.Valid || !issueID.Valid || !draftID.Valid {
 		return nil
 	}
 	_, err := h.DB.Exec(ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, trigger_summary, force_fresh_session, is_leader_task)
-		SELECT account.owner_agent_id,
+		SELECT leader.id,
 		       COALESCE((
 		           SELECT q.runtime_id
 		           FROM agent_task_queue q
-		           WHERE q.agent_id = account.owner_agent_id AND q.runtime_id IS NOT NULL
+		           WHERE q.agent_id = leader.id AND q.runtime_id IS NOT NULL
 		           ORDER BY q.created_at DESC
 		           LIMIT 1
 		       ), (
 		           SELECT ar.id
 		           FROM agent_runtime ar
-		           WHERE ar.workspace_id = account.workspace_id AND ar.status = 'online'
+		           WHERE ar.workspace_id = issue.workspace_id AND ar.status = 'online'
 		           ORDER BY ar.last_seen_at DESC
 		           LIMIT 1
 		       )),
 		       $2::uuid,
 		       'queued',
 		       100,
-		       jsonb_build_object('trigger','crm_draft_review','draft_id',$4::uuid::text,'account_id',$3::uuid::text),
-		       'CRM draft review: review existing email draft ' || $4::uuid::text || '. If acceptable, approve/send or mark issue done according to CRM workflow. If not acceptable, request concrete draft changes. Do not create another draft and do not wait for yourself as reviewer.',
+		       jsonb_build_object('trigger','crm_draft_master_review','draft_id',$4::uuid::text,'account_id',CASE WHEN $3::uuid IS NULL THEN NULL ELSE $3::uuid::text END),
+		       'CRM draft ready for Master review: review existing email draft ' || $4::uuid::text || '. Decide next step. If acceptable for customer-owner review, @mention the dynamic reviewer/account owner. If changes are needed, @mention CRM-Assistant with concrete edits. Do not hardcode reviewer identity.',
 		       true,
-		       false
-		FROM crm_account account
-		WHERE account.workspace_id = $1
-		  AND account.id = $3::uuid
-		  AND account.owner_type = 'agent'
-		  AND account.owner_agent_id IS NOT NULL
+		       true
+		FROM issue
+		JOIN squad ON issue.assignee_type = 'squad' AND issue.assignee_id = squad.id
+		JOIN agent leader ON leader.id = squad.leader_id
+		WHERE issue.workspace_id = $1
+		  AND issue.id = $2::uuid
+		  AND issue.assignee_type = 'squad'
+		  AND squad.leader_id IS NOT NULL
 		  AND NOT EXISTS (
 		      SELECT 1 FROM agent_task_queue existing
-		      WHERE existing.issue_id = $2::uuid
-		        AND existing.agent_id = account.owner_agent_id
+		      WHERE existing.issue_id = issue.id
+		        AND existing.agent_id = leader.id
 		        AND existing.status IN ('queued','dispatched','running')
 		  )
 		  AND COALESCE((
 		      SELECT q.runtime_id
 		      FROM agent_task_queue q
-		      WHERE q.agent_id = account.owner_agent_id AND q.runtime_id IS NOT NULL
+		      WHERE q.agent_id = leader.id AND q.runtime_id IS NOT NULL
 		      ORDER BY q.created_at DESC
 		      LIMIT 1
 		  ), (
 		      SELECT ar.id
 		      FROM agent_runtime ar
-		      WHERE ar.workspace_id = account.workspace_id AND ar.status = 'online'
+		      WHERE ar.workspace_id = issue.workspace_id AND ar.status = 'online'
 		      ORDER BY ar.last_seen_at DESC
 		      LIMIT 1
 		  )) IS NOT NULL`, workspaceID, issueID, accountID, draftID)
