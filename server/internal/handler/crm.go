@@ -3616,6 +3616,10 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if req.Attachments == nil {
 		req.Attachments = []crmEmailAttachment{}
 	}
+	if issueID.Valid && h.crmIssueSquadLeaderIsActor(r, workspaceID, issueID) {
+		writeError(w, http.StatusForbidden, "CRM squad Master must not create email drafts; @mention the default draft agent with exact mention markdown and stop")
+		return
+	}
 	attachmentsJSON, err := json.Marshal(req.Attachments)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid attachments")
@@ -3641,6 +3645,31 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": draftID, "draft_url": h.crmEmailDraftURL(r, workspaceID, draftID)})
+}
+
+func (h *Handler) crmIssueSquadLeaderIsActor(r *http.Request, workspaceID, issueID pgtype.UUID) bool {
+	if h == nil || h.DB == nil || r == nil || !workspaceID.Valid || !issueID.Valid {
+		return false
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(workspaceID))
+	if actorType != "agent" || strings.TrimSpace(actorID) == "" {
+		return false
+	}
+	var exists bool
+	if err := h.DB.QueryRow(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1
+			FROM issue i
+			JOIN squad s ON s.id = i.assignee_id
+			WHERE i.workspace_id = $1
+			  AND i.id = $2
+			  AND i.assignee_type = 'squad'
+			  AND s.leader_id = $3::uuid
+		)`, workspaceID, issueID, actorID).Scan(&exists); err != nil {
+		slog.Warn("CRM draft squad leader guard lookup failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "actor_id", actorID, "error", err)
+		return false
+	}
+	return exists
 }
 
 func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, issueID, accountID, draftID pgtype.UUID) error {
