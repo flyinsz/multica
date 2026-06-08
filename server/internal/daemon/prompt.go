@@ -32,6 +32,7 @@ func BuildPrompt(task Task, provider string) string {
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	writeCRMDraftReferences(&b, task)
 	return b.String()
 }
 
@@ -174,6 +175,7 @@ func buildCommentPrompt(task Task, provider string) string {
 	} else {
 		fmt.Fprintf(&b, "Read the discussion: `multica issue comment list %s --output json` (long issue? use `--recent 20`).\n\n", task.IssueID)
 	}
+	writeCRMDraftReferences(&b, task)
 	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
 	return b.String()
 }
@@ -236,6 +238,41 @@ func buildChatPrompt(task Task) string {
 }
 
 // buildAutopilotPrompt constructs a prompt for run_only autopilot tasks.
+func writeCRMDraftReferences(b *strings.Builder, task Task) {
+	if b == nil || len(task.CRMDraftReferences) == 0 {
+		return
+	}
+	b.WriteString("\n## CRM Draft References\n\n")
+	b.WriteString("These CRM email drafts are already loaded from server-side data. Do NOT use web_search or browser to open draft URLs or mention://crm-draft links. Use the draft content below, and use CRM MCP/API only for update/send actions.\n\n")
+	for _, d := range task.CRMDraftReferences {
+		fmt.Fprintf(b, "### Draft %s\n", d.ID)
+		if d.Status != "" {
+			fmt.Fprintf(b, "- status: %s\n", d.Status)
+		}
+		if d.ThreadID != "" {
+			fmt.Fprintf(b, "- thread_id: %s\n", d.ThreadID)
+		}
+		if len(d.ToEmails) > 0 {
+			fmt.Fprintf(b, "- to: %s\n", strings.Join(d.ToEmails, ", "))
+		}
+		if len(d.CcEmails) > 0 {
+			fmt.Fprintf(b, "- cc: %s\n", strings.Join(d.CcEmails, ", "))
+		}
+		if len(d.BccEmails) > 0 {
+			fmt.Fprintf(b, "- bcc: %s\n", strings.Join(d.BccEmails, ", "))
+		}
+		fmt.Fprintf(b, "- subject: %s\n", d.Subject)
+		if d.ApprovalReason != "" {
+			fmt.Fprintf(b, "- approval_reason: %s\n", d.ApprovalReason)
+		}
+		b.WriteString("- body_text:\n")
+		for _, line := range strings.Split(d.BodyText, "\n") {
+			fmt.Fprintf(b, "  > %s\n", line)
+		}
+		b.WriteString("\n")
+	}
+}
+
 func buildAutopilotPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")

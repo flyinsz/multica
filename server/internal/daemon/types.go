@@ -33,6 +33,21 @@ type ProjectResourceData struct {
 
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
+type CRMDraftReference struct {
+	ID             string   `json:"id"`
+	ThreadID       string   `json:"thread_id,omitempty"`
+	AccountID      string   `json:"account_id,omitempty"`
+	ContactID      string   `json:"contact_id,omitempty"`
+	ToEmails       []string `json:"to_emails,omitempty"`
+	CcEmails       []string `json:"cc_emails,omitempty"`
+	BccEmails      []string `json:"bcc_emails,omitempty"`
+	Subject        string   `json:"subject"`
+	BodyText       string   `json:"body_text"`
+	Status         string   `json:"status"`
+	ApprovalReason string   `json:"approval_reason,omitempty"`
+	UpdatedAt      string   `json:"updated_at,omitempty"`
+}
+
 type Task struct {
 	ID          string `json:"id"`
 	AgentID     string `json:"agent_id"`
@@ -49,6 +64,7 @@ type Task struct {
 	ProjectID               string                `json:"project_id,omitempty"`                // issue's project, when present
 	ProjectTitle            string                `json:"project_title,omitempty"`             // human-readable project title for context injection
 	ProjectResources        []ProjectResourceData `json:"project_resources,omitempty"`         // project-scoped resources to expose to the agent
+	CRMDraftReferences      []CRMDraftReference   `json:"crm_draft_references,omitempty"`      // CRM email drafts linked to this issue, injected so agents do not browse draft URLs
 	PriorSessionID          string                `json:"prior_session_id,omitempty"`          // Claude session ID from a previous task on this issue
 	PriorWorkDir            string                `json:"prior_work_dir,omitempty"`            // work_dir from a previous task on this issue
 	TriggerCommentID        string                `json:"trigger_comment_id,omitempty"`        // comment that triggered this task

@@ -1591,6 +1591,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	if task.IssueID.Valid {
+		if drafts, err := h.loadCRMDraftReferencesForIssue(r.Context(), parseUUID(resp.WorkspaceID), task.IssueID); err == nil {
+			resp.CRMDraftReferences = drafts
+		} else {
+			slog.Warn("task claim: failed to load CRM draft references", "task_id", uuidToString(task.ID), "error", err)
+		}
+	}
+
 	// Mint a task-scoped `mat_` token bound to (agent, task, workspace,
 	// owner). The daemon will inject this as MULTICA_TOKEN into the agent
 	// process instead of its own credential, so any API call the agent
@@ -1631,6 +1639,33 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task claimed by runtime", "task_id", uuidToString(task.ID), "runtime_id", runtimeID, "agent_id", uuidToString(task.AgentID), "prior_session", resp.PriorSessionID)
 	writeJSON(w, http.StatusOK, map[string]any{"task": resp})
+}
+
+func (h *Handler) loadCRMDraftReferencesForIssue(ctx context.Context, workspaceID, issueID pgtype.UUID) ([]CRMDraftReference, error) {
+	if h == nil || h.DB == nil || !workspaceID.Valid || !issueID.Valid {
+		return nil, nil
+	}
+	rows, err := h.DB.Query(ctx, `SELECT id, thread_id, account_id, contact_id, to_emails, cc_emails, bcc_emails, subject, body_text, status, COALESCE(approval_reason,''), updated_at FROM crm_email_draft WHERE workspace_id=$1 AND issue_id=$2 ORDER BY updated_at DESC LIMIT 5`, workspaceID, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CRMDraftReference
+	for rows.Next() {
+		var id, threadID, accountID, contactID pgtype.UUID
+		var toEmails, ccEmails, bccEmails []string
+		var subject, bodyText, status, approvalReason string
+		var updatedAt pgtype.Timestamptz
+		if err := rows.Scan(&id, &threadID, &accountID, &contactID, &toEmails, &ccEmails, &bccEmails, &subject, &bodyText, &status, &approvalReason, &updatedAt); err != nil {
+			return out, err
+		}
+		ref := CRMDraftReference{ID: uuidToString(id), ThreadID: uuidToString(threadID), AccountID: uuidToString(accountID), ContactID: uuidToString(contactID), ToEmails: toEmails, CcEmails: ccEmails, BccEmails: bccEmails, Subject: subject, BodyText: bodyText, Status: status, ApprovalReason: approvalReason}
+		if updatedAt.Valid {
+			ref.UpdatedAt = updatedAt.Time.Format(time.RFC3339)
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
 }
 
 // ListPendingTasksByRuntime returns queued/dispatched tasks for a runtime.

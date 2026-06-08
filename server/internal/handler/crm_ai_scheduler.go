@@ -937,8 +937,9 @@ func (h *Handler) createCRMPendingReplyDraft(ctx context.Context, workspaceID, i
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, thread_id, account_id, contact_id, issue_id, to_emails, subject, body_text, in_reply_to, reference_ids, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending_approval',true,$12) RETURNING id`, workspaceID, mailboxID, candidate.ThreadID, candidate.AccountID, candidate.ContactID, issueID, []string{fromEmail}, subject, body, inReplyTo, refs, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err
 	}
-	draftURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?draft="+uuidToString(draftID))
-	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核回复邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
+	draftIDStr := uuidToString(draftID)
+	draftRef := fmt.Sprintf("[Draft %s](mention://crm-draft/%s)", draftIDStr, draftIDStr)
+	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核回复邮件草稿。\n\n草稿引用：%s\n\n%s", draftRef, reason))
 }
 
 func crmPendingReplyContextualDraftBody(originalBody, subject string, aiContext crmEmailAIContext, configuredLanguage string) string {
@@ -1017,8 +1018,9 @@ func (h *Handler) createCRMAIFollowupDraft(ctx context.Context, workspaceID, iss
 	if err := h.DB.QueryRow(ctx, `INSERT INTO crm_email_draft (workspace_id, mailbox_id, account_id, contact_id, issue_id, to_emails, subject, body_text, status, ai_generated, approval_reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending_approval',true,$9) RETURNING id`, workspaceID, mailboxID, accountID, contactID, issueID, []string{email}, "Follow up: "+accountName, body, cleanOptionalText(&reason)).Scan(&draftID); err != nil {
 		return err
 	}
-	draftURL := h.crmWorkspaceAppURL(ctx, workspaceID, "/crm/emails?draft="+uuidToString(draftID))
-	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿链接：[%s](%s)\n\n%s", draftURL, draftURL, reason))
+	draftIDStr := uuidToString(draftID)
+	draftRef := fmt.Sprintf("[Draft %s](mention://crm-draft/%s)", draftIDStr, draftIDStr)
+	return h.addCRMInternalIssueComment(ctx, workspaceID, issueID, fmt.Sprintf("已生成待审核跟进邮件草稿。\n\n草稿引用：%s\n\n%s", draftRef, reason))
 }
 
 func (h *Handler) findCRMEmailThreadParentIssue(ctx context.Context, workspaceID, threadID pgtype.UUID) (pgtype.UUID, string, error) {

@@ -31,10 +31,47 @@ export function MentionView({ node }: NodeViewProps) {
     );
   }
 
+  if (type === "crm-draft") {
+    return (
+      <NodeViewWrapper as="span" className="inline">
+        <CRMDraftMention draftId={id} fallbackLabel={label} />
+      </NodeViewWrapper>
+    );
+  }
+
   return (
     <NodeViewWrapper as="span" className="inline">
       <span className="mention">@{label ?? id}</span>
     </NodeViewWrapper>
+  );
+}
+
+function CRMDraftMention({
+  draftId,
+  fallbackLabel,
+}: {
+  draftId: string;
+  fallbackLabel?: string;
+}) {
+  const p = useWorkspacePaths();
+  const { push, openInNewTab } = useNavigation();
+  const draftPath = p.crmEmailDraft(draftId);
+  const label = fallbackLabel || `Draft ${draftId.slice(0, 8)}`;
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(draftPath, label);
+      return;
+    }
+    push(draftPath);
+  };
+
+  return (
+    <a href={draftPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
+      ✉️ {label}
+    </a>
   );
 }
 
