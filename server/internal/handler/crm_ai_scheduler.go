@@ -242,9 +242,11 @@ func (s *CRMAIAutoScheduler) enqueueOrphanedCRMAIIssueTasks(ctx context.Context,
 			JOIN agent a ON a.id = c.agent_id AND a.workspace_id = $1 AND a.archived_at IS NULL
 			WHERE c.agent_id IS NOT NULL AND a.runtime_id IS NOT NULL
 		)
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, trigger_summary, force_fresh_session, is_leader_task)
 		SELECT agent_id, runtime_id, issue_id, 'queued', 0,
 		       jsonb_build_object('trigger','crm_ai_orphan_backfill','origin_type',origin_type,'origin_id',origin_id::text),
+		       CASE WHEN is_leader_task THEN 'CRM squad Master coordination only: first post a work-assignment comment and @mention the next agent. Do not create, modify, approve, or send drafts in the initial leader task.' ELSE NULL END,
+		       CASE WHEN is_leader_task THEN true ELSE false END,
 		       is_leader_task
 		FROM enqueueable
 	`, workspaceID)
@@ -809,7 +811,7 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 	draftLanguage := crmPendingReplyDraftLanguageInstruction(cfg.EmailDefaultLanguage)
 	replyFormat := crmPendingReplyFormatInstruction(cfg.EmailReplyFormat)
 	base := fmt.Sprintf("CRM 邮件待回复。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n配置：assignee=%s %s；language=%s；reply_format=%s。\n\nCustomer Wiki 精简摘要：\n%s\n\n", accountName, candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, cfg.TodoAssigneeType, cfg.TodoAssigneeID, crmConfigValueOrDefault(cfg.EmailDefaultLanguage, "auto"), crmConfigValueOrDefault(cfg.EmailReplyFormat, "reply_body_only"), contextSummary)
-	defaultInstructions := fmt.Sprintf("任务：按小队说明处理这封待回复邮件；本 issue 只提供变量，不重复长期规则。\n\n必须：\n- 通过 CRM MCP 读取当前邮件线程和客户 profile；UUID 参数只用纯 UUID。\n- 缺上下文时交 Researcher 补全；缺上下文不是“不回复”的理由。\n- 需要回复时创建草稿，评论 draft_url，并进入审核。\n- 草稿正文语言：%s。\n- 草稿正文格式：%s。\n- %s", draftLanguage, replyFormat, reviewerLine)
+	defaultInstructions := fmt.Sprintf("任务：CRM Pending Reply 小队协作。\n\n如果本 issue 分配给小队：第一步只能由小队 Master 做工作分工，禁止 Master 直接创建/修改草稿。Master 必须先评论工作分工、上下文是否足够、下一步执行 agent，并用 mention://agent/<id> @mention 触发。上下文足够时 @CRM-Assistant 创建草稿；上下文不足时 @Researcher 补充。CRM-Assistant 创建草稿后贴 draft_url 并 @Master 复核；Master 再 @动态 reviewer 审核。\n\n如果本 issue 直接分配给 agent：按该 agent 角色处理。\n\n必须：\n- 通过 CRM MCP 读取当前邮件线程和客户 profile；UUID 参数只用纯 UUID。\n- 缺上下文不是“不回复”的理由。\n- 草稿正文语言：%s。\n- 草稿正文格式：%s。\n- %s", draftLanguage, replyFormat, reviewerLine)
 	instructions := strings.TrimSpace(cfg.IssueTemplate)
 	if instructions == "" || instructions == "1" {
 		instructions = defaultInstructions
@@ -1178,9 +1180,11 @@ func (h *Handler) crmEnqueueIssueTaskDirect(ctx context.Context, issue db.Issue,
 	}
 	if issue.AssigneeType.String == "squad" {
 		_, err := h.DB.Exec(ctx, `
-			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, is_leader_task)
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, trigger_summary, force_fresh_session, is_leader_task)
 			SELECT s.leader_id, a.runtime_id, $1, 'queued', 0,
 			       jsonb_build_object('trigger','crm_ai_created_issue','creator_type',$4,'creator_id',$5,'squad_id',$3::text),
+			       'CRM squad Master coordination only: first post a work-assignment comment and @mention the next agent. Do not create, modify, approve, or send drafts in the initial leader task.',
+			       true,
 			       true
 			FROM squad s
 			JOIN agent a ON a.id=s.leader_id AND a.workspace_id=s.workspace_id AND a.archived_at IS NULL
