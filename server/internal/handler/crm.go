@@ -3795,6 +3795,10 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_email_draft SET status='sending', scheduled_send_last_attempt_at=now(), updated_at=now() WHERE id=$1 AND workspace_id=$2 AND status IN ('pending_approval','draft','scheduled','failed') AND sent_at IS NULL`, draftID, workspaceID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare CRM email draft for sending")
+		return
+	}
 	result, err := h.sendCRMEmailDraftCore(r.Context(), workspaceID, draftID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -3804,7 +3808,14 @@ func (h *Handler) SendCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to send CRM email draft: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": result.MessageID, "sent_append_warning": result.AppendWarning})
+	var issueID pgtype.UUID
+	_ = h.DB.QueryRow(r.Context(), `SELECT issue_id FROM crm_email_draft WHERE id=$1 AND workspace_id=$2`, draftID, workspaceID).Scan(&issueID)
+	if issueID.Valid {
+		if err := h.markCRMEmailDraftIssueSent(r.Context(), workspaceID, issueID, draftID, "CRM email draft sent via CRM API/MCP. Issue marked done."); err != nil {
+			slog.Warn("CRM draft send issue completion failed", "draft_id", uuidToString(draftID), "issue_id", uuidToString(issueID), "error", err)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "sent", "message_id": result.MessageID, "sent_append_warning": result.AppendWarning, "issue_id": uuidToPtr(issueID)})
 }
 
 func (h *Handler) startCRMEmailDraftScheduler() {
