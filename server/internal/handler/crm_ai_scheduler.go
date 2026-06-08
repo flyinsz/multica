@@ -68,6 +68,7 @@ type crmAIIssueActorConfig struct {
 	IssueTemplate        string `json:"issue_template"`
 	EmailDefaultLanguage string `json:"email_default_language"`
 	EmailReplyFormat     string `json:"email_reply_format"`
+	EmailDefaultAgentID  string `json:"email_default_agent_id"`
 }
 
 type crmPendingReplyCandidate struct {
@@ -634,12 +635,8 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 			if err := h.markCRMEmailPendingReplyMessageProcessed(ctx, workspaceID, issueID, candidate.MessageID); err != nil {
 				slog.Warn("CRM pending reply message marker update failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "message_id", uuidToString(candidate.MessageID), "error", err)
 			}
-			if len(missingReasons) == 0 {
-				if err := h.createCRMPendingReplyDraft(ctx, workspaceID, issueID, candidate, reviewerLine, aiContext, issueActors); err != nil {
-					slog.Warn("CRM pending reply draft creation failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
-				}
-			} else {
-				if err := h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "上下文不足，未自动创建邮件草稿。请先补全 Customer Wiki / 客户身份 / 联系人信息 / 历史往来，再由负责人判断是否进入草稿生成。阻断原因："+strings.Join(missingReasons, "；")); err != nil {
+			if len(missingReasons) > 0 {
+				if err := h.addCRMInternalIssueComment(ctx, workspaceID, issueID, "上下文不足，未自动创建邮件草稿。请按小队流程由 Master 先分工，再补全 Customer Wiki / 客户身份 / 联系人信息 / 历史往来；阻断原因："+strings.Join(missingReasons, "；")); err != nil {
 					slog.Warn("CRM pending reply missing context comment failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "thread_id", uuidToString(candidate.ThreadID), "error", err)
 				}
 			}
@@ -752,6 +749,14 @@ func crmSanitizeText(value string) string {
 	return strings.ToValidUTF8(value, "�")
 }
 
+func crmDefaultDraftAgentLine(cfg crmAIIssueActorConfig) string {
+	id := strings.TrimSpace(cfg.EmailDefaultAgentID)
+	if id == "" {
+		return "默认 draft agent：CRM-Assistant（未配置 email_default_agent_id；Master 必须从 squad roster 使用 exact mention markdown）。"
+	}
+	return fmt.Sprintf("默认 draft agent：[@CRM-Assistant](mention://agent/%s)。", id)
+}
+
 func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.UUID, ownerType string, reviewerMemberID, reviewerAgentID pgtype.UUID) string {
 	if ownerType == "agent" && reviewerAgentID.Valid {
 		var name string
@@ -760,7 +765,7 @@ func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.U
 			if label == "" {
 				label = uuidToString(reviewerAgentID)
 			}
-			return fmt.Sprintf("邮件草稿审核人：客户所有人 %s（agent:%s）。", label, uuidToString(reviewerAgentID))
+			return fmt.Sprintf("邮件草稿审核人：客户所有人 [@%s](mention://agent/%s)。审核无误后，通过 CRM MCP 发送邮件草稿，并把 issue 状态改为 done；不通过则 @mention draft agent 修改现有草稿。", label, uuidToString(reviewerAgentID))
 		}
 		return fmt.Sprintf("邮件草稿审核人：客户所有人 agent:%s。", uuidToString(reviewerAgentID))
 	}
@@ -769,7 +774,7 @@ func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.U
 		if err != nil || !ownerMemberID.Valid {
 			return "邮件草稿审核人：客户没有负责人，请交由工作区 owner/admin 审核。"
 		}
-		return fmt.Sprintf("邮件草稿审核人：客户没有负责人，必须交由工作区 owner/admin %s（member:%s）人工审核；不得交由 CRM-Assistant/Jarvis 自审。", ownerLabel, uuidToString(ownerMemberID))
+		return fmt.Sprintf("邮件草稿审核人：客户没有负责人，必须交由工作区 owner/admin [@%s](mention://member/%s) 人工审核；不得交由 CRM-Assistant/Jarvis 自审。Member 审核无误后 @mention Master 发送邮件并把 issue 标为 done；不通过则 @mention draft agent 修改现有草稿。", ownerLabel, uuidToString(ownerMemberID))
 	}
 	var name, email string
 	if err := h.DB.QueryRow(ctx, `SELECT COALESCE(u.name,''), COALESCE(u.email,'') FROM member m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND m.id=$2 LIMIT 1`, workspaceID, reviewerMemberID).Scan(&name, &email); err != nil {
@@ -782,7 +787,7 @@ func (h *Handler) crmDraftReviewerLine(ctx context.Context, workspaceID pgtype.U
 	if label == "" {
 		label = uuidToString(reviewerMemberID)
 	}
-	return fmt.Sprintf("邮件草稿审核人：客户所有人 %s（member:%s）。", label, uuidToString(reviewerMemberID))
+	return fmt.Sprintf("邮件草稿审核人：客户所有人 [@%s](mention://member/%s)。Member 审核无误后 @mention Master 发送邮件并把 issue 标为 done；不通过则 @mention draft agent 修改现有草稿。", label, uuidToString(reviewerMemberID))
 }
 
 func (h *Handler) crmWorkspaceOwnerMember(ctx context.Context, workspaceID pgtype.UUID) (pgtype.UUID, string, error) {
@@ -810,8 +815,9 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 	contextSummary := crmAIContextIssueSummary(aiContext)
 	draftLanguage := crmPendingReplyDraftLanguageInstruction(cfg.EmailDefaultLanguage)
 	replyFormat := crmPendingReplyFormatInstruction(cfg.EmailReplyFormat)
+	draftAgentLine := crmDefaultDraftAgentLine(cfg)
 	base := fmt.Sprintf("CRM 邮件待回复。\n\n客户：%s\n邮件主题：%s\n邮件线程：%s\n最新邮件ID：%s\n客户ID：%s\n联系人ID：%s\n原邮件：%s\n最新入站时间：%s\n\n配置：assignee=%s %s；language=%s；reply_format=%s。\n\nCustomer Wiki 精简摘要：\n%s\n\n", accountName, candidate.Subject, uuidToString(candidate.ThreadID), uuidToString(candidate.MessageID), uuidToString(candidate.AccountID), uuidToString(candidate.ContactID), messageLink, latestAt, cfg.TodoAssigneeType, cfg.TodoAssigneeID, crmConfigValueOrDefault(cfg.EmailDefaultLanguage, "auto"), crmConfigValueOrDefault(cfg.EmailReplyFormat, "reply_body_only"), contextSummary)
-	defaultInstructions := fmt.Sprintf("任务：CRM Pending Reply 小队协作。\n\n如果本 issue 分配给小队：第一步只能由小队 Master 做工作分工，禁止 Master 直接创建/修改草稿。Master 必须先评论工作分工、上下文是否足够、下一步执行 agent，并用 mention://agent/<id> @mention 触发。上下文足够时 @CRM-Assistant 创建草稿；上下文不足时 @Researcher 补充。CRM-Assistant 创建草稿后贴 draft_url 并 @Master 复核；Master 再 @动态 reviewer 审核。\n\n如果本 issue 直接分配给 agent：按该 agent 角色处理。\n\n必须：\n- 通过 CRM MCP 读取当前邮件线程和客户 profile；UUID 参数只用纯 UUID。\n- 缺上下文不是“不回复”的理由。\n- 草稿正文语言：%s。\n- 草稿正文格式：%s。\n- %s", draftLanguage, replyFormat, reviewerLine)
+	defaultInstructions := fmt.Sprintf("任务：CRM Pending Reply 小队协作。\n\n如果本 issue 分配给小队：第一步只能由小队 Master 做工作分工，禁止 Master 直接创建/修改/发送草稿。Master 必须先评论工作分工、上下文是否足够、下一步执行 agent，并用 exact mention markdown 触发。上下文足够时 @默认 draft agent 创建草稿；上下文不足时 @Researcher 补充。draft agent 创建草稿后贴 draft_url 并 @Master 复核；Master 再 @动态 reviewer 审核。\n\n如果 reviewer 是 agent：审核无误后通过 CRM MCP 发送邮件草稿，并把 issue 状态改为 done；不通过则 @默认 draft agent 修改现有草稿。\n如果 reviewer 是 member：member 确认无误后 @mention Master 发送邮件；Master 发送邮件后把 issue 状态改为 done。\n如果本 issue 直接分配给 agent：按该 agent 角色处理。\n\n默认 draft agent：%s\nReviewer：%s\n\n必须：\n- 通过 CRM MCP 读取当前邮件线程和客户 profile；UUID 参数只用纯 UUID。\n- 缺上下文不是“不回复”的理由。\n- 草稿正文语言：%s。\n- 草稿正文格式：%s。", draftAgentLine, reviewerLine, draftLanguage, replyFormat)
 	instructions := strings.TrimSpace(cfg.IssueTemplate)
 	if instructions == "" || instructions == "1" {
 		instructions = defaultInstructions
@@ -826,6 +832,7 @@ func (h *Handler) buildCRMPendingReplyIssueBody(candidate crmPendingReplyCandida
 		"message_link":           messageLink,
 		"latest_at":              latestAt,
 		"reviewer_line":          reviewerLine,
+		"draft_agent_line":       draftAgentLine,
 		"context_summary":        contextSummary,
 		"missing_reasons":        strings.Join(missingReasons, "；"),
 		"email_default_language": crmConfigValueOrDefault(cfg.EmailDefaultLanguage, "auto"),
