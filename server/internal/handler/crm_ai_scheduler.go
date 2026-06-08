@@ -1167,7 +1167,9 @@ func (h *Handler) crmEnqueueCreatedIssue(ctx context.Context, issue db.Issue, cr
 		return
 	}
 	if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
-		h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, creatorID)
+		if err := h.crmEnqueueIssueTaskDirect(ctx, issue, creatorType, creatorID); err != nil {
+			slog.Warn("CRM AI created issue squad leader enqueue failed", "issue_id", uuidToString(issue.ID), "squad_id", uuidToString(issue.AssigneeID), "error", err)
+		}
 	}
 }
 
