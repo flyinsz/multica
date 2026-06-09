@@ -179,9 +179,9 @@ function createComponents(
     },
     // Links: Make clickable with callbacks, or render as mention
     a: ({ href, children }) => {
-      // Mention links: mention://member/id, mention://agent/id, mention://issue/id, mention://crm-draft/id, mention://all/all
+      // Mention links: mention://member/id, mention://agent/id, mention://issue/id, mention://crm-draft/id, mention://crm-account/id, mention://crm-contact/id, mention://all/all
       if (href?.startsWith('mention://')) {
-        const mentionMatch = href.match(/^mention:\/\/(member|agent|issue|crm-draft|all)\/(.+)$/)
+        const mentionMatch = href.match(/^mention:\/\/(member|agent|issue|crm-draft|crm-account|crm-contact|all)\/(.+)$/)
         if (mentionMatch?.[1] && mentionMatch[2]) {
           const type = mentionMatch[1]
           const id = mentionMatch[2]

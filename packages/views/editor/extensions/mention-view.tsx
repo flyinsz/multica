@@ -39,10 +39,69 @@ export function MentionView({ node }: NodeViewProps) {
     );
   }
 
+  if (type === "crm-account") {
+    return (
+      <NodeViewWrapper as="span" className="inline">
+        <CRMCustomerMention customerId={id} fallbackLabel={label} />
+      </NodeViewWrapper>
+    );
+  }
+
+  if (type === "crm-contact") {
+    return (
+      <NodeViewWrapper as="span" className="inline">
+        <CRMContactMention contactId={id} fallbackLabel={label} />
+      </NodeViewWrapper>
+    );
+  }
+
   return (
     <NodeViewWrapper as="span" className="inline">
       <span className="mention">@{label ?? id}</span>
     </NodeViewWrapper>
+  );
+}
+
+
+function CRMCustomerMention({ customerId, fallbackLabel }: { customerId: string; fallbackLabel?: string }) {
+  const p = useWorkspacePaths();
+  const { push, openInNewTab } = useNavigation();
+  const customerPath = p.crmCustomer(customerId);
+  const label = fallbackLabel || `Customer ${customerId.slice(0, 8)}`;
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(customerPath, label);
+      return;
+    }
+    push(customerPath);
+  };
+  return (
+    <a href={customerPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
+      🏢 {label}
+    </a>
+  );
+}
+
+function CRMContactMention({ contactId, fallbackLabel }: { contactId: string; fallbackLabel?: string }) {
+  const p = useWorkspacePaths();
+  const { push, openInNewTab } = useNavigation();
+  const contactPath = `${p.crmEmails()}?contact=${encodeURIComponent(contactId)}`;
+  const label = fallbackLabel || `Contact ${contactId.slice(0, 8)}`;
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(contactPath, label);
+      return;
+    }
+    push(contactPath);
+  };
+  return (
+    <a href={contactPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
+      👤 {label}
+    </a>
   );
 }
 

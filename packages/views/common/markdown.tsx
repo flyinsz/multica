@@ -46,7 +46,55 @@ function defaultRenderMention({
   if (type === "crm-draft") {
     return <CRMDraftMention draftId={id} />;
   }
+  if (type === "crm-account") {
+    return <CRMCustomerMention customerId={id} />;
+  }
+  if (type === "crm-contact") {
+    return <CRMContactMention contactId={id} />;
+  }
   return null;
+}
+
+function CRMCustomerMention({ customerId }: { customerId: string }): React.JSX.Element {
+  const p = useWorkspacePaths();
+  const { push, openInNewTab } = useNavigation();
+  const customerPath = p.crmCustomer(customerId);
+  const label = `Customer ${customerId.slice(0, 8)}`;
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(customerPath, label);
+      return;
+    }
+    push(customerPath);
+  };
+  return (
+    <a href={customerPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
+      🏢 {label}
+    </a>
+  );
+}
+
+function CRMContactMention({ contactId }: { contactId: string }): React.JSX.Element {
+  const p = useWorkspacePaths();
+  const { push, openInNewTab } = useNavigation();
+  const contactPath = `${p.crmEmails()}?contact=${encodeURIComponent(contactId)}`;
+  const label = `Contact ${contactId.slice(0, 8)}`;
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(contactPath, label);
+      return;
+    }
+    push(contactPath);
+  };
+  return (
+    <a href={contactPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
+      👤 {label}
+    </a>
+  );
 }
 
 function CRMDraftMention({ draftId }: { draftId: string }): React.JSX.Element {

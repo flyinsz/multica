@@ -14,6 +14,7 @@ import { computePosition, offset, flip, shift } from "@floating-ui/dom";
 import type { QueryClient } from "@tanstack/react-query";
 import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
+import { crmKeys } from "@multica/core/crm/queries";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
@@ -26,6 +27,7 @@ import type {
   Agent,
   Squad,
 } from "@multica/core/types";
+import type { CRMAccount, CRMContact, ListCRMAccountsResponse } from "@multica/core/crm/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
 import { useT } from "../../i18n";
@@ -46,7 +48,7 @@ import { matchesPinyin } from "./pinyin-match";
 export interface MentionItem {
   id: string;
   label: string;
-  type: "member" | "agent" | "squad" | "issue" | "all";
+  type: "member" | "agent" | "squad" | "issue" | "all" | "crm-account" | "crm-contact";
   /** Secondary text shown beside the label (e.g. issue title) */
   description?: string;
   /** Issue status for StatusIcon rendering */
@@ -75,10 +77,16 @@ interface MentionGroup {
 function groupItems(items: MentionItem[]): MentionGroup[] {
   const users: MentionItem[] = [];
   const issues: MentionItem[] = [];
+  const customers: MentionItem[] = [];
+  const contacts: MentionItem[] = [];
 
   for (const item of items) {
     if (item.type === "issue") {
       issues.push(item);
+    } else if (item.type === "crm-account") {
+      customers.push(item);
+    } else if (item.type === "crm-contact") {
+      contacts.push(item);
     } else {
       users.push(item);
     }
@@ -86,6 +94,8 @@ function groupItems(items: MentionItem[]): MentionGroup[] {
 
   const groups: MentionGroup[] = [];
   if (users.length > 0) groups.push({ label: "Users", items: users });
+  if (customers.length > 0) groups.push({ label: "Customers", items: customers });
+  if (contacts.length > 0) groups.push({ label: "Contacts", items: contacts });
   if (issues.length > 0) groups.push({ label: "Issues", items: issues });
   return groups;
 }
@@ -325,6 +335,23 @@ function MentionRow({
     );
   }
 
+  if (item.type === "crm-account" || item.type === "crm-contact") {
+    return (
+      <button
+        type="button"
+        ref={buttonRef}
+        className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
+          selected ? "bg-accent" : "hover:bg-accent/50"
+        }`}
+        onClick={onSelect}
+      >
+        <span className="shrink-0">{item.type === "crm-account" ? "🏢" : "👤"}</span>
+        <span className="truncate font-medium">{item.label}</span>
+        {item.description && <span className="truncate text-muted-foreground">{item.description}</span>}
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -393,6 +420,12 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
     const listQueries = qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) });
     const cachedResponse = listQueries[0]?.[1];
     const cachedIssues: Issue[] = cachedResponse ? flattenIssueBuckets(cachedResponse) : [];
+    const accountQueries = qc.getQueriesData<CRMAccount[] | ListCRMAccountsResponse>({ queryKey: crmKeys.accounts(wsId) });
+    const cachedAccounts = accountQueries.flatMap(([, data]) => Array.isArray(data) ? data : data?.accounts ?? []);
+    const contactQueries = qc.getQueriesData<CRMContact[]>({ queryKey: crmKeys.all(wsId) });
+    const cachedContacts = contactQueries.flatMap(([key, data]) =>
+      Array.isArray(data) && (key as readonly unknown[]).at(-1) === "contacts" ? data : [],
+    );
 
     // Read current user identity imperatively — this factory runs outside
     // React render so we can't useAuthStore() as a hook here. The Proxy in
@@ -450,7 +483,15 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       )
       .map(issueToMention);
 
-    return [...allItem, ...userItems, ...issueItems];
+    const customerItems: MentionItem[] = cachedAccounts
+      .filter((a) => a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q) || (a.website ?? "").toLowerCase().includes(q))
+      .map((a) => ({ id: a.id, label: a.name, type: "crm-account" as const, description: a.website ?? a.country_name ?? undefined }));
+
+    const contactItems: MentionItem[] = cachedContacts
+      .filter((c) => c.name.toLowerCase().includes(q) || matchesPinyin(c.name, q) || (c.email ?? "").toLowerCase().includes(q))
+      .map((c) => ({ id: c.id, label: c.name, type: "crm-contact" as const, description: c.email ?? c.role_title ?? c.job_title ?? undefined }));
+
+    return [...allItem, ...userItems, ...customerItems, ...contactItems, ...issueItems];
   }
 
   return {
