@@ -3640,7 +3640,7 @@ func (h *Handler) CreateCRMEmailDraft(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("CRM email draft reviewer enqueue failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(issueID), "draft_id", draftID, "error", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": draftID, "draft_url": h.crmEmailDraftURL(r, workspaceID, draftID)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": draftID, "draft_mention": fmt.Sprintf("[Draft %s](mention://crm-draft/%s)", draftID, draftID)})
 }
 
 func (h *Handler) enqueueCRMDraftReviewerTask(ctx context.Context, workspaceID, issueID, accountID, draftID pgtype.UUID) error {
