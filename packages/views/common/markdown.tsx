@@ -8,7 +8,9 @@ import {
 } from "@multica/ui/markdown";
 import { useConfigStore } from "@multica/core/config";
 import type { Attachment as AttachmentRecord } from "@multica/core/types";
+import { useWorkspacePaths } from "@multica/core/paths";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
+import { useNavigation } from "../navigation";
 import {
   Attachment as AttachmentRenderer,
   AttachmentDownloadProvider,
@@ -41,7 +43,37 @@ function defaultRenderMention({
   if (type === "issue") {
     return <IssueMentionCard issueId={id} />;
   }
+  if (type === "crm-draft") {
+    return <CRMDraftMention draftId={id} />;
+  }
   return null;
+}
+
+function CRMDraftMention({ draftId }: { draftId: string }): React.JSX.Element {
+  const p = useWorkspacePaths();
+  const { push, openInNewTab } = useNavigation();
+  const draftPath = p.crmEmailDraft(draftId);
+  const label = `Draft ${draftId.slice(0, 8)}`;
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(draftPath, label);
+      return;
+    }
+    push(draftPath);
+  };
+
+  return (
+    <a
+      href={draftPath}
+      onClick={handleClick}
+      className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors"
+    >
+      ✉️ {label}
+    </a>
+  );
 }
 
 function renderImage({ src, alt }: { src: string; alt: string }): React.ReactNode {
