@@ -95,9 +95,9 @@ function groupItems(items: MentionItem[]): MentionGroup[] {
 
   const groups: MentionGroup[] = [];
   if (users.length > 0) groups.push({ label: "Users", items: users });
+  if (issues.length > 0) groups.push({ label: "Issues", items: issues });
   if (contacts.length > 0) groups.push({ label: "Contacts", items: contacts });
   if (customers.length > 0) groups.push({ label: "Customers", items: customers });
-  if (issues.length > 0) groups.push({ label: "Issues", items: issues });
   return groups;
 }
 
@@ -145,9 +145,9 @@ function rankMentionItems(items: MentionItem[]): MentionItem[] {
 
   return [
     ...users.slice(0, 6),
-    ...contacts.slice(0, 8),
-    ...customers.slice(0, 8),
     ...issues.slice(0, 6),
+    ...contacts.slice(0, 4),
+    ...customers.slice(0, 4),
   ];
 }
 
@@ -182,21 +182,19 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
       let cancelled = false;
       const controller = new AbortController();
-      setIsSearchingIssues(!!q);
+      setIsSearchingIssues(true);
       setIsSearchingCRM(true);
 
       const timer = setTimeout(() => {
         void (async () => {
           try {
             const [issueRes, accountRes, contactRes] = await Promise.allSettled([
-              q
-                ? api.searchIssues({
-                    q,
-                    limit: SERVER_ISSUE_SEARCH_LIMIT,
-                    include_closed: true,
-                    signal: controller.signal,
-                  })
-                : Promise.resolve({ issues: [] }),
+              api.searchIssues({
+                q,
+                limit: SERVER_ISSUE_SEARCH_LIMIT,
+                include_closed: true,
+                signal: controller.signal,
+              }),
               crmApi.listCRMAccounts({ search: q || undefined }),
               crmApi.listAllCRMContacts({ search: q || undefined, limit: 50 }),
             ]);
@@ -565,13 +563,11 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       if (!wsId) return syncItems;
 
       const [issueRes, accountRes, contactRes] = await Promise.allSettled([
-        q
-          ? api.searchIssues({
-              q,
-              limit: SERVER_ISSUE_SEARCH_LIMIT,
-              include_closed: true,
-            })
-          : Promise.resolve({ issues: [] }),
+        api.searchIssues({
+          q,
+          limit: SERVER_ISSUE_SEARCH_LIMIT,
+          include_closed: true,
+        }),
         crmApi.listCRMAccounts({ search: q || undefined }),
         crmApi.listAllCRMContacts({ search: q || undefined, limit: 50 }),
       ]);
