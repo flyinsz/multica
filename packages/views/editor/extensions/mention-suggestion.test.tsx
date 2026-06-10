@@ -28,12 +28,24 @@ vi.mock("@multica/core/platform", () => ({
   getCurrentWsId: () => "ws-1",
 }));
 
-// Mock the API so we control searchIssues responses + observe calls.
+// Mock APIs so we control mention server searches + observe calls.
 const searchIssuesMock = vi.fn();
+const listCRMAccountsMock = vi.fn();
+const listAllCRMContactsMock = vi.fn();
 vi.mock("@multica/core/api", () => ({
   api: {
     get searchIssues() {
       return searchIssuesMock;
+    },
+  },
+}));
+vi.mock("@multica/core/crm/api", () => ({
+  crmApi: {
+    get listCRMAccounts() {
+      return listCRMAccountsMock;
+    },
+    get listAllCRMContacts() {
+      return listAllCRMContactsMock;
     },
   },
 }));
@@ -100,6 +112,10 @@ function fakeQc(data: {
 describe("createMentionSuggestion", () => {
   beforeEach(() => {
     searchIssuesMock.mockReset();
+    listCRMAccountsMock.mockReset();
+    listAllCRMContactsMock.mockReset();
+    listCRMAccountsMock.mockResolvedValue({ accounts: [], total: 0 });
+    listAllCRMContactsMock.mockResolvedValue({ contacts: [], total: 0 });
   });
 
   it("returns members and agents synchronously without waiting for the server search", () => {
@@ -158,10 +174,55 @@ describe("createMentionSuggestion", () => {
     );
   });
 
-  it("does not call searchIssues for an empty query", () => {
+  it("loads CRM customers and contacts into the popup for an empty query", async () => {
+    listCRMAccountsMock.mockResolvedValue({
+      accounts: [{ id: "acct-1", name: "Acme", website: "acme.test" }],
+      total: 1,
+    });
+    listAllCRMContactsMock.mockResolvedValue({
+      contacts: [{ id: "contact-1", name: "Alice Buyer", email: "alice@acme.test" }],
+      total: 1,
+    });
+
     render(<I18nWrapper><MentionList items={[]} query="" command={vi.fn()} /></I18nWrapper>);
 
+    await waitFor(() => {
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      expect(screen.getByText("Alice Buyer")).toBeInTheDocument();
+    });
     expect(searchIssuesMock).not.toHaveBeenCalled();
+    expect(listCRMAccountsMock).toHaveBeenCalledWith({ search: undefined });
+    expect(listAllCRMContactsMock).toHaveBeenCalledWith({ search: undefined, limit: 20 });
+  });
+
+  it("keeps CRM customers and contacts visible when users and issues would fill the cap", async () => {
+    const manyUsers = Array.from({ length: 20 }, (_, i) => ({
+      id: `u-${i}`,
+      label: `User ${i}`,
+      type: "member" as const,
+    }));
+    const manyIssues = Array.from({ length: 20 }, (_, i) => ({
+      id: `issue-${i}`,
+      label: `MUL-${i}`,
+      type: "issue" as const,
+      description: `Issue ${i}`,
+    }));
+    listCRMAccountsMock.mockResolvedValue({
+      accounts: [{ id: "acct-1", name: "Acme", website: "acme.test" }],
+      total: 1,
+    });
+    listAllCRMContactsMock.mockResolvedValue({
+      contacts: [{ id: "contact-1", name: "Alice Buyer", email: "alice@acme.test" }],
+      total: 1,
+    });
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
+
+    render(<I18nWrapper><MentionList items={[...manyUsers, ...manyIssues]} query="a" command={vi.fn()} /></I18nWrapper>);
+
+    await waitFor(() => {
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      expect(screen.getByText("Alice Buyer")).toBeInTheDocument();
+    });
   });
 
   it("captures Enter while the popup has no selectable items", () => {

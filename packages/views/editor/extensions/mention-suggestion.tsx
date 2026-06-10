@@ -115,12 +115,12 @@ function mentionItemKey(item: MentionItem): string {
 
 function mergeMentionItems(
   syncItems: MentionItem[],
-  serverIssueItems: MentionItem[],
+  serverItems: MentionItem[],
 ): MentionItem[] {
   const seen = new Set<string>();
   const merged: MentionItem[] = [];
 
-  for (const item of [...syncItems, ...serverIssueItems]) {
+  for (const item of [...syncItems, ...serverItems]) {
     const key = mentionItemKey(item);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -128,6 +128,27 @@ function mergeMentionItems(
   }
 
   return merged;
+}
+
+function rankMentionItems(items: MentionItem[]): MentionItem[] {
+  const users: MentionItem[] = [];
+  const customers: MentionItem[] = [];
+  const contacts: MentionItem[] = [];
+  const issues: MentionItem[] = [];
+
+  for (const item of items) {
+    if (item.type === "crm-account") customers.push(item);
+    else if (item.type === "crm-contact") contacts.push(item);
+    else if (item.type === "issue") issues.push(item);
+    else users.push(item);
+  }
+
+  return [
+    ...users.slice(0, 8),
+    ...customers.slice(0, 6),
+    ...contacts.slice(0, 6),
+    ...issues.slice(0, 8),
+  ];
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
@@ -150,14 +171,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       setServerAccountItems([]);
       setServerContactItems([]);
 
-      if (!q) {
-        setIsSearchingIssues(false);
-        setIsSearchingCRM(false);
-        setSearchedIssueQuery("");
-        setSearchedCRMQuery("");
-        return;
-      }
-
       const wsId = getCurrentWsId();
       if (!wsId) {
         setIsSearchingIssues(false);
@@ -169,21 +182,23 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
       let cancelled = false;
       const controller = new AbortController();
-      setIsSearchingIssues(true);
+      setIsSearchingIssues(!!q);
       setIsSearchingCRM(true);
 
       const timer = setTimeout(() => {
         void (async () => {
           try {
             const [issueRes, accountRes, contactRes] = await Promise.allSettled([
-              api.searchIssues({
-                q,
-                limit: SERVER_ISSUE_SEARCH_LIMIT,
-                include_closed: true,
-                signal: controller.signal,
-              }),
-              crmApi.listCRMAccounts({ search: q }),
-              crmApi.listAllCRMContacts({ search: q, limit: 20 }),
+              q
+                ? api.searchIssues({
+                    q,
+                    limit: SERVER_ISSUE_SEARCH_LIMIT,
+                    include_closed: true,
+                    signal: controller.signal,
+                  })
+                : Promise.resolve({ issues: [] }),
+              crmApi.listCRMAccounts({ search: q || undefined }),
+              crmApi.listAllCRMContacts({ search: q || undefined, limit: 20 }),
             ]);
             if (!cancelled && !controller.signal.aborted) {
               if (issueRes.status === "fulfilled") setServerIssueItems(issueRes.value.issues.map(issueToMention));
@@ -217,7 +232,13 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         searchedCRMQuery === normalizedQuery ? serverAccountItems : [];
       const currentServerContactItems =
         searchedCRMQuery === normalizedQuery ? serverContactItems : [];
-      return mergeMentionItems(items, [...currentServerAccountItems, ...currentServerContactItems, ...currentServerIssueItems]).slice(0, MAX_ITEMS);
+      return rankMentionItems(
+        mergeMentionItems(items, [
+          ...currentServerAccountItems,
+          ...currentServerContactItems,
+          ...currentServerIssueItems,
+        ]),
+      ).slice(0, MAX_ITEMS);
     }, [items, normalizedQuery, searchedCRMQuery, searchedIssueQuery, serverAccountItems, serverContactItems, serverIssueItems]);
 
     useEffect(() => {
