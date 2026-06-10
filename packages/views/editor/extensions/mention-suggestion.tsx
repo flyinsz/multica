@@ -542,6 +542,35 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       return syncItems;
     },
 
+    command: ({ editor, range, props }) => {
+      const nodeAfter = editor.view.state.selection.$to.nodeAfter;
+      const overrideSpace = nodeAfter?.text?.startsWith(" ");
+      const mentionType = props.type ?? "member";
+
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(range, [
+          {
+            type: "mention",
+            attrs: {
+              id: props.id,
+              label: props.label,
+              type: mentionType,
+            },
+          },
+          { type: "text", text: " " },
+        ])
+        .run();
+
+      if (overrideSpace) {
+        editor.commands.deleteRange({
+          from: range.to + 1,
+          to: range.to + 2,
+        });
+      }
+    },
+
     render: () => {
       return {
         onStart: (props: SuggestionProps<MentionItem>) => {
