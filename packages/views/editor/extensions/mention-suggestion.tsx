@@ -14,6 +14,7 @@ import { computePosition, offset, flip, shift } from "@floating-ui/dom";
 import type { QueryClient } from "@tanstack/react-query";
 import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
+import { crmApi } from "@multica/core/crm/api";
 import { crmKeys } from "@multica/core/crm/queries";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
@@ -134,50 +135,69 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     const { t } = useT("editor");
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [serverIssueItems, setServerIssueItems] = useState<MentionItem[]>([]);
+    const [serverAccountItems, setServerAccountItems] = useState<MentionItem[]>([]);
+    const [serverContactItems, setServerContactItems] = useState<MentionItem[]>([]);
     const [isSearchingIssues, setIsSearchingIssues] = useState(false);
+    const [isSearchingCRM, setIsSearchingCRM] = useState(false);
     const [searchedIssueQuery, setSearchedIssueQuery] = useState("");
+    const [searchedCRMQuery, setSearchedCRMQuery] = useState("");
     const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const normalizedQuery = query.trim();
 
     useEffect(() => {
       const q = normalizedQuery;
       setServerIssueItems([]);
+      setServerAccountItems([]);
+      setServerContactItems([]);
 
       if (!q) {
         setIsSearchingIssues(false);
+        setIsSearchingCRM(false);
         setSearchedIssueQuery("");
+        setSearchedCRMQuery("");
         return;
       }
 
       const wsId = getCurrentWsId();
       if (!wsId) {
         setIsSearchingIssues(false);
+        setIsSearchingCRM(false);
         setSearchedIssueQuery(q);
+        setSearchedCRMQuery(q);
         return;
       }
 
       let cancelled = false;
       const controller = new AbortController();
       setIsSearchingIssues(true);
+      setIsSearchingCRM(true);
 
       const timer = setTimeout(() => {
         void (async () => {
           try {
-            const res = await api.searchIssues({
-              q,
-              limit: SERVER_ISSUE_SEARCH_LIMIT,
-              include_closed: true,
-              signal: controller.signal,
-            });
+            const [issueRes, accountRes, contactRes] = await Promise.allSettled([
+              api.searchIssues({
+                q,
+                limit: SERVER_ISSUE_SEARCH_LIMIT,
+                include_closed: true,
+                signal: controller.signal,
+              }),
+              crmApi.listCRMAccounts({ search: q }),
+              crmApi.listAllCRMContacts({ search: q, limit: 20 }),
+            ]);
             if (!cancelled && !controller.signal.aborted) {
-              setServerIssueItems(res.issues.map(issueToMention));
+              if (issueRes.status === "fulfilled") setServerIssueItems(issueRes.value.issues.map(issueToMention));
+              if (accountRes.status === "fulfilled") setServerAccountItems(accountRes.value.accounts.map(accountToMention));
+              if (contactRes.status === "fulfilled") setServerContactItems(contactRes.value.contacts.map(contactToMention));
             }
           } catch {
             // Aborted or network error: keep the synchronous cache results.
           } finally {
             if (!cancelled && !controller.signal.aborted) {
               setSearchedIssueQuery(q);
+              setSearchedCRMQuery(q);
               setIsSearchingIssues(false);
+              setIsSearchingCRM(false);
             }
           }
         })();
@@ -193,8 +213,12 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     const displayItems = useMemo(() => {
       const currentServerIssueItems =
         searchedIssueQuery === normalizedQuery ? serverIssueItems : [];
-      return mergeMentionItems(items, currentServerIssueItems).slice(0, MAX_ITEMS);
-    }, [items, normalizedQuery, searchedIssueQuery, serverIssueItems]);
+      const currentServerAccountItems =
+        searchedCRMQuery === normalizedQuery ? serverAccountItems : [];
+      const currentServerContactItems =
+        searchedCRMQuery === normalizedQuery ? serverContactItems : [];
+      return mergeMentionItems(items, [...currentServerAccountItems, ...currentServerContactItems, ...currentServerIssueItems]).slice(0, MAX_ITEMS);
+    }, [items, normalizedQuery, searchedCRMQuery, searchedIssueQuery, serverAccountItems, serverContactItems, serverIssueItems]);
 
     useEffect(() => {
       setSelectedIndex(0);
@@ -244,7 +268,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     if (displayItems.length === 0) {
       const isWaitingForServer =
         normalizedQuery !== "" &&
-        (isSearchingIssues || searchedIssueQuery !== normalizedQuery);
+        (isSearchingIssues || isSearchingCRM || searchedIssueQuery !== normalizedQuery || searchedCRMQuery !== normalizedQuery);
 
       return (
         <div className="rounded-md border bg-popover p-2 text-xs text-muted-foreground shadow-md">
@@ -398,6 +422,24 @@ function issueToMention(i: Pick<Issue, "id" | "identifier" | "title" | "status">
   };
 }
 
+function contactToMention(c: CRMContact): MentionItem {
+  return {
+    id: c.id,
+    label: c.name,
+    type: "crm-contact" as const,
+    description: c.email ?? c.role_title ?? c.job_title ?? undefined,
+  };
+}
+
+function accountToMention(a: CRMAccount): MentionItem {
+  return {
+    id: a.id,
+    label: a.name,
+    type: "crm-account" as const,
+    description: a.website ?? a.country_name ?? undefined,
+  };
+}
+
 export function createMentionSuggestion(qc: QueryClient): Omit<
   SuggestionOptions<MentionItem>,
   "editor"
@@ -485,11 +527,11 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
 
     const customerItems: MentionItem[] = cachedAccounts
       .filter((a) => a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q) || (a.website ?? "").toLowerCase().includes(q))
-      .map((a) => ({ id: a.id, label: a.name, type: "crm-account" as const, description: a.website ?? a.country_name ?? undefined }));
+      .map(accountToMention);
 
     const contactItems: MentionItem[] = cachedContacts
       .filter((c) => c.name.toLowerCase().includes(q) || matchesPinyin(c.name, q) || (c.email ?? "").toLowerCase().includes(q))
-      .map((c) => ({ id: c.id, label: c.name, type: "crm-contact" as const, description: c.email ?? c.role_title ?? c.job_title ?? undefined }));
+      .map(contactToMention);
 
     return [...allItem, ...userItems, ...customerItems, ...contactItems, ...issueItems];
   }

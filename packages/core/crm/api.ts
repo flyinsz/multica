@@ -65,6 +65,18 @@ export const crmApi = {
     return api.request(`/api/crm/accounts/${accountId}/contacts`);
   },
 
+  async listAllCRMContacts(params?: { search?: string; limit?: number }): Promise<ListCRMContactsResponse> {
+    const search = new URLSearchParams();
+    if (params?.search) search.set("search", params.search);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return api.request(`/api/crm/contacts${qs ? `?${qs}` : ""}`);
+  },
+
+  async getCRMContact(id: string): Promise<CRMContact> {
+    return api.request(`/api/crm/contacts/${id}`);
+  },
+
   async createCRMContact(accountId: string, data: CreateCRMContactRequest): Promise<CRMContact> {
     return api.request(`/api/crm/accounts/${accountId}/contacts`, {
       method: "POST",

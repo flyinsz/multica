@@ -109,7 +109,7 @@ vi.mock("../geo", async () => {
 
 function renderCRMPage(locale: "en" | "zh-Hans" = "en") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/crm/customers", searchParams: new URLSearchParams() };
+  const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/crm/customers", searchParams: new URLSearchParams(), getShareableUrl: (p: string) => p };
   const result = render(
     <I18nProvider locale={locale} resources={{ en: { crm: enCrm }, "zh-Hans": { crm: zhCrm } }}>
       <QueryClientProvider client={queryClient}>

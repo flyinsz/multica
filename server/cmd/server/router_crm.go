@@ -34,6 +34,10 @@ func registerCRMRoutes(r chi.Router, h *handler.Handler) {
 				r.Post("/profile/suggestions/{suggestionId}/apply", h.ApplyCRMAccountProfileSuggestion)
 			})
 		})
+		r.Route("/contacts", func(r chi.Router) {
+			r.Get("/", h.ListCRMContactsGlobal)
+			r.Get("/{contactId}", h.GetCRMContact)
+		})
 		r.Route("/imap-settings", func(r chi.Router) {
 			r.Get("/", h.ListCRMIMAPSettings)
 			r.Put("/", h.UpsertCRMIMAPSetting)

@@ -337,6 +337,8 @@ export function CRMEmailsPage() {
   const initialThreadId = navigation.searchParams.get("thread");
   const initialMessageId = navigation.searchParams.get("message");
   const initialComposeMode = navigation.searchParams.get("compose");
+  const initialContactId = navigation.searchParams.get("contact");
+  const initialAccountId = navigation.searchParams.get("account");
   const locale = normalizeLocale(i18n.language);
   const emailCopy = locale === "zh-Hans" ? {
     compose: "写邮件",
@@ -814,6 +816,8 @@ export function CRMEmailsPage() {
       const isTrashed = message.is_trashed ?? thread?.is_trashed;
       const direction = message.direction || thread?.direction;
       const folder = message.folder || "";
+      if (initialContactId && message.contact_id !== initialContactId && thread?.contact_id !== initialContactId) return false;
+      if (initialAccountId && message.account_id !== initialAccountId && thread?.account_id !== initialAccountId) return false;
       if (quickFilter === "unread" && isRead === true) return false;
       if (quickFilter === "linked" && !message.account_id && !message.contact_id && !thread?.account_id && !thread?.contact_id) return false;
       if (quickFilter === "unlinked" && (message.account_id || message.contact_id || thread?.account_id || thread?.contact_id)) return false;
@@ -836,7 +840,7 @@ export function CRMEmailsPage() {
           return true;
       }
     });
-  }, [activeFolder, mailboxMessages, quickFilter, threadById]);
+  }, [activeFolder, initialAccountId, initialContactId, mailboxMessages, quickFilter, threadById]);
 
   const saveAttachmentBlob = (blob: Blob, fileName: string, attachmentIndex: number) => {
     const url = URL.createObjectURL(blob);

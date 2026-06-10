@@ -166,7 +166,7 @@ vi.mock("../../modals/create-project", () => ({
 
 function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/crm/customers/account-1", searchParams: new URLSearchParams() };
+  const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/crm/customers/account-1", searchParams: new URLSearchParams(), getShareableUrl: (p: string) => p };
 
   render(
     <I18nProvider locale="en" resources={{ en: { crm: enCrm } }}>

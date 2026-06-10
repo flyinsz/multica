@@ -46,7 +46,7 @@ vi.mock("@multica/core/issues", async () => {
   };
 });
 
-const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/crm/emails", searchParams: new URLSearchParams() };
+const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/crm/emails", searchParams: new URLSearchParams(), getShareableUrl: (p: string) => p };
 
 function renderEmailsPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

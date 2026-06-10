@@ -2070,6 +2070,82 @@ func (h *Handler) ListCRMContacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": contacts, "total": len(contacts)})
 }
 
+func (h *Handler) ListCRMContactsGlobal(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	limit := 50
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil {
+			if parsed < 1 {
+				parsed = 1
+			}
+			if parsed > 100 {
+				parsed = 100
+			}
+			limit = parsed
+		}
+	}
+	args := []any{workspaceID}
+	where := "workspace_id = $1"
+	if search != "" {
+		args = append(args, "%"+strings.ToLower(search)+"%")
+		where += fmt.Sprintf(" AND (lower(name) LIKE $%d OR lower(coalesce(email, '')) LIKE $%d OR lower(coalesce(whatsapp_id, '')) LIKE $%d OR lower(coalesce(role_title, '')) LIKE $%d OR lower(coalesce(job_title, '')) LIKE $%d)", len(args), len(args), len(args), len(args), len(args))
+	}
+	args = append(args, limit)
+	rows, err := h.DB.Query(r.Context(), fmt.Sprintf(`
+		SELECT id, workspace_id, account_id, name, salutation, email, phone, mobile,
+		       whatsapp_id, whatsapp, wechat, linkedin_url, role_title, job_title,
+		       department, role, language, preferred_language, timezone, is_primary,
+		       decision_role, notes, last_contacted_at, created_at, updated_at
+		FROM crm_contact WHERE %s ORDER BY is_primary DESC, updated_at DESC LIMIT $%d
+	`, where, len(args)), args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list CRM contacts")
+		return
+	}
+	defer rows.Close()
+	contacts := []CRMContactResponse{}
+	for rows.Next() {
+		contact, err := h.scanCRMContact(rows)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to scan CRM contact")
+			return
+		}
+		contacts = append(contacts, crmContactToResponse(contact))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contacts": contacts, "total": len(contacts)})
+}
+
+func (h *Handler) GetCRMContact(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	contactID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "contactId"), "contact id")
+	if !ok {
+		return
+	}
+	contact, err := h.scanCRMContact(h.DB.QueryRow(r.Context(), `
+		SELECT id, workspace_id, account_id, name, salutation, email, phone, mobile,
+		       whatsapp_id, whatsapp, wechat, linkedin_url, role_title, job_title,
+		       department, role, language, preferred_language, timezone, is_primary,
+		       decision_role, notes, last_contacted_at, created_at, updated_at
+		FROM crm_contact WHERE id = $1 AND workspace_id = $2
+	`, contactID, workspaceID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "CRM contact not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get CRM contact")
+		return
+	}
+	writeJSON(w, http.StatusOK, crmContactToResponse(contact))
+}
+
 func (h *Handler) UpdateCRMContact(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := h.crmWorkspaceUUID(w, r)
 	if !ok {
