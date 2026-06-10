@@ -171,15 +171,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       setServerAccountItems([]);
       setServerContactItems([]);
 
-      const wsId = getCurrentWsId();
-      if (!wsId) {
-        setIsSearchingIssues(false);
-        setIsSearchingCRM(false);
-        setSearchedIssueQuery(q);
-        setSearchedCRMQuery(q);
-        return;
-      }
-
       let cancelled = false;
       const controller = new AbortController();
       setIsSearchingIssues(true);
@@ -559,9 +550,6 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
     items: async ({ query }) => {
       const syncItems = buildSyncItems(query);
       const q = query.trim();
-      const wsId = getCurrentWsId();
-      if (!wsId) return syncItems;
-
       const [issueRes, accountRes, contactRes] = await Promise.allSettled([
         api.searchIssues({
           q,
