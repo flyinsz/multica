@@ -8,7 +8,7 @@ export interface StreamingMarkdownProps {
   className?: string
   onUrlClick?: (url: string) => void
   onFileClick?: (path: string) => void
-  renderMention?: (props: { type: string; id: string }) => React.ReactNode
+  renderMention?: (props: { type: string; id: string; label?: string }) => React.ReactNode
   cdnDomain?: string
 }
 
@@ -145,7 +145,7 @@ const MemoizedBlock = React.memo(
     className?: string
     onUrlClick?: (url: string) => void
     onFileClick?: (path: string) => void
-    renderMention?: (props: { type: string; id: string }) => React.ReactNode
+    renderMention?: (props: { type: string; id: string; label?: string }) => React.ReactNode
     cdnDomain?: string
   }) {
     return (

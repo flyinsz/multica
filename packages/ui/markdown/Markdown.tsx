@@ -55,7 +55,7 @@ export interface MarkdownProps {
    * Custom renderer for mention links (e.g. mention://issue/UUID).
    * When not provided, mentions render as a simple styled span.
    */
-  renderMention?: (props: { type: string; id: string }) => React.ReactNode
+  renderMention?: (props: { type: string; id: string; label?: string }) => React.ReactNode
   /**
    * CDN hostname for file card detection (e.g. "multica-static.copilothub.ai").
    * When provided, enables file card preprocessing and rendering.
@@ -128,7 +128,7 @@ function createComponents(
   mode: RenderMode,
   onUrlClick?: (url: string) => void,
   onFileClick?: (path: string) => void,
-  renderMention?: (props: { type: string; id: string }) => React.ReactNode,
+  renderMention?: (props: { type: string; id: string; label?: string }) => React.ReactNode,
   renderImage?: (props: { src: string; alt: string }) => React.ReactNode,
   renderFileCard?: (props: { href: string; filename: string }) => React.ReactNode,
 ): Partial<Components> {
@@ -190,7 +190,8 @@ function createComponents(
             // Let the custom renderer opt out for types it doesn't handle
             // by returning null/undefined — we then fall through to the
             // default styled span so nothing ever disappears silently.
-            const rendered = renderMention({ type, id })
+            const label = React.Children.toArray(children).join("");
+            const rendered = renderMention({ type, id, label: label || undefined })
             if (rendered) return <>{rendered}</>
           }
 

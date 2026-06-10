@@ -36,9 +36,11 @@ export interface MarkdownProps extends MarkdownBaseProps {
 function defaultRenderMention({
   type,
   id,
+  label,
 }: {
   type: string;
   id: string;
+  label?: string;
 }): React.ReactNode {
   if (type === "issue") {
     return <IssueMentionCard issueId={id} />;
@@ -47,52 +49,52 @@ function defaultRenderMention({
     return <CRMDraftMention draftId={id} />;
   }
   if (type === "crm-account") {
-    return <CRMCustomerMention customerId={id} />;
+    return <CRMCustomerMention customerId={id} label={label} />;
   }
   if (type === "crm-contact") {
-    return <CRMContactMention contactId={id} />;
+    return <CRMContactMention contactId={id} label={label} />;
   }
   return null;
 }
 
-function CRMCustomerMention({ customerId }: { customerId: string }): React.JSX.Element {
+function CRMCustomerMention({ customerId, label }: { customerId: string; label?: string }): React.JSX.Element {
   const p = useWorkspacePaths();
   const { push, openInNewTab } = useNavigation();
   const customerPath = p.crmCustomer(customerId);
-  const label = `Customer ${customerId.slice(0, 8)}`;
+  const displayLabel = label || `Customer ${customerId.slice(0, 8)}`;
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.metaKey || e.ctrlKey || e.shiftKey) {
-      if (openInNewTab) openInNewTab(customerPath, label);
+      if (openInNewTab) openInNewTab(customerPath, displayLabel);
       return;
     }
     push(customerPath);
   };
   return (
     <a href={customerPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
-      🏢 {label}
+      🏢 {displayLabel}
     </a>
   );
 }
 
-function CRMContactMention({ contactId }: { contactId: string }): React.JSX.Element {
+function CRMContactMention({ contactId, label }: { contactId: string; label?: string }): React.JSX.Element {
   const p = useWorkspacePaths();
   const { push, openInNewTab } = useNavigation();
   const contactPath = `${p.crmEmails()}?contact=${encodeURIComponent(contactId)}`;
-  const label = `Contact ${contactId.slice(0, 8)}`;
+  const displayLabel = label || `Contact ${contactId.slice(0, 8)}`;
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.metaKey || e.ctrlKey || e.shiftKey) {
-      if (openInNewTab) openInNewTab(contactPath, label);
+      if (openInNewTab) openInNewTab(contactPath, displayLabel);
       return;
     }
     push(contactPath);
   };
   return (
     <a href={contactPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
-      👤 {label}
+      👤 {displayLabel}
     </a>
   );
 }

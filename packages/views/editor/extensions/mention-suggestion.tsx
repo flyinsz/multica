@@ -95,8 +95,8 @@ function groupItems(items: MentionItem[]): MentionGroup[] {
 
   const groups: MentionGroup[] = [];
   if (users.length > 0) groups.push({ label: "Users", items: users });
-  if (customers.length > 0) groups.push({ label: "Customers", items: customers });
   if (contacts.length > 0) groups.push({ label: "Contacts", items: contacts });
+  if (customers.length > 0) groups.push({ label: "Customers", items: customers });
   if (issues.length > 0) groups.push({ label: "Issues", items: issues });
   return groups;
 }
@@ -144,10 +144,10 @@ function rankMentionItems(items: MentionItem[]): MentionItem[] {
   }
 
   return [
-    ...users.slice(0, 8),
-    ...customers.slice(0, 6),
-    ...contacts.slice(0, 6),
-    ...issues.slice(0, 8),
+    ...users.slice(0, 6),
+    ...contacts.slice(0, 8),
+    ...customers.slice(0, 8),
+    ...issues.slice(0, 6),
   ];
 }
 
@@ -198,7 +198,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                   })
                 : Promise.resolve({ issues: [] }),
               crmApi.listCRMAccounts({ search: q || undefined }),
-              crmApi.listAllCRMContacts({ search: q || undefined, limit: 20 }),
+              crmApi.listAllCRMContacts({ search: q || undefined, limit: 50 }),
             ]);
             if (!cancelled && !controller.signal.aborted) {
               if (issueRes.status === "fulfilled") setServerIssueItems(issueRes.value.issues.map(issueToMention));
@@ -573,7 +573,7 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
             })
           : Promise.resolve({ issues: [] }),
         crmApi.listCRMAccounts({ search: q || undefined }),
-        crmApi.listAllCRMContacts({ search: q || undefined, limit: 20 }),
+        crmApi.listAllCRMContacts({ search: q || undefined, limit: 50 }),
       ]);
 
       const serverItems: MentionItem[] = [];
