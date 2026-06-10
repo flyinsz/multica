@@ -118,7 +118,7 @@ describe("createMentionSuggestion", () => {
     listAllCRMContactsMock.mockResolvedValue({ contacts: [], total: 0 });
   });
 
-  it("returns members and agents synchronously without waiting for the server search", () => {
+  it("returns members and agents with server-backed CRM/issue suggestions", async () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
       agents: [
@@ -131,14 +131,11 @@ describe("createMentionSuggestion", () => {
         },
       ],
     });
-    // A pending fetch — would block the result if items() awaited it.
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "a", editor: {} as never });
+    const result = await config.items!({ query: "a", editor: {} as never });
 
-    // Must be synchronous: a plain array, not a Promise.
-    expect(Array.isArray(result)).toBe(true);
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "member" && i.label === "Alice")).toBe(true);
     expect(items.some((i) => i.type === "agent" && i.label === "Aegis")).toBe(true);
@@ -235,7 +232,7 @@ describe("createMentionSuggestion", () => {
     ).toBe(true);
   });
 
-  it("hides personal agents owned by someone else from a regular member", () => {
+  it("hides personal agents owned by someone else from a regular member", async () => {
     const qc = fakeQc({
       members: [
         { user_id: "u1", name: "Alice", role: "member" },
@@ -268,10 +265,10 @@ describe("createMentionSuggestion", () => {
         },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "a", editor: {} as never });
+    const result = await config.items!({ query: "a", editor: {} as never });
     const items = result as MentionItem[];
 
     expect(items.some((i) => i.type === "agent" && i.label === "Athena")).toBe(true);
@@ -279,7 +276,7 @@ describe("createMentionSuggestion", () => {
     expect(items.some((i) => i.type === "agent" && i.label === "Atlas")).toBe(false);
   });
 
-  it("shows everyone's personal agents to a workspace admin", () => {
+  it("shows everyone's personal agents to a workspace admin", async () => {
     // Role lives in the member fixture, not in authState — promoting Alice
     // to admin here is enough to flip the gate. Backend gate allows admins
     // to assign anyone's personal agent, so the @mention list mirrors that.
@@ -298,32 +295,32 @@ describe("createMentionSuggestion", () => {
         },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "a", editor: {} as never });
+    const result = await config.items!({ query: "a", editor: {} as never });
     const items = result as MentionItem[];
 
     expect(items.some((i) => i.type === "agent" && i.label === "Atlas")).toBe(true);
   });
 
-  it("includes cached issues in the synchronous response", () => {
+  it("includes cached issues in the response", async () => {
     const qc = fakeQc({
       issues: [
         { id: "i1", identifier: "MUL-1", title: "Login bug", status: "todo" },
         { id: "i2", identifier: "MUL-2", title: "Other", status: "done" },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "bug", editor: {} as never });
+    const result = await config.items!({ query: "bug", editor: {} as never });
 
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "issue" && i.id === "i1")).toBe(true);
   });
 
-  it("includes all non-archived squads in the mention list", () => {
+  it("includes all non-archived squads in the mention list", async () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
       squads: [
@@ -332,10 +329,10 @@ describe("createMentionSuggestion", () => {
         { id: "s3", name: "Archived Squad", archived_at: "2026-01-01T00:00:00Z" },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "", editor: {} as never });
+    const result = await config.items!({ query: "", editor: {} as never });
 
     const items = result as MentionItem[];
     expect(items.filter((i) => i.type === "squad")).toHaveLength(2);
@@ -344,38 +341,38 @@ describe("createMentionSuggestion", () => {
     expect(items.some((i) => i.type === "squad" && i.label === "Archived Squad")).toBe(false);
   });
 
-  it("returns no squads when the squads cache is empty (not yet fetched)", () => {
+  it("returns no squads when the squads cache is empty (not yet fetched)", async () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
       // squads not provided — simulates cache miss
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "", editor: {} as never });
+    const result = await config.items!({ query: "", editor: {} as never });
 
     const items = result as MentionItem[];
     expect(items.filter((i) => i.type === "squad")).toHaveLength(0);
   });
 
-  it("matches Chinese names by full pinyin", () => {
+  it("matches Chinese names by full pinyin", async () => {
     const qc = fakeQc({
       members: [
         { user_id: "u1", name: "Alice", role: "member" },
         { user_id: "u2", name: "李云龙", role: "member" },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "liyunlong", editor: {} as never });
+    const result = await config.items!({ query: "liyunlong", editor: {} as never });
 
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "member" && i.label === "李云龙")).toBe(true);
     expect(items.some((i) => i.type === "member" && i.label === "Alice")).toBe(false);
   });
 
-  it("matches Chinese names by pinyin initials", () => {
+  it("matches Chinese names by pinyin initials", async () => {
     const qc = fakeQc({
       members: [
         { user_id: "u1", name: "Alice", role: "member" },
@@ -383,27 +380,27 @@ describe("createMentionSuggestion", () => {
         { user_id: "u3", name: "张大彪", role: "member" },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "lyl", editor: {} as never });
+    const result = await config.items!({ query: "lyl", editor: {} as never });
 
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "member" && i.label === "李云龙")).toBe(true);
     expect(items.some((i) => i.type === "member" && i.label === "张大彪")).toBe(false);
   });
 
-  it("matches Chinese agent names by pinyin", () => {
+  it("matches Chinese agent names by pinyin", async () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
       agents: [
         { id: "a1", name: "魏和尚", archived_at: null, visibility: "workspace", owner_id: null },
       ],
     });
-    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
     const config = createMentionSuggestion(qc);
-    const result = config.items!({ query: "whs", editor: {} as never });
+    const result = await config.items!({ query: "whs", editor: {} as never });
 
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "agent" && i.label === "魏和尚")).toBe(true);

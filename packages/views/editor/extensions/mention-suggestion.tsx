@@ -558,9 +558,36 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
   }
 
   return {
-    items: ({ query }) => {
+    items: async ({ query }) => {
       const syncItems = buildSyncItems(query);
-      return syncItems;
+      const q = query.trim();
+      const wsId = getCurrentWsId();
+      if (!wsId) return syncItems;
+
+      const [issueRes, accountRes, contactRes] = await Promise.allSettled([
+        q
+          ? api.searchIssues({
+              q,
+              limit: SERVER_ISSUE_SEARCH_LIMIT,
+              include_closed: true,
+            })
+          : Promise.resolve({ issues: [] }),
+        crmApi.listCRMAccounts({ search: q || undefined }),
+        crmApi.listAllCRMContacts({ search: q || undefined, limit: 20 }),
+      ]);
+
+      const serverItems: MentionItem[] = [];
+      if (accountRes.status === "fulfilled") {
+        serverItems.push(...accountRes.value.accounts.map(accountToMention));
+      }
+      if (contactRes.status === "fulfilled") {
+        serverItems.push(...contactRes.value.contacts.map(contactToMention));
+      }
+      if (issueRes.status === "fulfilled") {
+        serverItems.push(...issueRes.value.issues.map(issueToMention));
+      }
+
+      return rankMentionItems(mergeMentionItems(syncItems, serverItems)).slice(0, MAX_ITEMS);
     },
 
     command: ({ editor, range, props }) => {
