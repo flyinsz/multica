@@ -14,6 +14,15 @@ vi.mock("@multica/core/api", () => ({
   PreviewUnsupportedError: class extends Error {},
 }));
 
+vi.mock("@multica/core/crm/api", () => ({
+  crmApi: {
+    listCRMEmailDrafts: vi.fn().mockResolvedValue({
+      drafts: [{ id: "draft-123", subject: "Follow up order plan" }],
+      total: 1,
+    }),
+  },
+}));
+
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     issueDetail: (id: string) => `/test/issues/${id}`,
@@ -222,13 +231,17 @@ describe("ReadonlyContent issue mention Markdown", () => {
     expect(getByTestId("issue-mention-card").textContent).toBe("MUL-123");
   });
 
-  it("renders bare CRM draft mention URLs as clickable links", () => {
+  it("renders bare CRM draft mention URLs as mail-title chips", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     const { getByRole } = render(
-      <ReadonlyContent content="Draft created: mention://crm-draft/draft-123" />,
+      <QueryClientProvider client={qc}>
+        <ReadonlyContent content="Draft created: mention://crm-draft/draft-123" />
+      </QueryClientProvider>,
     );
 
-    const link = getByRole("link", { name: "mention://crm-draft/draft-123" });
+    const link = await waitFor(() => getByRole("link", { name: /Follow up order plan/ }));
     expect(link).toHaveAttribute("href", "/test/crm/emails?draft=draft-123");
+    expect(link.querySelector("svg")).not.toBeNull();
   });
 
   it("documents the CommonMark quoted-emphasis edge case before Korean particles", () => {

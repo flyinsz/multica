@@ -17,6 +17,8 @@
  */
 
 import { isValidElement, memo, useMemo, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Mail } from "lucide-react";
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
@@ -31,6 +33,7 @@ import { createLowlight, common } from "lowlight";
 import { toHtml } from "hast-util-to-html";
 import { cn } from "@multica/ui/lib/utils";
 import { useWorkspacePaths, useWorkspaceSlug } from "@multica/core/paths";
+import { crmApi } from "@multica/core/crm/api";
 import type { Attachment } from "@multica/core/types";
 import { useNavigation } from "../navigation";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
@@ -156,6 +159,42 @@ function ProjectMentionLink({ projectId, label }: { projectId: string; label?: s
   );
 }
 
+function CRMDraftMentionLink({ draftId, label }: { draftId: string; label?: string }) {
+  const { push, openInNewTab } = useNavigation();
+  const p = useWorkspacePaths();
+  const path = p.crmEmailDraft(draftId);
+  const { data } = useQuery({
+    queryKey: ["crm", "email-draft", "mention", draftId],
+    queryFn: () => crmApi.listCRMEmailDrafts(draftId),
+    enabled: Boolean(draftId),
+    staleTime: 60_000,
+  });
+  const draft = data?.drafts?.[0];
+  const title = draft?.subject || label || `Draft ${draftId.slice(0, 8)}`;
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+      if (openInNewTab) openInNewTab(path, title);
+      return;
+    }
+    push(path);
+  };
+
+  return (
+    <a
+      href={path}
+      onClick={handleClick}
+      className="issue-mention inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors"
+      title={title}
+    >
+      <Mail className="h-3 w-3" aria-hidden="true" />
+      <span className="max-w-[28rem] truncate">{title}</span>
+    </a>
+  );
+}
+
 // Named component so it can call useWorkspaceSlug() — arrow function inlined
 // inside `components` below would still work, but extracting it keeps the
 // hook usage explicit and avoids hook-in-object-literal surprises.
@@ -167,8 +206,6 @@ function ReadonlyLink({
   children?: React.ReactNode;
 }) {
   const slug = useWorkspaceSlug();
-  const p = useWorkspacePaths();
-  const navigation = useNavigation();
 
   if (href?.startsWith("slash://skill/")) {
     return <span className="slash-command">{children}</span>;
@@ -177,18 +214,13 @@ function ReadonlyLink({
   if (isMentionHref(href)) {
     const match = href.match(/^mention:\/\/(member|agent|issue|project|crm-draft|crm-account|crm-contact|all)\/(.+)$/);
     if (match?.[1] === "crm-draft" && match[2]) {
-      const path = p.crmEmailDraft(match[2]);
-      return (
-        <a
-          href={path}
-          onClick={(e) => {
-            e.preventDefault();
-            navigation.push(path);
-          }}
-        >
-          {children}
-        </a>
-      );
+      const label =
+        typeof children === "string"
+          ? children
+          : Array.isArray(children)
+            ? children.join("")
+            : undefined;
+      return <CRMDraftMentionLink draftId={match[2]} label={label} />;
     }
     if (match?.[1] === "issue" && match[2]) {
       const label =
