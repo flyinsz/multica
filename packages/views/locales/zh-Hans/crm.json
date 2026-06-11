@@ -93,6 +93,7 @@
     "last_contacted_at": "上次联系",
     "created_at": "创建时间",
     "updated_at": "更新时间",
+    "back": "返回",
     "contact_not_found": "未找到联系人",
     "contact_not_found_description": "联系人不存在，或当前工作区无权访问。",
     "contact_info": "联系信息",

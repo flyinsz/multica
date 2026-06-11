@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, Mail, Phone, Smartphone, UserRound } from "lucide-react";
+import { ArrowLeft, Building2, Mail, Phone, Smartphone, UserRound } from "lucide-react";
 import { crmApi } from "@multica/core/crm/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -60,8 +60,14 @@ export function CRMContactDetailPage({ contactId }: { contactId: string }) {
   const accountPath = contact.account_id ? p.crmCustomer(contact.account_id) : null;
   const emailPath = `${p.crmEmails()}?contact=${encodeURIComponent(contact.id)}`;
 
+  const backPath = contact.account_id ? p.crmCustomer(contact.account_id) : p.crmCustomers();
+
   return (
     <div className="space-y-6 p-6">
+      <Button variant="ghost" className="-ml-2" onClick={() => navigation.push(backPath)}>
+        <ArrowLeft className="mr-2 h-4 w-4" />
+        {t(($) => $.contacts.back)}
+      </Button>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <div className="flex items-center gap-3">

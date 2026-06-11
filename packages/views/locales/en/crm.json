@@ -93,6 +93,7 @@
     "last_contacted_at": "Last contacted",
     "created_at": "Created",
     "updated_at": "Updated",
+    "back": "Back",
     "contact_not_found": "Contact not found",
     "contact_not_found_description": "The contact does not exist, or current workspace cannot access it.",
     "contact_info": "Contact information",
