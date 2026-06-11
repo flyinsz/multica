@@ -168,6 +168,7 @@ function ReadonlyLink({
 }) {
   const slug = useWorkspaceSlug();
   const p = useWorkspacePaths();
+  const navigation = useNavigation();
 
   if (href?.startsWith("slash://skill/")) {
     return <span className="slash-command">{children}</span>;
@@ -182,7 +183,7 @@ function ReadonlyLink({
           href={path}
           onClick={(e) => {
             e.preventDefault();
-            openLink(path, slug);
+            navigation.push(path);
           }}
         >
           {children}
