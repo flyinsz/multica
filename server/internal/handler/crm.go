@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -4847,14 +4848,14 @@ func (h *Handler) CreateCRMFollowUpIssue(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	var dueDate pgtype.Timestamptz
+	var dueDate pgtype.Date
 	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) != "" {
-		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*req.DueDate))
+		parsed, err := util.ParseCalendarDate(strings.TrimSpace(*req.DueDate))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid due_date format, expected RFC3339")
+			writeError(w, http.StatusBadRequest, "invalid due_date format, expected YYYY-MM-DD")
 			return
 		}
-		dueDate = pgtype.Timestamptz{Time: parsed, Valid: true}
+		dueDate = parsed
 	}
 	description := strings.TrimSpace("CRM follow-up for " + account.Name)
 	if req.Description != nil && strings.TrimSpace(*req.Description) != "" {
