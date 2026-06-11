@@ -187,19 +187,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       const q = normalizedQuery;
       setServerItems([]);
 
-      if (!q) {
-        setIsSearching(false);
-        setSearchedQuery("");
-        return;
-      }
-
-      const wsId = getCurrentWsId();
-      if (!wsId) {
-        setIsSearching(false);
-        setSearchedQuery(q);
-        return;
-      }
-
       let cancelled = false;
       const controller = new AbortController();
       setIsSearching(true);
@@ -209,22 +196,31 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           try {
             const issueLimit = includeProjectSearch ? SERVER_CONTEXT_SEARCH_LIMIT : SERVER_ISSUE_SEARCH_LIMIT;
             const searches: Promise<MentionItem[]>[] = [
-              api.searchIssues({
-                q,
-                limit: issueLimit,
-                include_closed: true,
-                signal: controller.signal,
-              }).then((res) =>
-                res.issues.map((issue) => ({
-                  ...issueToMention(issue),
-                  ...(includeProjectSearch ? { group: "search" as const } : null),
-                })),
+              crmApi.listAllCRMContacts({ search: q || undefined, limit: 50 }).then((res) =>
+                res.contacts.map(contactToMention),
               ),
-              crmApi.listCRMAccounts({ search: q || undefined }).then((res) => res.accounts.map(accountToMention)),
-              crmApi.listAllCRMContacts({ search: q || undefined, limit: 50 }).then((res) => res.contacts.map(contactToMention)),
+              crmApi.listCRMAccounts({ search: q || undefined }).then((res) =>
+                res.accounts.map(accountToMention),
+              ),
             ];
 
-            if (includeProjectSearch) {
+            if (q) {
+              searches.push(
+                api.searchIssues({
+                  q,
+                  limit: issueLimit,
+                  include_closed: true,
+                  signal: controller.signal,
+                }).then((res) =>
+                  res.issues.map((issue) => ({
+                    ...issueToMention(issue),
+                    ...(includeProjectSearch ? { group: "search" as const } : null),
+                  })),
+                ),
+              );
+            }
+
+            if (includeProjectSearch && q) {
               searches.push(
                 api.searchProjects({
                   q,
