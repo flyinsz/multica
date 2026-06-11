@@ -167,13 +167,28 @@ function ReadonlyLink({
   children?: React.ReactNode;
 }) {
   const slug = useWorkspaceSlug();
+  const p = useWorkspacePaths();
 
   if (href?.startsWith("slash://skill/")) {
     return <span className="slash-command">{children}</span>;
   }
 
   if (isMentionHref(href)) {
-    const match = href.match(/^mention:\/\/(member|agent|issue|project|all)\/(.+)$/);
+    const match = href.match(/^mention:\/\/(member|agent|issue|project|crm-draft|crm-account|crm-contact|all)\/(.+)$/);
+    if (match?.[1] === "crm-draft" && match[2]) {
+      const path = p.crmEmailDraft(match[2]);
+      return (
+        <a
+          href={path}
+          onClick={(e) => {
+            e.preventDefault();
+            openLink(path, slug);
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
     if (match?.[1] === "issue" && match[2]) {
       const label =
         typeof children === "string"

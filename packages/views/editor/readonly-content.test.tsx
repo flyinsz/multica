@@ -17,6 +17,7 @@ vi.mock("@multica/core/api", () => ({
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     issueDetail: (id: string) => `/test/issues/${id}`,
+    crmEmailDraft: (id: string) => `/test/crm/emails?draft=${id}`,
   }),
   useWorkspaceSlug: () => "test",
 }));
@@ -219,6 +220,15 @@ describe("ReadonlyContent issue mention Markdown", () => {
 
     expect(container.querySelector('input[type="checkbox"]')).not.toBeNull();
     expect(getByTestId("issue-mention-card").textContent).toBe("MUL-123");
+  });
+
+  it("renders bare CRM draft mention URLs as clickable links", () => {
+    const { getByRole } = render(
+      <ReadonlyContent content="Draft created: mention://crm-draft/draft-123" />,
+    );
+
+    const link = getByRole("link", { name: "mention://crm-draft/draft-123" });
+    expect(link).toHaveAttribute("href", "/test/crm/emails?draft=draft-123");
   });
 
   it("documents the CommonMark quoted-emphasis edge case before Korean particles", () => {
