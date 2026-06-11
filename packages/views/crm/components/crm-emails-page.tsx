@@ -31,6 +31,7 @@ import { IssueDetail } from "../../issues/components";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { crmApi } from "@multica/core/crm/api";
+import { CRMContactDetailDialog } from "./crm-contact-detail-dialog";
 
 type EmailFolderKey = "inbox" | "sent" | "drafts" | "spam" | "archived" | "starred" | "unlinked" | "trash";
 type EmailQuickFilter = "all" | "unread" | "linked" | "unlinked";
@@ -2215,7 +2216,7 @@ export function CRMEmailsPage() {
         </section>
       </div>
 
-      <Dialog open={detailDialog !== null} onOpenChange={(open) => !open && setDetailDialog(null)}>
+      <Dialog open={detailDialog?.type === "account"} onOpenChange={(open) => !open && setDetailDialog(null)}>
         <DialogContent className="sm:max-w-2xl">
           {detailDialog?.type === "account" && (
             <>
@@ -2244,34 +2245,15 @@ export function CRMEmailsPage() {
               </DialogFooter>
             </>
           )}
-          {detailDialog?.type === "contact" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{detailDialog.contact.name}</DialogTitle>
-                <DialogDescription>{t(($) => $.emails.contact_detail)}</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <DetailRow label={t(($) => $.contacts.email)} value={detailDialog.contact.email} />
-                <DetailRow label={t(($) => $.contacts.phone)} value={detailDialog.contact.phone || detailDialog.contact.mobile} />
-                <DetailRow label={t(($) => $.contacts.whatsapp)} value={detailDialog.contact.whatsapp || detailDialog.contact.whatsapp_id} />
-                <DetailRow label={t(($) => $.contacts.job_title)} value={detailDialog.contact.job_title || detailDialog.contact.role_title} />
-                <DetailRow label={t(($) => $.contacts.department)} value={detailDialog.contact.department} />
-                <DetailRow label={t(($) => $.contacts.preferred_language)} value={detailDialog.contact.preferred_language || detailDialog.contact.language} />
-                <DetailRow label="Timezone" value={detailDialog.contact.timezone} />
-                <DetailRow label="Status" value={(detailDialog.contact as any).status} />
-                <DetailRow label="Source" value={(detailDialog.contact as any).source} />
-                <DetailRow label="Last contacted" value={messageTime(detailDialog.contact.last_contacted_at)} />
-                <DetailRow label="Next follow-up" value={messageTime((detailDialog.contact as any).next_follow_up_at)} />
-              </div>
-              {detailDialog.contact.notes ? <div className="rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">{detailDialog.contact.notes}</div> : null}
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setDetailDialog(null)}>{t(($) => $.actions.cancel)}</Button>
-                <Button onClick={() => window.open(paths.customerDetail(detailDialog.contact.account_id || "") + `#contact-${detailDialog.contact.id}`, "_blank", "noopener,noreferrer")}>联系人详情</Button>
-              </DialogFooter>
-            </>
-          )}
         </DialogContent>
       </Dialog>
+
+      <CRMContactDetailDialog
+        contact={detailDialog?.type === "contact" ? detailDialog.contact : null}
+        open={detailDialog?.type === "contact"}
+        onOpenChange={(open) => !open && setDetailDialog(null)}
+        t={t as any}
+      />
 
       <Dialog open={issuePickerOpen} onOpenChange={setIssuePickerOpen}>
         <DialogContent className="sm:max-w-lg">

@@ -52,6 +52,7 @@ import type crmResources from "../../locales/en/crm.json";
 import { COUNTRY_OPTIONS, countryByCode, findCityCode, findRegionCode, loadCityOptions, loadRegionOptions, localizedName, localizedSort, normalizeLocale, useLocationSelection } from "../geo";
 import { appendTag, CRM_INDUSTRY_OPTIONS, industryLabel, optionLabel, splitTags, subIndustryOptions } from "../options";
 import { crmApi } from "@multica/core/crm/api";
+import { CRMContactDetailDialog } from "./crm-contact-detail-dialog";
 
 type CRMResources = typeof crmResources;
 type Translation = (
@@ -513,6 +514,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   const [accountForm, setAccountForm] = useState<AccountFormState | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState | null>(null);
   const [contactForm, setContactForm] = useState<ContactFormState | null>(null);
+  const [selectedContact, setSelectedContact] = useState<CRMContact | null>(null);
   const [noteForm, setNoteForm] = useState<NoteFormState>(() => blankNoteForm());
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [selectedFollowUpProjectId, setSelectedFollowUpProjectId] = useState("");
@@ -834,15 +836,15 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                   </TableHeader>
                   <TableBody>
                     {contacts.map((contact) => (
-                      <TableRow key={contact.id}>
+                      <TableRow key={contact.id} className="cursor-pointer" onClick={() => setSelectedContact(contact)}>
                         <TableCell className="font-medium">{contact.name}</TableCell>
                         <TableCell>{contact.job_title || contact.role_title || "—"}</TableCell>
                         <TableCell>{contact.email || "—"}</TableCell>
                         <TableCell>{contact.whatsapp || contact.whatsapp_id || "—"}</TableCell>
                         <TableCell>{contact.is_primary ? "✓" : "—"}</TableCell>
                         <TableCell className="text-right">
-                          <Button size="sm" variant="ghost" aria-label={t(($) => $.actions.edit)} onClick={() => setContactForm(contactToForm(contact))}><Pencil className="size-4" /></Button>
-                          <Button size="sm" variant="ghost" aria-label={t(($) => $.actions.delete)} disabled={deleteContact.isPending} onClick={() => window.confirm(t(($) => $.contacts.delete_confirm)) && deleteContact.mutate(contact.id)}><Trash2 className="size-4" /></Button>
+                          <Button size="sm" variant="ghost" aria-label={t(($) => $.actions.edit)} onClick={(event) => { event.stopPropagation(); setContactForm(contactToForm(contact)); }}><Pencil className="size-4" /></Button>
+                          <Button size="sm" variant="ghost" aria-label={t(($) => $.actions.delete)} disabled={deleteContact.isPending} onClick={(event) => { event.stopPropagation(); if (window.confirm(t(($) => $.contacts.delete_confirm))) deleteContact.mutate(contact.id); }}><Trash2 className="size-4" /></Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1039,6 +1041,8 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
           <DialogFooter><Button variant="outline" onClick={() => setProfileForm(null)}>{t(($) => $.actions.cancel)}</Button><Button disabled={saveProfile.isPending} onClick={() => saveProfile.mutate()}>{t(($) => $.actions.save)}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CRMContactDetailDialog contact={selectedContact} open={selectedContact !== null} onOpenChange={(open) => !open && setSelectedContact(null)} t={t} />
 
       <Dialog open={contactForm !== null} onOpenChange={(open) => !open && setContactForm(null)}>
         <DialogContent className="sm:max-w-3xl">

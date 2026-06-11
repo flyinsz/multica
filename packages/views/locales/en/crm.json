@@ -88,7 +88,20 @@
     "timezone": "Timezone",
     "is_primary": "Primary contact",
     "notes": "Notes",
-    "delete_confirm": "Delete this contact?"
+    "delete_confirm": "Delete this contact?",
+    "open_detail": "Contact details",
+    "last_contacted_at": "Last contacted",
+    "created_at": "Created",
+    "updated_at": "Updated",
+    "contact_not_found": "Contact not found",
+    "contact_not_found_description": "The contact does not exist, or current workspace cannot access it.",
+    "contact_info": "Contact information",
+    "profile": "Profile",
+    "open_customer": "Open customer",
+    "open_emails": "Open emails",
+    "primary": "Primary",
+    "not_available": "Not available",
+    "linkedin": "LinkedIn"
   },
   "profile": {
     "title": "Customer profile",

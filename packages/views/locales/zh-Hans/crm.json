@@ -88,7 +88,20 @@
     "timezone": "时区",
     "is_primary": "主要联系人",
     "notes": "备注",
-    "delete_confirm": "确定删除这个联系人吗？"
+    "delete_confirm": "确定删除这个联系人吗？",
+    "open_detail": "联系人详情",
+    "last_contacted_at": "上次联系",
+    "created_at": "创建时间",
+    "updated_at": "更新时间",
+    "contact_not_found": "未找到联系人",
+    "contact_not_found_description": "联系人不存在，或当前工作区无权访问。",
+    "contact_info": "联系信息",
+    "profile": "资料",
+    "open_customer": "查看客户",
+    "open_emails": "查看邮件",
+    "primary": "主要联系人",
+    "not_available": "暂无",
+    "linkedin": "LinkedIn"
   },
   "profile": {
     "title": "客户画像",

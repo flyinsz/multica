@@ -10,6 +10,11 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useNavigation } from "../../navigation";
+import { useT } from "../../i18n";
+import type crmResources from "../../locales/en/crm.json";
+
+type CRMResources = typeof crmResources;
+type Translation = (selector: (resources: CRMResources) => string, options?: Record<string, unknown>) => string;
 
 function display(value?: string | null) {
   return value && value.trim() ? value : "—";
@@ -25,6 +30,8 @@ export function CRMContactDetailPage({ contactId }: { contactId: string }) {
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const navigation = useNavigation();
+  const { t: rawT } = useT("crm" as any);
+  const t = rawT as Translation;
   const { data: contact, isLoading, error } = useQuery({
     queryKey: ["crm", wsId, "contacts", "detail", contactId],
     queryFn: () => crmApi.getCRMContact(contactId),
@@ -44,8 +51,8 @@ export function CRMContactDetailPage({ contactId }: { contactId: string }) {
   if (error || !contact) {
     return (
       <div className="p-6">
-        <h1 className="text-xl font-semibold">Contact not found</h1>
-        <p className="mt-2 text-sm text-muted-foreground">联系人不存在，或当前工作区无权访问。</p>
+        <h1 className="text-xl font-semibold">{t(($) => $.contacts.contact_not_found)}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{t(($) => $.contacts.contact_not_found_description)}</p>
       </div>
     );
   }
@@ -67,7 +74,7 @@ export function CRMContactDetailPage({ contactId }: { contactId: string }) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {contact.is_primary ? <Badge>Primary</Badge> : null}
+            {contact.is_primary ? <Badge>{t(($) => $.contacts.primary)}</Badge> : null}
             {contact.decision_role ? <Badge variant="secondary">{contact.decision_role}</Badge> : null}
             {contact.preferred_language || contact.language ? <Badge variant="outline">{contact.preferred_language || contact.language}</Badge> : null}
           </div>
@@ -76,40 +83,40 @@ export function CRMContactDetailPage({ contactId }: { contactId: string }) {
           {accountPath ? (
             <Button variant="outline" onClick={() => navigation.push(accountPath)}>
               <Building2 className="mr-2 h-4 w-4" />
-              查看客户
+              {t(($) => $.contacts.open_customer)}
             </Button>
           ) : null}
           <Button variant="outline" onClick={() => navigation.push(emailPath)}>
             <Mail className="mr-2 h-4 w-4" />
-            查看邮件
+            {t(($) => $.contacts.open_emails)}
           </Button>
         </div>
       </div>
 
       <section className="rounded-lg border bg-card p-4">
-        <h2 className="mb-4 text-base font-semibold">联系信息</h2>
+        <h2 className="mb-4 text-base font-semibold">{t(($) => $.contacts.contact_info)}</h2>
         <div className="grid gap-4 md:grid-cols-2">
-          <Info icon={<Mail className="h-4 w-4" />} label="Email" value={display(contact.email)} />
-          <Info icon={<Phone className="h-4 w-4" />} label="Phone" value={display(contact.phone)} />
-          <Info icon={<Smartphone className="h-4 w-4" />} label="Mobile" value={display(contact.mobile)} />
-          <Info label="WhatsApp" value={display(contact.whatsapp || contact.whatsapp_id)} />
-          <Info label="WeChat" value={display(contact.wechat)} />
-          <Info label="LinkedIn" value={display(contact.linkedin_url)} />
+          <Info icon={<Mail className="h-4 w-4" />} label={t(($) => $.contacts.email)} value={display(contact.email)} />
+          <Info icon={<Phone className="h-4 w-4" />} label={t(($) => $.contacts.phone)} value={display(contact.phone)} />
+          <Info icon={<Smartphone className="h-4 w-4" />} label={t(($) => $.contacts.mobile)} value={display(contact.mobile)} />
+          <Info label={t(($) => $.contacts.whatsapp)} value={display(contact.whatsapp || contact.whatsapp_id)} />
+          <Info label={t(($) => $.contacts.wechat)} value={display(contact.wechat)} />
+          <Info label={t(($) => $.contacts.linkedin)} value={display(contact.linkedin_url)} />
         </div>
       </section>
 
       <section className="rounded-lg border bg-card p-4">
-        <h2 className="mb-4 text-base font-semibold">资料</h2>
+        <h2 className="mb-4 text-base font-semibold">{t(($) => $.contacts.profile)}</h2>
         <div className="grid gap-4 md:grid-cols-2">
-          <Info label="Department" value={display(contact.department)} />
-          <Info label="Timezone" value={display(contact.timezone)} />
-          <Info label="Last contacted" value={formatDate(contact.last_contacted_at)} />
-          <Info label="Created" value={formatDate(contact.created_at)} />
+          <Info label={t(($) => $.contacts.department)} value={display(contact.department)} />
+          <Info label={t(($) => $.contacts.timezone)} value={display(contact.timezone)} />
+          <Info label={t(($) => $.contacts.last_contacted_at)} value={formatDate(contact.last_contacted_at)} />
+          <Info label={t(($) => $.contacts.created_at)} value={formatDate(contact.created_at)} />
         </div>
       </section>
 
       <section className="rounded-lg border bg-card p-4">
-        <h2 className="mb-2 text-base font-semibold">备注</h2>
+        <h2 className="mb-2 text-base font-semibold">{t(($) => $.contacts.notes)}</h2>
         <p className="whitespace-pre-wrap text-sm text-muted-foreground">{display(contact.notes)}</p>
       </section>
     </div>
