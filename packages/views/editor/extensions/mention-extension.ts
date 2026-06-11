@@ -9,7 +9,7 @@ export const BaseMentionExtension = Mention.extend({
   },
   renderHTML({ node, HTMLAttributes }) {
     const type = node.attrs.type ?? "member";
-    const prefix = type === "issue" || type === "crm-draft" || type === "crm-account" || type === "crm-contact" ? "" : "@";
+    const prefix = type === "issue" || type === "project" || type === "crm-draft" || type === "crm-account" || type === "crm-contact" ? "" : "@";
     return [
       "span",
       mergeAttributes(
@@ -66,7 +66,7 @@ export const BaseMentionExtension = Mention.extend({
   },
   renderMarkdown: (node: any) => {
     const { id, label, type = "member" } = node.attrs || {};
-    const prefix = type === "issue" || type === "crm-draft" || type === "crm-account" || type === "crm-contact" ? "" : "@";
+    const prefix = type === "issue" || type === "project" || type === "crm-draft" || type === "crm-account" || type === "crm-contact" ? "" : "@";
     // Escape square brackets in the label so the markdown link syntax
     // is not broken when the name contains [ or ] (e.g. "David[TF]").
     const safeLabel = (label ?? id).replace(/\[/g, "\\[").replace(/\]/g, "\\]");

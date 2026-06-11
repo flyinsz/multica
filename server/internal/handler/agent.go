@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -182,6 +183,7 @@ type AgentTaskResponse struct {
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
 	WorkspaceContext   string                `json:"workspace_context,omitempty"`
+	ThreadName         string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Status             string                `json:"status"`
 	Priority           int32                 `json:"priority"`
 	DispatchedAt       *string               `json:"dispatched_at"`
@@ -215,6 +217,7 @@ type AgentTaskResponse struct {
 	// WorkDir directly; newer UIs should prefer RelativeWorkDir.
 	RelativeWorkDir         string               `json:"relative_work_dir,omitempty"`
 	TriggerCommentID        *string              `json:"trigger_comment_id,omitempty"`        // comment that triggered this task
+	TriggerThreadID         string               `json:"trigger_thread_id,omitempty"`         // root comment ID for the triggering thread
 	TriggerCommentContent   string               `json:"trigger_comment_content,omitempty"`   // content of the triggering comment
 	TriggerSummary          *string              `json:"trigger_summary,omitempty"`           // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
 	TriggerAuthorType       string               `json:"trigger_author_type,omitempty"`       // "agent" or "member" — author kind of the triggering comment
@@ -243,7 +246,24 @@ type AgentTaskResponse struct {
 	// is empty.
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	Kind                             string `json:"kind"` // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	// Initiator* identify the actor who triggered THIS task — the real
+	// requester behind the current comment/mention or chat message — as
+	// distinct from the runtime owner whose credentials the agent runs with.
+	// Resolved at claim time: comment-triggered tasks use the triggering
+	// comment's author; chat tasks use the chat session creator. Empty for
+	// task kinds with no attributable human initiator (on-assign, autopilot,
+	// quick-create). InitiatorEmail is set only for member initiators
+	// ("member"); agent initiators ("agent") carry a name but no email. The
+	// daemon emits these into the brief under `## Task Initiator` so a
+	// workspace-visible, multi-user agent can attribute the request and apply
+	// per-person privacy / access rules instead of seeing every requester as
+	// the owner. The agent's effective Multica credentials stay owner-scoped —
+	// this is an attested identity, not a credential. See MUL-2645.
+	InitiatorType  string `json:"initiator_type,omitempty"`  // "member" or "agent"
+	InitiatorID    string `json:"initiator_id,omitempty"`    // user UUID (member) or agent UUID
+	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
+	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
+	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -762,7 +782,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 
-	h.Analytics.Capture(analytics.AgentCreated(
+	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AgentCreated(
 		ownerID,
 		workspaceID,
 		uuidToString(created.ID),

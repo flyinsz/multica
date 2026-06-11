@@ -30,12 +30,16 @@ vi.mock("@multica/core/platform", () => ({
 
 // Mock APIs so we control mention server searches + observe calls.
 const searchIssuesMock = vi.fn();
+const searchProjectsMock = vi.fn();
 const listCRMAccountsMock = vi.fn();
 const listAllCRMContactsMock = vi.fn();
 vi.mock("@multica/core/api", () => ({
   api: {
     get searchIssues() {
       return searchIssuesMock;
+    },
+    get searchProjects() {
+      return searchProjectsMock;
     },
   },
 }));
@@ -112,10 +116,14 @@ function fakeQc(data: {
 describe("createMentionSuggestion", () => {
   beforeEach(() => {
     searchIssuesMock.mockReset();
+    searchProjectsMock.mockReset();
     listCRMAccountsMock.mockReset();
     listAllCRMContactsMock.mockReset();
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
+    searchProjectsMock.mockResolvedValue({ projects: [], total: 0 });
     listCRMAccountsMock.mockResolvedValue({ accounts: [], total: 0 });
     listAllCRMContactsMock.mockResolvedValue({ contacts: [], total: 0 });
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   it("returns members and agents with server-backed CRM/issue suggestions", async () => {
@@ -171,7 +179,7 @@ describe("createMentionSuggestion", () => {
     );
   });
 
-  it("loads CRM customers and contacts into the popup for an empty query", async () => {
+  it("loads CRM customers and contacts into the popup", async () => {
     listCRMAccountsMock.mockResolvedValue({
       accounts: [{ id: "acct-1", name: "Acme", website: "acme.test" }],
       total: 1,
@@ -181,23 +189,53 @@ describe("createMentionSuggestion", () => {
       total: 1,
     });
 
-    render(<I18nWrapper><MentionList items={[]} query="" command={vi.fn()} /></I18nWrapper>);
+    render(<I18nWrapper><MentionList items={[]} query="ac" command={vi.fn()} /></I18nWrapper>);
 
     await waitFor(() => {
       expect(screen.getByText("Acme")).toBeInTheDocument();
       expect(screen.getByText("Alice Buyer")).toBeInTheDocument();
     });
-    expect(searchIssuesMock).not.toHaveBeenCalled();
-    expect(listCRMAccountsMock).toHaveBeenCalledWith({ search: undefined });
-    expect(listAllCRMContactsMock).toHaveBeenCalledWith({ search: undefined, limit: 20 });
+    expect(listCRMAccountsMock).toHaveBeenCalledWith({ search: "ac" });
+    expect(listAllCRMContactsMock).toHaveBeenCalledWith({ search: "ac", limit: 50 });
   });
 
-  it("keeps CRM customers and contacts visible when users and issues would fill the cap", async () => {
-    const manyUsers = Array.from({ length: 20 }, (_, i) => ({
-      id: `u-${i}`,
-      label: `User ${i}`,
-      type: "member" as const,
-    }));
+  it("loads server issue and project matches when project search is enabled", async () => {
+    searchProjectsMock.mockResolvedValue({
+      projects: [
+        {
+          id: "p-roadmap",
+          title: "Roadmap",
+          description: "Q3 planning",
+          icon: null,
+          status: "active",
+        },
+      ],
+      total: 1,
+    });
+
+    render(
+      <I18nWrapper>
+        <MentionList items={[]} query="road" command={vi.fn()} includeProjectSearch />
+      </I18nWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Roadmap")).toBeInTheDocument();
+    });
+    expect(searchIssuesMock).toHaveBeenCalledWith(expect.objectContaining({ q: "road", limit: 8 }));
+    expect(searchProjectsMock).toHaveBeenCalledWith(expect.objectContaining({ q: "road", limit: 8 }));
+  });
+
+  it("does not call server search for an empty query", () => {
+    render(<I18nWrapper><MentionList items={[]} query="" command={vi.fn()} /></I18nWrapper>);
+
+    expect(searchIssuesMock).not.toHaveBeenCalled();
+    expect(searchProjectsMock).not.toHaveBeenCalled();
+    expect(listCRMAccountsMock).not.toHaveBeenCalled();
+    expect(listAllCRMContactsMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps CRM customers and contacts visible when issues would fill the cap", async () => {
     const manyIssues = Array.from({ length: 20 }, (_, i) => ({
       id: `issue-${i}`,
       label: `MUL-${i}`,
@@ -212,9 +250,8 @@ describe("createMentionSuggestion", () => {
       contacts: [{ id: "contact-1", name: "Alice Buyer", email: "alice@acme.test" }],
       total: 1,
     });
-    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
 
-    render(<I18nWrapper><MentionList items={[...manyUsers, ...manyIssues]} query="a" command={vi.fn()} /></I18nWrapper>);
+    render(<I18nWrapper><MentionList items={manyIssues} query="a" command={vi.fn()} /></I18nWrapper>);
 
     await waitFor(() => {
       expect(screen.getByText("Acme")).toBeInTheDocument();
@@ -318,6 +355,85 @@ describe("createMentionSuggestion", () => {
 
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "issue" && i.id === "i1")).toBe(true);
+  });
+
+  it("does not inject current/recent chat context into the normal @ results", () => {
+    const qc = fakeQc({
+      members: [{ user_id: "u1", name: "Alice", role: "member" }],
+      issues: [{ id: "i1", identifier: "MUL-1", title: "Login bug", status: "todo" }],
+    });
+    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+
+    const config = createMentionSuggestion(qc);
+    const result = config.items!({ query: "", editor: {} as never }) as MentionItem[];
+
+    expect(result.some((item) => item.group === "current" || item.group === "recent")).toBe(false);
+    expect(result.map((item) => `${item.type}:${item.id}`)).toContain("member:u1");
+    expect(result.map((item) => `${item.type}:${item.id}`)).toContain("issue:i1");
+  });
+
+
+  it("shows only current/recent chat context before the user types a query", () => {
+    const qc = fakeQc({
+      members: [{ user_id: "u1", name: "Alice", role: "member" }],
+      agents: [{ id: "a1", name: "Aegis", archived_at: null, visibility: "workspace", owner_id: null }],
+      issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
+    });
+    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+
+    const config = createMentionSuggestion(qc, {
+      mode: "context",
+      getContextItems: () => [
+        { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
+        { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
+      ],
+    });
+    const result = config.items!({ query: "", editor: {} as never }) as MentionItem[];
+
+    expect(result.map((item) => `${item.type}:${item.id}`)).toEqual(["issue:i1", "project:p1"]);
+    expect(result.some((item) => item.type === "member" || item.type === "agent")).toBe(false);
+  });
+
+  it("prepends current/recent chat context without removing normal mention targets after the user types", () => {
+    const qc = fakeQc({
+      members: [{ user_id: "u1", name: "Alice", role: "member" }],
+      agents: [{ id: "a1", name: "Aegis", archived_at: null, visibility: "workspace", owner_id: null }],
+      issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
+    });
+    searchIssuesMock.mockReturnValue(new Promise(() => {}));
+
+    const config = createMentionSuggestion(qc, {
+      mode: "context",
+      getContextItems: () => [
+        { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
+        { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
+      ],
+    });
+    const result = config.items!({ query: "a", editor: {} as never }) as MentionItem[];
+
+    expect(result.map((item) => `${item.type}:${item.id}`).slice(0, 2)).toEqual(["issue:i1", "project:p1"]);
+    expect(result.some((item) => item.type === "member" && item.label === "Alice")).toBe(true);
+    expect(result.some((item) => item.type === "agent" && item.label === "Aegis")).toBe(true);
+  });
+
+  it("renders current and recent sections for injected object mentions", () => {
+    render(
+      <I18nWrapper>
+        <MentionList
+          items={[
+            { id: "i1", label: "MUL-1", type: "issue", description: "Login bug", group: "current" },
+            { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
+          ]}
+          query=""
+          command={vi.fn()}
+        />
+      </I18nWrapper>,
+    );
+
+    expect(screen.getByText("Current page")).toBeInTheDocument();
+    expect(screen.getByText("Recently viewed")).toBeInTheDocument();
+    expect(screen.getByText("MUL-1")).toBeInTheDocument();
+    expect(screen.getByText("Roadmap")).toBeInTheDocument();
   });
 
   it("includes all non-archived squads in the mention list", async () => {

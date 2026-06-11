@@ -10,7 +10,8 @@ import { useConfigStore } from "@multica/core/config";
 import type { Attachment as AttachmentRecord } from "@multica/core/types";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
-import { useNavigation } from "../navigation";
+import { ProjectChip } from "../projects/components/project-chip";
+import { AppLink, useNavigation } from "../navigation";
 import {
   Attachment as AttachmentRenderer,
   AttachmentDownloadProvider,
@@ -19,41 +20,24 @@ import {
 export type { RenderMode };
 
 export interface MarkdownProps extends MarkdownBaseProps {
-  /**
-   * Attachments associated with the surrounding entity (chat message, skill
-   * file). When passed, the renderer resolves inline image / file-card URLs
-   * to full attachment records via AttachmentDownloadProvider, unlocking the
-   * unified hover toolbar / lightbox / preview-modal behavior used in
-   * editor surfaces.
-   */
   attachments?: AttachmentRecord[];
 }
 
-/**
- * Default renderMention that delegates to IssueMentionCard for issue mentions
- * and renders a styled span for other mention types.
- */
-function defaultRenderMention({
-  type,
-  id,
-  label,
-}: {
-  type: string;
-  id: string;
-  label?: string;
-}): React.ReactNode {
-  if (type === "issue") {
-    return <IssueMentionCard issueId={id} />;
-  }
-  if (type === "crm-draft") {
-    return <CRMDraftMention draftId={id} />;
-  }
-  if (type === "crm-account") {
-    return <CRMCustomerMention customerId={id} label={label} />;
-  }
-  if (type === "crm-contact") {
-    return <CRMContactMention contactId={id} label={label} />;
-  }
+function ProjectMentionCard({ projectId }: { projectId: string }): React.ReactNode {
+  const p = useWorkspacePaths();
+  return (
+    <AppLink href={p.projectDetail(projectId)} className="project-mention not-prose inline-flex">
+      <ProjectChip projectId={projectId} className="cursor-pointer hover:bg-accent transition-colors" />
+    </AppLink>
+  );
+}
+
+function defaultRenderMention({ type, id, label }: { type: string; id: string; label?: string }): React.ReactNode {
+  if (type === "issue") return <IssueMentionCard issueId={id} />;
+  if (type === "project") return <ProjectMentionCard projectId={id} />;
+  if (type === "crm-draft") return <CRMDraftMention draftId={id} />;
+  if (type === "crm-account") return <CRMCustomerMention customerId={id} label={label} />;
+  if (type === "crm-contact") return <CRMContactMention contactId={id} label={label} />;
   return null;
 }
 
@@ -116,66 +100,26 @@ function CRMDraftMention({ draftId }: { draftId: string }): React.JSX.Element {
   };
 
   return (
-    <a
-      href={draftPath}
-      onClick={handleClick}
-      className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors"
-    >
+    <a href={draftPath} onClick={handleClick} className="issue-mention inline-flex rounded border px-1.5 py-0.5 text-xs hover:bg-accent transition-colors">
       ✉️ {label}
     </a>
   );
 }
 
 function renderImage({ src, alt }: { src: string; alt: string }): React.ReactNode {
-  return (
-    <AttachmentRenderer
-      attachment={{
-        kind: "url",
-        url: src,
-        filename: alt,
-        // chat / skill markdown `![]()` is structurally an image. Without
-        // forceKind, empty/descriptive alt strings would route to the
-        // file-card chrome via getPreviewKind autodetect.
-        forceKind: "image",
-      }}
-    />
-  );
+  return <AttachmentRenderer attachment={{ kind: "url", url: src, filename: alt, forceKind: "image" }} />;
 }
 
-function renderFileCard({
-  href,
-  filename,
-}: {
-  href: string;
-  filename: string;
-}): React.ReactNode {
-  return (
-    <AttachmentRenderer
-      attachment={{ kind: "url", url: href, filename }}
-    />
-  );
+function renderFileCard({ href, filename }: { href: string; filename: string }): React.ReactNode {
+  return <AttachmentRenderer attachment={{ kind: "url", url: href, filename }} />;
 }
 
-/**
- * App-level Markdown wrapper. Injects:
- *   - IssueMentionCard for issue mentions
- *   - cdnDomain from the config store (drives fileCard preprocessing)
- *   - unified <Attachment> as the image / file-card renderer
- *   - AttachmentDownloadProvider so url → record resolution works inside
- *     the injected <Attachment> components
- */
 export function Markdown(props: MarkdownProps): React.JSX.Element {
   const cdnDomain = useConfigStore((s) => s.cdnDomain);
   const { attachments, ...rest } = props;
   return (
     <AttachmentDownloadProvider attachments={attachments}>
-      <MarkdownBase
-        renderMention={defaultRenderMention}
-        renderImage={renderImage}
-        renderFileCard={renderFileCard}
-        cdnDomain={cdnDomain}
-        {...rest}
-      />
+      <MarkdownBase renderMention={defaultRenderMention} renderImage={renderImage} renderFileCard={renderFileCard} cdnDomain={cdnDomain} {...rest} />
     </AttachmentDownloadProvider>
   );
 }
