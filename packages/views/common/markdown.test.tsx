@@ -41,6 +41,14 @@ vi.mock("../navigation", () => ({
       {children}
     </a>
   ),
+  useNavigation: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    pathname: "/acme/issues",
+    searchParams: new URLSearchParams(),
+    openInNewTab: vi.fn(),
+  }),
 }));
 
 vi.mock("../projects/components/project-chip", () => ({
@@ -88,5 +96,12 @@ describe("Markdown", () => {
 
     expect(screen.getByTestId("project-chip")).toHaveTextContent("project-123");
     expect(screen.getByRole("link")).toHaveAttribute("href", "/projects/project-123");
+  });
+
+  it("renders bare CRM draft mention URLs as clickable draft links", () => {
+    render(<Markdown>{"Draft created: mention://crm-draft/draft-123"}</Markdown>);
+
+    const link = screen.getByRole("link", { name: /Draft draft-123/ });
+    expect(link).toHaveAttribute("href", "/acme/crm/emails?draft=draft-123");
   });
 });

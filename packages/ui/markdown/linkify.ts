@@ -15,6 +15,12 @@ const linkify = new LinkifyIt()
 const FILE_PATH_REGEX =
   /(?:^|[\s([{<])((\/|~\/|\.\/)[\w\-./@]+\.(?:ts|tsx|js|jsx|mjs|cjs|md|json|yaml|yml|py|go|rs|css|scss|less|html|htm|txt|log|sh|bash|zsh|swift|kt|java|c|cpp|h|hpp|rb|php|xml|toml|ini|cfg|conf|env|sql|graphql|vue|svelte|astro|prisma|dockerfile|makefile|gitignore))(?=[\s)\]}.,;:!?>]|$)/gi
 
+// Internal mention URLs are not recognized by linkify-it because `mention://`
+// is a private scheme. Detect bare mention URLs so strings like
+// `mention://crm-draft/<id>` render through the normal markdown link pipeline.
+const MENTION_URL_REGEX =
+  /(?:^|[\s([{<])((mention:\/\/(?:member|agent|issue|project|crm-draft|crm-account|crm-contact|all)\/[^\s)\]}<>,;!?]+))(?=[\s)\]}.,;:!?>]|$)/g
+
 // CJK full-width punctuation that should terminate a URL.
 // linkify-it only treats ASCII punctuation as URL boundaries, so in Chinese /
 // Japanese text a URL followed by e.g. "。" gets the punctuation and every
@@ -256,7 +262,31 @@ export function detectLinks(text: string): DetectedLink[] {
   // 1. Detect URLs and emails with linkify-it, applying CJK boundary handling.
   collectLinkifyMatches(text, 0, links)
 
-  // 2. Detect file paths with custom regex
+  // 2. Detect Multica internal mention URLs with custom regex.
+  MENTION_URL_REGEX.lastIndex = 0
+  let mentionMatch
+  while ((mentionMatch = MENTION_URL_REGEX.exec(text)) !== null) {
+    const url = mentionMatch[1]
+    if (!url) continue
+
+    const fullMatch = mentionMatch[0]
+    const urlOffset = fullMatch.indexOf(url)
+    const start = mentionMatch.index + urlOffset
+
+    const mentionRange = { start, end: start + url.length }
+    const overlapsUrl = links.some((link) => rangesOverlap(mentionRange, link))
+    if (overlapsUrl) continue
+
+    links.push({
+      type: 'url',
+      text: url,
+      url,
+      start,
+      end: start + url.length
+    })
+  }
+
+  // 3. Detect file paths with custom regex
   // Reset regex state
   FILE_PATH_REGEX.lastIndex = 0
   let fileMatch
@@ -293,7 +323,7 @@ export function detectLinks(text: string): DetectedLink[] {
  */
 export function preprocessLinks(text: string): string {
   // Quick check - if no potential links, return early
-  if (!linkify.pretest(text) && !/[~/.]\//.test(text)) {
+  if (!linkify.pretest(text) && !/[~/.]\//.test(text) && !text.includes('mention://')) {
     return text
   }
 
