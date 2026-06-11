@@ -34,6 +34,7 @@ function workspaceScoped(slug: string) {
     crmEmails: () => `${ws}/crm/emails`,
     crmEmailDraft: (id: string) => `${ws}/crm/emails?draft=${encode(id)}`,
     crmCustomer: (id: string) => `${ws}/crm/customers/${encode(id)}`,
+    crmContact: (id: string) => `${ws}/crm/contacts/${encode(id)}`,
     myIssues: () => `${ws}/my-issues`,
     runtimes: () => `${ws}/runtimes`,
     runtimeDetail: (id: string) => `${ws}/runtimes/${encode(id)}`,

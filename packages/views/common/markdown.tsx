@@ -81,7 +81,7 @@ function CRMCustomerMention({ customerId, label }: { customerId: string; label?:
 function CRMContactMention({ contactId, label }: { contactId: string; label?: string }): React.JSX.Element {
   const p = useWorkspacePaths();
   const { push, openInNewTab } = useNavigation();
-  const contactPath = `${p.crmEmails()}?contact=${encodeURIComponent(contactId)}`;
+  const contactPath = p.crmContact(contactId);
   const displayLabel = label || `Contact ${contactId.slice(0, 8)}`;
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
