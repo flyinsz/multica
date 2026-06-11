@@ -64,7 +64,17 @@ export function CRMContactDetailPage({ contactId }: { contactId: string }) {
 
   return (
     <div className="space-y-6 p-6">
-      <Button variant="ghost" className="-ml-2" onClick={() => navigation.push(backPath)}>
+      <Button
+        variant="ghost"
+        className="-ml-2"
+        onClick={() => {
+          if (typeof window !== "undefined" && window.history.length > 1) {
+            navigation.back();
+            return;
+          }
+          navigation.push(backPath);
+        }}
+      >
         <ArrowLeft className="mr-2 h-4 w-4" />
         {t(($) => $.contacts.back)}
       </Button>
