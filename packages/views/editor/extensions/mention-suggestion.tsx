@@ -158,10 +158,9 @@ function rankMentionItems(items: MentionItem[]): MentionItem[] {
   const issues: MentionItem[] = [];
 
   for (const item of items) {
-    if (item.group) users.push(item);
+    if (item.type === "issue" || item.type === "project") issues.push(item);
     else if (item.type === "crm-account") customers.push(item);
     else if (item.type === "crm-contact") contacts.push(item);
-    else if (item.type === "issue" || item.type === "project") issues.push(item);
     else users.push(item);
   }
 
@@ -215,6 +214,19 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                   res.issues.map((issue) => ({
                     ...issueToMention(issue),
                     ...(includeProjectSearch ? { group: "search" as const } : null),
+                  })),
+                ),
+              );
+            } else if (includeProjectSearch) {
+              searches.push(
+                api.listIssues({
+                  limit: issueLimit,
+                  sort_by: "created_at",
+                  sort_direction: "desc",
+                }).then((res) =>
+                  res.issues.map((issue) => ({
+                    ...issueToMention(issue),
+                    group: "search" as const,
                   })),
                 ),
               );
