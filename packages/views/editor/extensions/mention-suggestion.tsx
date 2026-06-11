@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { QueryClient } from "@tanstack/react-query";
-import { getCurrentWsId } from "@multica/core/platform";
+import { getCurrentSlug, getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
 import { crmApi } from "@multica/core/crm/api";
 import { crmKeys } from "@multica/core/crm/queries";
@@ -587,7 +587,9 @@ export function createMentionSuggestion(
     // Read workspace id imperatively because this runs in TipTap factory scope
     // (outside React render). getCurrentWsId() is the non-React singleton set
     // by the URL-driven workspace layout.
-    const wsId = getCurrentWsId();
+    const slug = getCurrentSlug();
+    const workspaces = qc.getQueryData<{ id: string; slug: string }[]>(workspaceKeys.list()) ?? [];
+    const wsId = getCurrentWsId() ?? (slug ? workspaces.find((w) => w.slug === slug)?.id : undefined);
     if (!wsId) return [];
 
     const members: MemberWithUser[] = qc.getQueryData(workspaceKeys.members(wsId)) ?? [];
@@ -676,8 +678,7 @@ export function createMentionSuggestion(
       if (options.mode === "context") {
         const normalizedQuery = query.trim();
         const contextItems = (options.getContextItems?.() ?? []).filter((item) => matchesMentionQuery(item, query));
-        if (!normalizedQuery) return contextItems;
-        return mergeMentionItems(contextItems, buildSyncItems(query));
+        return mergeMentionItems(contextItems, buildSyncItems(normalizedQuery));
       }
       return buildSyncItems(query);
     },
