@@ -407,7 +407,7 @@ function MentionRow({
         } ${isClosed ? "opacity-60" : ""}`}
         onClick={onSelect}
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
           {item.status ? (
             <StatusIcon status={item.status} className="h-3.5 w-3.5" />
           ) : (
@@ -441,7 +441,7 @@ function MentionRow({
         }`}
         onClick={onSelect}
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
           <ProjectIcon project={{ icon: item.icon ?? null }} size="sm" />
         </span>
         <span className="min-w-0 flex-1">
