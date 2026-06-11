@@ -350,20 +350,15 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
     if (contextLayout) {
       return (
-        <div className="flex max-h-[420px] w-96 flex-col overflow-hidden rounded-lg border bg-popover py-1 shadow-xl">
-          {groups.map((group) => {
-            const isRecent = group.label === "Recent";
-            return (
-              <section key={group.label} className={isRecent ? "min-h-0" : "shrink-0"}>
-                <div className="shrink-0 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                  {groupLabel(group.label)}
-                </div>
-                <div className={isRecent ? "max-h-64 overflow-y-auto overscroll-contain" : undefined}>
-                  {renderRows(group)}
-                </div>
-              </section>
-            );
-          })}
+        <div className="max-h-[420px] w-96 overflow-y-auto overscroll-contain rounded-lg border bg-popover py-1 shadow-xl">
+          {groups.map((group) => (
+            <section key={group.label}>
+              <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                {groupLabel(group.label)}
+              </div>
+              <div>{renderRows(group)}</div>
+            </section>
+          ))}
         </div>
       );
     }
@@ -407,12 +402,12 @@ function MentionRow({
       <button
         type="button"
         ref={buttonRef}
-        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
           selected ? "bg-accent" : "hover:bg-accent/50"
         } ${isClosed ? "opacity-60" : ""}`}
         onClick={onSelect}
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
           {item.status ? (
             <StatusIcon status={item.status} className="h-3.5 w-3.5" />
           ) : (
@@ -441,12 +436,12 @@ function MentionRow({
       <button
         type="button"
         ref={buttonRef}
-        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
           selected ? "bg-accent" : "hover:bg-accent/50"
         }`}
         onClick={onSelect}
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
           <ProjectIcon project={{ icon: item.icon ?? null }} size="sm" />
         </span>
         <span className="min-w-0 flex-1">
