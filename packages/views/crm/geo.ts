@@ -127,12 +127,19 @@ export const regionByCode = (country: CountryOption | undefined, code?: string |
 export const cityByCode = (region: RegionOption | undefined, code?: string | null) => region?.cities.find((city) => city.code === code);
 
 const normalizeLookupValue = (value?: string | null) => value?.trim().toLocaleLowerCase() ?? "";
+const normalizeLooseLookupValue = (value?: string | null) => normalizeLookupValue(value)
+  .replace(/[\s·,，.。()（）\[\]【】_-]+/g, "")
+  .replace(/省|市|自治区|壮族自治区|回族自治区|维吾尔自治区|特别行政区|自治州|地区$/g, "");
 const optionMatches = (option: { code: string; name: LocalizedName }, value?: string | null) => {
   const normalized = normalizeLookupValue(value);
   if (!normalized) return false;
-  return [option.code, option.name.en, option.name.zh]
-    .map((candidate) => normalizeLookupValue(candidate))
-    .includes(normalized);
+  const candidates = [option.code, option.name.en, option.name.zh].map((candidate) => normalizeLookupValue(candidate));
+  if (candidates.includes(normalized)) return true;
+  const loose = normalizeLooseLookupValue(value);
+  return candidates.some((candidate) => {
+    const looseCandidate = normalizeLooseLookupValue(candidate);
+    return Boolean(looseCandidate && (looseCandidate === loose || looseCandidate.includes(loose) || loose.includes(looseCandidate)));
+  });
 };
 
 export function localizedSort<T extends { name: LocalizedName }>(options: T[], locale: LocaleCode): T[] {

@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Plus, Search } from "lucide-react";
+import { CRMAccountDetailPage } from "./crm-account-detail-page";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { crmAccountListOptions, crmKeys } from "@multica/core/crm/queries";
@@ -21,6 +22,7 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
+import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -231,6 +233,7 @@ export function CRMPage() {
   const [followUpBucket, setFollowUpBucket] = useState<CRMAccountFollowUpBucket | "">(() => (searchParams.get("follow_up") as CRMAccountFollowUpBucket | null) ?? (searchParams.get("follow_up_bucket") as CRMAccountFollowUpBucket | null) ?? "");
   const [sort, setSort] = useState<CRMAccountSort>(() => (searchParams.get("sort") as CRMAccountSort | null) ?? "name");
   const [createOpen, setCreateOpen] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [form, setForm] = useState<AccountFormState>(() => blankAccountForm());
 
   const accountListParams = useMemo<ListCRMAccountsParams>(() => ({
@@ -390,8 +393,8 @@ export function CRMPage() {
                 {sortedAccounts.map((account) => (
                   <TableRow
                     key={account.id}
-                    className="cursor-pointer"
-                    onClick={() => navigation.push(paths.customerDetail(account.id))}
+                    className={`cursor-pointer ${selectedAccountId === account.id ? "bg-muted/60" : ""}`}
+                    onClick={() => setSelectedAccountId((current) => current === account.id ? null : account.id)}
                   >
                     <TableCell className="font-medium">{account.name}</TableCell>
                     <TableCell><AccountTypeLabel type={account.account_type} t={t} /></TableCell>
@@ -407,6 +410,12 @@ export function CRMPage() {
           )}
         </section>
       </div>
+
+      <Sheet open={Boolean(selectedAccountId)} onOpenChange={(open) => { if (!open) setSelectedAccountId(null); }}>
+        <SheetContent side="right" className="w-[min(1120px,92vw)] max-w-none overflow-y-auto p-0 sm:max-w-none">
+          {selectedAccountId && <CRMAccountDetailPage accountId={selectedAccountId} />}
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-3xl">
