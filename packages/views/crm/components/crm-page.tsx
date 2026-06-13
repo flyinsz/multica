@@ -308,7 +308,7 @@ export function CRMPage() {
         </Button>
       </PageHeader>
 
-      <div className="space-y-4 p-5">
+      <div className="min-w-0 space-y-4 overflow-x-hidden p-5">
         <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_repeat(8,minmax(130px,160px))]">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -368,7 +368,7 @@ export function CRMPage() {
           </select>
         </div>
 
-        <section className="rounded-lg border bg-card">
+        <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
           {isLoading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
@@ -376,6 +376,7 @@ export function CRMPage() {
           ) : sortedAccounts.length === 0 ? (
             <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.customers.empty)}</div>
           ) : (
+            <div className="min-w-0 overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -408,8 +409,8 @@ export function CRMPage() {
                       {expanded && (
                         <TableRow className="bg-muted/30 hover:bg-muted/30">
                           <TableCell colSpan={7} className="p-0">
-                            <div className="max-h-[72vh] overflow-y-auto border-y bg-background shadow-inner animate-in slide-in-from-top-2 duration-200">
-                              <CRMAccountDetailPage accountId={account.id} />
+                            <div className="max-h-[72vh] min-w-0 overflow-x-hidden overflow-y-auto border-y bg-background shadow-inner animate-in slide-in-from-top-2 duration-200">
+                              <CRMAccountDetailPage accountId={account.id} inline />
                             </div>
                           </TableCell>
                         </TableRow>
@@ -419,6 +420,7 @@ export function CRMPage() {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </section>
       </div>

@@ -156,12 +156,8 @@ function profileFollowUpValue(profileJson: Record<string, unknown> | undefined) 
   const rec = recommendation && typeof recommendation === "object" && !Array.isArray(recommendation) ? recommendation as Record<string, unknown> : null;
   const rawDate = rec?.next_follow_up_at ?? rec?.date ?? profileJson?.next_follow_up_at;
   const date = typeof rawDate === "string" && rawDate ? new Date(rawDate) : null;
-  const parts = [
-    date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : typeof rawDate === "string" ? rawDate : "",
-    typeof rec?.reason === "string" ? rec.reason : "",
-    typeof rec?.confidence === "string" ? `置信度：${rec.confidence}` : "",
-  ].filter(Boolean);
-  return parts.join(" · ");
+  if (date && !Number.isNaN(date.getTime())) return date.toLocaleString();
+  return typeof rawDate === "string" ? rawDate : "";
 }
 
 function emailSummaryText(item: { snippet?: string | null; subject?: string | null }) {
@@ -314,9 +310,9 @@ function ChannelLabel({ channel, t }: { channel: string; t: Translation }) {
 
 function FieldRow({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="rounded-md border bg-background/50 p-3">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm">{value || "—"}</div>
+    <div className="min-w-0 overflow-hidden rounded-md border bg-background/50 p-3">
+      <div className="break-words text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 whitespace-pre-wrap break-words text-sm">{value || "—"}</div>
     </div>
   );
 }
@@ -466,7 +462,7 @@ function toggleProjectId(projectIds: string[], projectId: string) {
     : [...projectIds, projectId];
 }
 
-export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
+export function CRMAccountDetailPage({ accountId, inline = false }: { accountId: string; inline?: boolean }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const navigation = useNavigation();
@@ -728,50 +724,52 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b px-5 py-4">
-        <nav className="mb-3 flex items-center gap-1 text-xs" aria-label="Breadcrumb">
-          <button
-            type="button"
-            className="rounded px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => navigation.push(paths.customers())}
-          >
-            {t(($) => $.customers.title)}
-          </button>
-          <ChevronRight className="size-3 text-muted-foreground/60" />
-          <span className="max-w-[24rem] truncate px-1.5 py-1 font-medium text-foreground">{account.name}</span>
-        </nav>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Building2 className="size-4 text-muted-foreground" />
-              <h1 className="truncate text-sm font-medium">{account.name}</h1>
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-                <AccountStatusLabel status={account.status} t={t} />
-              </span>
+    <div className="flex h-full min-w-0 flex-col overflow-x-hidden">
+      {!inline && (
+        <div className="shrink-0 border-b px-5 py-4">
+          <nav className="mb-3 flex items-center gap-1 text-xs" aria-label="Breadcrumb">
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => navigation.push(paths.customers())}
+            >
+              {t(($) => $.customers.title)}
+            </button>
+            <ChevronRight className="size-3 text-muted-foreground/60" />
+            <span className="max-w-[24rem] truncate px-1.5 py-1 font-medium text-foreground">{account.name}</span>
+          </nav>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Building2 className="size-4 text-muted-foreground" />
+                <h1 className="truncate text-sm font-medium">{account.name}</h1>
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
+                  <AccountStatusLabel status={account.status} t={t} />
+                </span>
+              </div>
+              <p className="mt-1 break-words text-xs text-muted-foreground">
+                {[account.website, countryName(account.country_code || account.country_name || account.country, locale), account.region, account.industry].filter(Boolean).join(" · ") || t(($) => $.customers.basic_profile)}
+              </p>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {[account.website, countryName(account.country_code || account.country_name || account.country, locale), account.region, account.industry].filter(Boolean).join(" · ") || t(($) => $.customers.basic_profile)}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <Button size="sm" variant="outline" onClick={async () => {
                 const next = accountToForm(account);
                 next.regionCode = await findRegionCode(next.countryCode, account.region);
                 next.cityCode = await findCityCode(next.countryCode, next.regionCode, account.city);
                 setAccountForm(next);
               }}>
-              <Pencil className="mr-1 size-4" /> {t(($) => $.actions.edit)}
-            </Button>
-            <Button size="sm" variant="outline" disabled={deleteAccount.isPending} onClick={() => window.confirm(t(($) => $.customers.delete_confirm)) && deleteAccount.mutate()}>
-              <Trash2 className="mr-1 size-4" /> {t(($) => $.actions.delete)}
-            </Button>
+                <Pencil className="mr-1 size-4" /> {t(($) => $.actions.edit)}
+              </Button>
+              <Button size="sm" variant="outline" disabled={deleteAccount.isPending} onClick={() => window.confirm(t(($) => $.customers.delete_confirm)) && deleteAccount.mutate()}>
+                <Trash2 className="mr-1 size-4" /> {t(($) => $.actions.delete)}
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <Tabs defaultValue="overview" className="min-h-0 flex-1 gap-0">
-        <div className="border-b px-6 py-3">
+        <div className="sticky top-0 z-10 shrink-0 border-b bg-background px-6 py-3">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
@@ -782,7 +780,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
           </TabsList>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-6">
           <TabsContent value="overview" className="space-y-6">
             <section className="rounded-lg border bg-card p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -817,12 +815,13 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 <Plus className="mr-1 size-4" /> {t(($) => $.contacts.add)}
               </Button>
             </div>
-            <section className="rounded-lg border bg-card">
+            <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
               {contactsLoading ? (
                 <div className="space-y-2 p-4"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>
               ) : contacts.length === 0 ? (
                 <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.contacts.empty)}</div>
               ) : (
+                <div className="min-w-0 overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -850,6 +849,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </section>
           </TabsContent>
@@ -969,7 +969,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                           <Badge variant={item.direction === "outbound" ? "secondary" : "default"}>{item.direction === "outbound" ? "发件箱" : "收件箱"}</Badge>
                         </div>
                         <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{emailSummaryText(item) || "—"}</div>
-                        <div className="mt-2 text-xs text-muted-foreground">{[item.mailbox, sender, when ? new Date(when).toLocaleString() : "", item.thread_message_count ? t(($) => $.common.count_messages, { count: item.thread_message_count }) : null].filter(Boolean).join(" · ")}</div>
+                        <div className="mt-2 break-words text-xs text-muted-foreground">{[item.mailbox, sender, when ? new Date(when).toLocaleString() : "", item.thread_message_count ? t(($) => $.common.count_messages, { count: item.thread_message_count }) : null].filter(Boolean).join(" · ")}</div>
                       </button>
                     );
                   })}
@@ -1002,7 +1002,7 @@ export function CRMAccountDetailPage({ accountId }: { accountId: string }) {
                 <Textarea className="mt-3 min-h-24" value={noteForm.body} onChange={(event) => setNoteForm((current) => ({ ...current, body: event.target.value }))} placeholder={t(($) => $.notes.placeholder)} />
                 <div className="mt-2 flex justify-end"><Button size="sm" disabled={!noteForm.body.trim() || createNote.isPending} onClick={() => createNote.mutate()}><Plus className="mr-1 size-4" /> {t(($) => $.notes.add)}</Button></div>
               </div>
-              {notesLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : notes.length === 0 ? <div className="p-8 text-center text-sm text-muted-foreground">{t(($) => $.notes.empty)}</div> : <div className="divide-y">{notes.map((note) => <div key={note.id} className="px-4 py-3 text-sm"><div className="font-medium">{note.subject || t(($) => $.notes.untitled)}</div><div className="mt-1 whitespace-pre-wrap">{note.body}</div><div className="mt-2 text-xs text-muted-foreground"><ChannelLabel channel={note.channel} t={t} /> · {t(($) => $.directions[note.direction])} · {new Date(note.occurred_at).toLocaleString()}</div></div>)}</div>}
+              {notesLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : notes.length === 0 ? <div className="p-8 text-center text-sm text-muted-foreground">{t(($) => $.notes.empty)}</div> : <div className="divide-y">{notes.map((note) => <div key={note.id} className="px-4 py-3 text-sm"><div className="font-medium">{note.subject || t(($) => $.notes.untitled)}</div><div className="mt-1 whitespace-pre-wrap break-words">{note.body}</div><div className="mt-2 text-xs text-muted-foreground"><ChannelLabel channel={note.channel} t={t} /> · {t(($) => $.directions[note.direction])} · {new Date(note.occurred_at).toLocaleString()}</div></div>)}</div>}
             </section>
           </TabsContent>
         </div>
