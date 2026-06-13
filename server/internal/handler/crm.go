@@ -4197,9 +4197,27 @@ func (h *Handler) syncCRMCustomerAliases(ctx context.Context, workspaceID, accou
 			}
 		}
 	}
-	for _, alias := range uniqueCRMRecipientKeywords(aliases) {
+	for _, alias := range uniqueCRMStrings(aliases) {
 		h.upsertCRMCustomerAlias(ctx, workspaceID, accountID, pgtype.UUID{}, alias, "ai_extracted", 55, "profile", pgtype.UUID{})
 	}
+}
+
+func uniqueCRMStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (h *Handler) upsertCRMCustomerAlias(ctx context.Context, workspaceID, accountID, contactID pgtype.UUID, alias, aliasType string, weight int, sourceType string, sourceID pgtype.UUID) {
