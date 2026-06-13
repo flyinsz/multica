@@ -49,7 +49,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components
 import { useT } from "../../i18n";
 import { CreateProjectModal } from "../../modals/create-project";
 import type crmResources from "../../locales/en/crm.json";
-import { COUNTRY_OPTIONS, countryByCode, findCityCode, findRegionCode, loadCityOptions, loadRegionOptions, localizedName, localizedSort, normalizeLocale, useLocationSelection } from "../geo";
+import { COUNTRY_OPTIONS, countryByCode, findCityCode, findCountryCode, findRegionCode, loadCityOptions, loadRegionOptions, localizedName, localizedSort, normalizeLocale, useLocationSelection } from "../geo";
 import { appendTag, CRM_INDUSTRY_OPTIONS, industryLabel, optionLabel, splitTags, subIndustryOptions } from "../options";
 import { crmApi } from "@multica/core/crm/api";
 import { CRMContactDetailDialog } from "./crm-contact-detail-dialog";
@@ -228,7 +228,7 @@ function ProfileTextarea({ label, value, onChange }: { label: string; value: str
 }
 
 function accountToForm(account: CRMAccount): AccountFormState {
-  const country = countryByCode(account.country_code || account.country);
+  const countryCode = findCountryCode(account.country_code || account.country || account.country_name);
 
   return {
     name: account.name,
@@ -242,9 +242,9 @@ function accountToForm(account: CRMAccount): AccountFormState {
     ownerMemberID: account.owner_member_id ?? "",
     ownerAgentID: account.owner_agent_id ?? "",
     website: account.website ?? "",
-    countryCode: country?.code ?? account.country_code ?? account.country ?? "",
-    regionCode: account.region ?? "",
-    cityCode: account.city ?? "",
+    countryCode,
+    regionCode: "",
+    cityCode: "",
     industry: account.industry ?? "",
     subIndustry: account.sub_industry ?? "",
     annualRevenue: account.annual_revenue ?? "",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Plus, Search } from "lucide-react";
 import { CRMAccountDetailPage } from "./crm-account-detail-page";
@@ -22,7 +22,6 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
-import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -390,32 +389,40 @@ export function CRMPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedAccounts.map((account) => (
-                  <TableRow
-                    key={account.id}
-                    className={`cursor-pointer ${selectedAccountId === account.id ? "bg-muted/60" : ""}`}
-                    onClick={() => setSelectedAccountId((current) => current === account.id ? null : account.id)}
-                  >
-                    <TableCell className="font-medium">{account.name}</TableCell>
-                    <TableCell><AccountTypeLabel type={account.account_type} t={t} /></TableCell>
-                    <TableCell><AccountStatusLabel status={account.status} t={t} /></TableCell>
-                    <TableCell>{account.country_code ? localizedName(countryByCode(account.country_code)?.name ?? { en: account.country_name || account.country_code, zh: account.country_name || account.country_code }, locale) : account.country_name || account.country || "—"}</TableCell>
-                    <TableCell>{[account.industry, account.sub_industry].filter(Boolean).join(" · ") || "—"}</TableCell>
-                    <TableCell>{account.contact_count}</TableCell>
-                    <TableCell>{account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : "—"}</TableCell>
-                  </TableRow>
-                ))}
+                {sortedAccounts.map((account) => {
+                  const expanded = selectedAccountId === account.id;
+                  return (
+                    <Fragment key={account.id}>
+                      <TableRow
+                        className={`cursor-pointer ${expanded ? "bg-muted/60" : ""}`}
+                        onClick={() => setSelectedAccountId((current) => current === account.id ? null : account.id)}
+                      >
+                        <TableCell className="font-medium">{account.name}</TableCell>
+                        <TableCell><AccountTypeLabel type={account.account_type} t={t} /></TableCell>
+                        <TableCell><AccountStatusLabel status={account.status} t={t} /></TableCell>
+                        <TableCell>{account.country_code ? localizedName(countryByCode(account.country_code)?.name ?? { en: account.country_name || account.country_code, zh: account.country_name || account.country_code }, locale) : account.country_name || account.country || "—"}</TableCell>
+                        <TableCell>{[account.industry, account.sub_industry].filter(Boolean).join(" · ") || "—"}</TableCell>
+                        <TableCell>{account.contact_count}</TableCell>
+                        <TableCell>{account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : "—"}</TableCell>
+                      </TableRow>
+                      {expanded && (
+                        <TableRow className="bg-muted/30 hover:bg-muted/30">
+                          <TableCell colSpan={7} className="p-0">
+                            <div className="max-h-[72vh] overflow-y-auto border-y bg-background shadow-inner animate-in slide-in-from-top-2 duration-200">
+                              <CRMAccountDetailPage accountId={account.id} />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
         </section>
       </div>
 
-      <Sheet open={Boolean(selectedAccountId)} onOpenChange={(open) => { if (!open) setSelectedAccountId(null); }}>
-        <SheetContent side="right" className="w-[min(1120px,92vw)] max-w-none overflow-y-auto p-0 sm:max-w-none">
-          {selectedAccountId && <CRMAccountDetailPage accountId={selectedAccountId} />}
-        </SheetContent>
-      </Sheet>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-3xl">

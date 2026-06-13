@@ -122,10 +122,6 @@ export const COUNTRY_OPTIONS: CountryOption[] = localizedSort(countryData.map((c
 
 export const normalizeLocale = (language?: string): LocaleCode => language?.startsWith("zh") ? "zh-Hans" : "en";
 export const localizedName = (name: LocalizedName, locale: LocaleCode) => locale === "zh-Hans" ? name.zh : name.en;
-export const countryByCode = (code?: string | null) => COUNTRY_OPTIONS.find((country) => country.code === code);
-export const regionByCode = (country: CountryOption | undefined, code?: string | null) => country?.regions.find((region) => region.code === code);
-export const cityByCode = (region: RegionOption | undefined, code?: string | null) => region?.cities.find((city) => city.code === code);
-
 const normalizeLookupValue = (value?: string | null) => value?.trim().toLocaleLowerCase() ?? "";
 const normalizeLooseLookupValue = (value?: string | null) => normalizeLookupValue(value)
   .replace(/[\s·,，.。()（）\[\]【】_-]+/g, "")
@@ -141,6 +137,16 @@ const optionMatches = (option: { code: string; name: LocalizedName }, value?: st
     return Boolean(looseCandidate && (looseCandidate === loose || looseCandidate.includes(loose) || loose.includes(looseCandidate)));
   });
 };
+
+export const countryByCode = (code?: string | null) => COUNTRY_OPTIONS.find((country) => optionMatches(country, code));
+export const regionByCode = (country: CountryOption | undefined, code?: string | null) => country?.regions.find((region) => optionMatches(region, code));
+export const cityByCode = (region: RegionOption | undefined, code?: string | null) => region?.cities.find((city) => optionMatches(city, code));
+
+export function findCountryCode(country?: string | null): string {
+  if (!country) return "";
+  return COUNTRY_OPTIONS.find((option) => optionMatches(option, country))?.code ?? "";
+}
+
 
 export function localizedSort<T extends { name: LocalizedName }>(options: T[], locale: LocaleCode): T[] {
   const collator = locale === "zh-Hans" ? pinyinCollator : englishCollator;
