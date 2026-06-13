@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -5753,19 +5752,6 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	if mode == "" {
 		mode = "reply"
 	}
-	if mode == "recipient_lookup" {
-		keywords := extractCRMRecipientLookupKeywords(req.Prompt)
-		writeJSON(w, http.StatusOK, CRMEmailDraftAISuggestResponse{
-			Chinese:          "本地解析收件人关键词：" + strings.Join(keywords, " "),
-			CustomerLanguage: "",
-			CustomerReply:    "",
-			ToEmails:         keywords,
-			CcEmails:         []string{},
-			Subject:          strings.Join(keywords, " "),
-			Source:           "local-recipient-parser",
-		})
-		return
-	}
 	baseURL, apiKey, model, source := h.resolveCRMProfileAgentLLMConfig(ctx)
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	apiKey = strings.TrimSpace(apiKey)
@@ -5819,7 +5805,7 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, parsed)
 		return
 	}
-	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 优先使用结构化 Customer Wiki/Profile，当前线程只作为当前语境；3) 无客户资料/历史时只基于当前邮件和用户要求；4) 中文参考用于内部查看；5) customer_reply 必须是客户语言，可直接发送；6) 正式、简洁、商务；7) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；8) mode=new 时主动推断收件人和主题，无法确定则留空；9) mode=reply/reply-all 时结合共享AI上下文与当前邮件回复；10) 不要在 customer_reply 中添加邮箱签名、签名占位符、Best regards、Regards、姓名/公司署名，因为正文编辑框已经预先插入默认签名。\n\n模式：" + mode + "\n" + aiContext.String() + "\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
+	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 优先使用结构化 Customer Wiki/Profile，当前线程只作为当前语境；3) 无客户资料/历史时只基于当前邮件和用户要求；4) 中文参考用于内部查看；5) customer_reply 必须是客户语言，可直接发送；6) 正式、简洁、商务；7) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；8) mode=new 时只使用明确提供的候选收件人或@mention引用客户/联系人，不要从自由文本猜收件人；主题可按要求生成，无法确定则留空；9) mode=reply/reply-all 时结合共享AI上下文与当前邮件回复；10) 不要在 customer_reply 中添加邮箱签名、签名占位符、Best regards、Regards、姓名/公司署名，因为正文编辑框已经预先插入默认签名。\n\n模式：" + mode + "\n" + aiContext.String() + "\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
 	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
 	body, _ := json.Marshal(payload)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
@@ -6032,69 +6018,6 @@ func crmProfileAnyText(value any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
 	}
-}
-
-func extractCRMRecipientLookupKeywords(prompt string) []string {
-	text := strings.TrimSpace(prompt)
-	if text == "" {
-		return []string{}
-	}
-	stopPhrases := []string{"帮我", "请", "发邮件", "写邮件", "邮件", "发", "写", "给", "问一下", "问下", "询问", "近况", "情况", "需求", "报价", "收件人", "关键词"}
-	recipientPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(?:发邮件|写邮件|邮件)\s*(?:给|to)\s*([A-Z0-9._%+\-@]+)`),
-		regexp.MustCompile(`(?i)(?:给|to)\s*([A-Z0-9._%+\-@]+)\s*(?:发邮件|写邮件|邮件|问一下|问下|询问)`),
-		regexp.MustCompile(`(?i)(?:给|to)\s*([A-Z0-9._%+\-@]+)`),
-	}
-	candidates := []string{}
-	for _, pattern := range recipientPatterns {
-		matches := pattern.FindAllStringSubmatch(text, -1)
-		for _, match := range matches {
-			if len(match) > 1 {
-				candidates = append(candidates, strings.Trim(match[1], "._-+，,。；;：:！!？?"))
-			}
-		}
-		if len(candidates) > 0 {
-			return uniqueCRMRecipientKeywords(candidates)
-		}
-	}
-	lower := strings.ToLower(text)
-	for _, field := range strings.FieldsFunc(lower, func(r rune) bool {
-		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '@' || r == '.' || r == '_' || r == '-' || r == '+')
-	}) {
-		field = strings.Trim(field, "._-+")
-		if len(field) < 2 {
-			continue
-		}
-		skip := false
-		for _, stop := range stopPhrases {
-			if field == strings.ToLower(stop) {
-				skip = true
-				break
-			}
-		}
-		if !skip {
-			candidates = append(candidates, field)
-		}
-	}
-	return uniqueCRMRecipientKeywords(candidates)
-}
-
-func uniqueCRMRecipientKeywords(values []string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		key := strings.ToLower(value)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, value)
-	}
-	return out
 }
 
 func ptrString(v *string) string {

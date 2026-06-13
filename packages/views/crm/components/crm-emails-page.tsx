@@ -32,6 +32,7 @@ import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { crmApi } from "@multica/core/crm/api";
 import { CRMContactDetailDialog } from "./crm-contact-detail-dialog";
+import { ContentEditor, type ContentEditorRef } from "../../editor/content-editor";
 
 type EmailFolderKey = "inbox" | "sent" | "drafts" | "spam" | "archived" | "starred" | "unlinked" | "trash";
 type EmailQuickFilter = "all" | "unread" | "linked" | "unlinked";
@@ -51,6 +52,7 @@ type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[]; localCacheKey?: string; source?: "local" | "server" };
 type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
 type AIAssistantTurn = { id: string; role: "user" | "assistant" | "system"; content: string; chinese?: string; language?: string };
+type CRMEntityMention = { type: "crm-account" | "crm-contact"; id: string; label: string };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string; signature: string };
 
@@ -104,6 +106,15 @@ function crmSearchScore(values: unknown[], terms: string[]) {
   }
   if (!score && terms.some((term) => joined.includes(term))) score += 10;
   return { score, reasons: Array.from(new Set(reasons)).slice(0, 3) };
+}
+
+function extractCRMEntityMentions(markdown: string): CRMEntityMention[] {
+  const mentions: CRMEntityMention[] = [];
+  const re = /\[([^\]]+)\]\(mention:\/\/(crm-account|crm-contact)\/([^\)]+)\)/g;
+  for (const match of markdown.matchAll(re)) {
+    mentions.push({ type: match[2] as CRMEntityMention["type"], id: decodeURIComponent(match[3] ?? ""), label: (match[1] ?? "").replace(/^@/, "") });
+  }
+  return mentions;
 }
 
 function emailHTMLBody(message: { body_html?: string | null; body_text?: string | null }) {
@@ -206,19 +217,10 @@ function splitEmailList(value?: string | null) {
   return (value ?? "").split(/[;,\n]/).map((item) => item.trim()).filter(Boolean);
 }
 
-function allEmailsLookValid(value?: string | null) {
-  const emails = splitEmailList(value);
-  return emails.length > 0 && emails.every((email) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
-}
-
 function appendMailboxSignature(body: string, signature?: string | null) {
   const sig = (signature ?? "").trim();
   if (!sig) return body;
   return `${body.replace(/\s+$/g, "")}\n\n${sig}`;
-}
-
-function extractEmails(value?: string | null) {
-  return Array.from(new Set((value ?? "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []));
 }
 
 function AssociationChip({ icon, label, value, onClick }: { icon: ReactNode; label: string; value?: string | null; onClick?: () => void }) {
@@ -617,6 +619,7 @@ export function CRMEmailsPage() {
   const [aiAssistantTurns, setAIAssistantTurns] = useState<AIAssistantTurn[]>([]);
   const [acceptedAITurnIds, setAcceptedAITurnIds] = useState<Set<string>>(() => new Set());
   const [aiDraftDialog, setAIDraftDialog] = useState<AIDraftDialogState>(null);
+  const aiDraftEditorRef = useRef<ContentEditorRef | null>(null);
   const initialComposeHandledRef = useRef(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [folderSidebarExpanded, setFolderSidebarExpanded] = useState(false);
@@ -1489,52 +1492,35 @@ export function CRMEmailsPage() {
   });
 
 
-  const aiDraftPayload = (draft = composeDraft) => ({
+  const aiDraftPayload = (draft = composeDraft, prompt = aiDraftDialog?.prompt.trim() ?? "") => ({
     thread_id: draft?.threadId ?? null,
     account_id: draft?.accountId || null,
     contact_id: draft?.contactId || null,
     to_emails: splitEmailList(draft?.to),
     subject: draft?.subject ?? selectedThread?.subject ?? "",
-    prompt: aiDraftDialog?.prompt.trim() ?? "",
+    prompt,
     mode: aiDraftDialog?.mode ?? "reply",
   });
 
-  const ensureAIDraftRecipients = () => {
+  const ensureAIDraftRecipients = (promptMarkdown = aiDraftDialog?.prompt.trim() ?? "") => {
     if (!composeDraft || !aiDraftDialog) return null;
-    const prompt = aiDraftDialog.prompt.trim();
-    const explicitEmails = extractEmails(prompt);
-    if (explicitEmails.length > 0) {
-      const emailSet = new Set([...splitEmailList(composeDraft.to), ...explicitEmails]);
-      const matchedContact = [...contacts, ...composeAccountContacts].find((contact) => contact.email && explicitEmails.some((email) => email.toLowerCase() === String(contact.email).toLowerCase()));
-      const resolvedDraft = {
-        ...composeDraft,
-        to: Array.from(emailSet).join(", "),
-        accountId: composeDraft.accountId || selectedThread?.account_id || "",
-        contactId: composeDraft.contactId || matchedContact?.id || selectedThread?.contact_id || "",
-      };
-      setComposeDraft(resolvedDraft);
-      return aiDraftPayload(resolvedDraft);
-    }
-    if (allEmailsLookValid(composeDraft.to)) return aiDraftPayload(composeDraft);
-    if (aiDraftDialog.mode !== "new" && allEmailsLookValid(composeDraft.to || selectedContact?.email || "")) return aiDraftPayload({ ...composeDraft, to: composeDraft.to || selectedContact?.email || "" });
-
-    recipientLookup.mutate();
-    return null;
+    const mentions = extractCRMEntityMentions(promptMarkdown);
+    const contactMention = mentions.find((mention) => mention.type === "crm-contact");
+    const accountMention = mentions.find((mention) => mention.type === "crm-account");
+    const mentionedContact = contactMention ? [...contacts, ...composeAccountContacts, ...composeAllContacts].find((contact) => contact.id === contactMention.id) : null;
+    const mentionedAccountId = accountMention?.id || mentionedContact?.account_id || "";
+    const resolvedDraft = {
+      ...composeDraft,
+      accountId: mentionedAccountId || composeDraft.accountId || selectedThread?.account_id || "",
+      contactId: contactMention?.id || composeDraft.contactId || selectedThread?.contact_id || "",
+      to: mentionedContact?.email || composeDraft.to || (aiDraftDialog.mode !== "new" ? selectedContact?.email || "" : ""),
+    };
+    setComposeDraft(resolvedDraft);
+    const referenceLines = mentions.length
+      ? "\n\n明确CRM引用（来自@mention，优先级最高）：\n" + mentions.map((mention) => `- ${mention.type === "crm-contact" ? "联系人" : "客户"}: ${mention.label} (${mention.id})`).join("\n")
+      : "";
+    return aiDraftPayload(resolvedDraft, `${promptMarkdown}${referenceLines}`.trim());
   };
-
-  const recipientLookup = useMutation({
-    mutationFn: () => crmApi.suggestCRMEmailDraftReply({ ...aiDraftPayload(composeDraft), mode: "recipient_lookup" }),
-    onSuccess: (data: any) => {
-      const localTerms = Array.isArray(data.to_emails) ? data.to_emails.filter(Boolean).join(" ").trim() : "";
-      const keywords = localTerms || String(data.subject || "").trim();
-      setComposeAccountSearch(keywords || aiDraftDialog?.prompt.trim() || "");
-      setComposeRecipientPickerOpen(true);
-    },
-    onError: () => {
-      setComposeAccountSearch(aiDraftDialog?.prompt.trim() || "");
-      setComposeRecipientPickerOpen(true);
-    },
-  });
 
   const createAIDraft = useMutation({
     mutationFn: (payload?: ReturnType<typeof aiDraftPayload>) => crmApi.suggestCRMEmailDraftReply(payload ?? aiDraftPayload()),
@@ -1562,7 +1548,7 @@ export function CRMEmailsPage() {
     setComposeRecipientPickerOpen(false);
     if (aiDraftDialog?.prompt.trim()) {
       setAIReplyPrompt(aiDraftDialog.prompt.trim());
-      createAIDraft.mutate(aiDraftPayload(resolvedDraft));
+      createAIDraft.mutate(aiDraftPayload(resolvedDraft, aiDraftDialog.prompt.trim()));
     }
   };
 
@@ -2501,15 +2487,20 @@ export function CRMEmailsPage() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{aiDraftDialog?.mode === "new" ? "AI 写邮件" : "AI 创建回复草稿"}</DialogTitle>
-            <DialogDescription>输入你的邮件要求。Agent 会识别收件人、客户上下文和邮件意图；不明确时再让你选择联系人。</DialogDescription>
+            <DialogDescription>输入邮件要求，用 @ 精确选择客户或联系人；系统不再从文本里自动猜收件人。</DialogDescription>
           </DialogHeader>
-          <textarea
-            className="min-h-36 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            placeholder="例如：给客户说明交期延后一周，并表达歉意；如果要求里有邮箱会自动填入收件人。"
-            value={aiDraftDialog?.prompt ?? ""}
-            disabled={createAIDraft.isPending}
-            onChange={(event) => setAIDraftDialog((current) => current ? { ...current, prompt: event.target.value } : current)}
-          />
+          <div className="min-h-36 rounded-md border bg-background text-sm">
+            <ContentEditor
+              key={aiDraftDialog ? aiDraftDialog.mode : "ai-draft"}
+              ref={aiDraftEditorRef}
+              defaultValue={aiDraftDialog?.prompt ?? ""}
+              placeholder="例如：@客户 或 @联系人，说明交期延后一周，并表达歉意。"
+              onUpdate={(markdown) => setAIDraftDialog((current) => current ? { ...current, prompt: markdown } : current)}
+              debounceMs={100}
+              mentionMode="default"
+              showBubbleMenu={false}
+            />
+          </div>
           {createAIDraft.isPending ? (
             <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
               <RefreshCw className="size-4 animate-spin" />
@@ -2519,7 +2510,7 @@ export function CRMEmailsPage() {
           {createAIDraft.isError ? <p className="text-sm text-destructive">AI 草稿生成失败，请稍后重试。</p> : null}
           <DialogFooter>
             <Button variant="outline" disabled={createAIDraft.isPending} onClick={() => setAIDraftDialog(null)}>取消</Button>
-            <Button disabled={createAIDraft.isPending || !composeDraft || !aiDraftDialog?.prompt.trim()} onClick={() => { if (aiDraftDialog?.prompt.trim()) setAIReplyPrompt(aiDraftDialog.prompt.trim()); const payload = ensureAIDraftRecipients(); if (payload) createAIDraft.mutate(payload); }}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
+            <Button disabled={createAIDraft.isPending || !composeDraft || !aiDraftDialog?.prompt.trim()} onClick={() => { const prompt = aiDraftEditorRef.current?.getMarkdown().trim() || aiDraftDialog?.prompt.trim() || ""; if (prompt) setAIReplyPrompt(prompt); const payload = ensureAIDraftRecipients(prompt); if (payload) createAIDraft.mutate(payload); }}>{createAIDraft.isPending ? "生成中…" : "创建"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
