@@ -85,7 +85,7 @@ func crmLocationOptions(raw []crmLocationName) []crmLocationOption {
 func (h *Handler) ListCRMLocationCountries(w http.ResponseWriter, r *http.Request) {
 	store, err := loadCRMLocations()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "crm_locations_unavailable", err.Error())
+		writeError(w, http.StatusInternalServerError, "crm_locations_unavailable: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"countries": crmLocationOptions(store.Countries)})
@@ -99,7 +99,7 @@ func (h *Handler) ListCRMLocationRegions(w http.ResponseWriter, r *http.Request)
 	}
 	store, err := loadCRMLocations()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "crm_locations_unavailable", err.Error())
+		writeError(w, http.StatusInternalServerError, "crm_locations_unavailable: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"regions": crmLocationOptions(store.Regions[country])})
@@ -114,7 +114,7 @@ func (h *Handler) ListCRMLocationCities(w http.ResponseWriter, r *http.Request) 
 	}
 	store, err := loadCRMLocations()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "crm_locations_unavailable", err.Error())
+		writeError(w, http.StatusInternalServerError, "crm_locations_unavailable: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cities": crmLocationOptions(store.Cities[country+":"+region])})
