@@ -8,6 +8,11 @@ import (
 func registerCRMRoutes(r chi.Router, h *handler.Handler) {
 	// CRM
 	r.Route("/api/crm", func(r chi.Router) {
+		r.Route("/locations", func(r chi.Router) {
+			r.Get("/countries", h.ListCRMLocationCountries)
+			r.Get("/regions", h.ListCRMLocationRegions)
+			r.Get("/cities", h.ListCRMLocationCities)
+		})
 		r.Get("/ai-settings", h.ListCRMAISettings)
 		r.Get("/ai-history", h.ListCRMAIHistory)
 		r.Put("/ai-settings/{automationKey}", h.UpdateCRMAISetting)

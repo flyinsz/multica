@@ -12,6 +12,23 @@ import type { CreateCRMAccountRequest, CreateCRMCommunicationNoteRequest, Create
 import type { Issue, ProjectResource } from "../types";
 
 export const crmApi = {
+  async listCRMLocationCountries(): Promise<{ countries: Array<{ code: string; name: { en: string; zh: string } }> }> {
+    return api.request("/api/crm/locations/countries");
+  },
+
+  async listCRMLocationRegions(country: string): Promise<{ regions: Array<{ code: string; name: { en: string; zh: string } }> }> {
+    const query = country ? `?country=${encodeURIComponent(country)}` : "";
+    return api.request(`/api/crm/locations/regions${query}`);
+  },
+
+  async listCRMLocationCities(country: string, region: string): Promise<{ cities: Array<{ code: string; name: { en: string; zh: string } }> }> {
+    const search = new URLSearchParams();
+    if (country) search.set("country", country);
+    if (region) search.set("region", region);
+    const query = search.toString();
+    return api.request(`/api/crm/locations/cities${query ? `?${query}` : ""}`);
+  },
+
   async listCRMAccounts(params?: {
     status?: string;
     search?: string;

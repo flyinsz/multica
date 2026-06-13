@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import countriesData from "@countrystatecity/countries/data/countries.json";
-import { getCitiesOfState, getStatesOfCountry } from "@countrystatecity/countries";
+import { crmApi } from "@multica/core/crm/api";
 
 export type LocaleCode = "en" | "zh-Hans";
 
@@ -43,7 +43,7 @@ type StateData = {
 };
 
 type CityData = {
-  id?: number;
+  id?: number | string;
   name: string;
   native?: string | null;
   translations?: TranslationMap;
@@ -182,7 +182,12 @@ export async function loadRegionOptions(countryCode: string, locale: LocaleCode 
   if (!countryCode) return [];
   let promise = statesCache.get(countryCode);
   if (!promise) {
-    promise = getStatesOfCountry(countryCode) as Promise<StateData[]>;
+    promise = crmApi.listCRMLocationRegions(countryCode).then(({ regions }) => regions.map((region) => ({
+      iso2: region.code,
+      name: region.name.en,
+      native: region.name.zh,
+      translations: { "zh-CN": region.name.zh },
+    })));
     statesCache.set(countryCode, promise);
   }
 
@@ -199,7 +204,12 @@ export async function loadCityOptions(countryCode: string, regionCode: string, l
   const cacheKey = `${countryCode}:${regionCode}`;
   let promise = citiesCache.get(cacheKey);
   if (!promise) {
-    promise = getCitiesOfState(countryCode, regionCode) as Promise<CityData[]>;
+    promise = crmApi.listCRMLocationCities(countryCode, regionCode).then(({ cities }) => cities.map((city) => ({
+      id: city.code,
+      name: city.name.en,
+      native: city.name.zh,
+      translations: { "zh-CN": city.name.zh },
+    })));
     citiesCache.set(cacheKey, promise);
   }
 
