@@ -768,9 +768,9 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
         </div>
       )}
 
-      <Tabs defaultValue="overview" className="min-h-0 flex-1 gap-0">
-        <div className="sticky top-0 z-10 shrink-0 border-b bg-background px-6 py-3">
-          <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+      <Tabs defaultValue="overview" className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
+        <div className="z-10 shrink-0 border-b bg-background px-6 py-3">
+          <TabsList variant="line" className="w-full min-w-0 justify-start overflow-x-auto">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
             <TabsTrigger value="profile">{t(($) => $.tabs.profile)}</TabsTrigger>
@@ -781,7 +781,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
         </div>
 
         <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-6">
-          <TabsContent value="overview" className="space-y-6">
+          <TabsContent value="overview" className="min-w-0 space-y-6">
             <section className="rounded-lg border bg-card p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <FieldRow label={t(($) => $.customers.account_code)} value={account.account_code} />
@@ -809,7 +809,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="contacts" className="space-y-4">
+          <TabsContent value="contacts" className="min-w-0 space-y-4">
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setContactForm(blankContactForm())}>
                 <Plus className="mr-1 size-4" /> {t(($) => $.contacts.add)}
@@ -854,7 +854,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="profile" className="space-y-6">
+          <TabsContent value="profile" className="min-w-0 space-y-6">
             <section className="rounded-lg border bg-card p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -900,7 +900,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="projects" className="grid gap-6 lg:grid-cols-2">
+          <TabsContent value="projects" className="grid min-w-0 gap-6 xl:grid-cols-2">
             <section className="rounded-lg border bg-card p-4">
               <h3 className="text-sm font-medium">{t(($) => $.projects.link_title)}</h3>
               <p className="mt-1 text-xs text-muted-foreground">{t(($) => $.projects.selector_help)}</p>
@@ -925,7 +925,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
                   })}
                 </div>
                 <p className="text-xs text-muted-foreground">{t(($) => $.projects.selected_count, { count: selectedProjectIds.length })}</p>
-                <Button className="w-full" disabled={linkProject.isPending} onClick={openCreateLinkedProject}><Plus className="mr-1 size-4" /> {t(($) => $.projects.create_linked_project)}</Button>
+                <Button className="h-auto w-full min-w-0 whitespace-normal text-wrap" disabled={linkProject.isPending} onClick={openCreateLinkedProject}><Plus className="mr-1 size-4 shrink-0" /> {t(($) => $.projects.create_linked_project)}</Button>
                 {linkProject.isError && <p className="text-xs text-destructive">{t(($) => $.projects.link_error)}</p>}
               </div>
             </section>
@@ -948,28 +948,28 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
                     </div>
                   </div>
                 )}
-                <Button className="w-full" onClick={openCreateFollowUpIssue}>{t(($) => $.projects.create_follow_up)}</Button>
+                <Button className="h-auto w-full min-w-0 whitespace-normal text-wrap" onClick={openCreateFollowUpIssue}>{t(($) => $.projects.create_follow_up)}</Button>
               </div>
             </section>
           </TabsContent>
 
-          <TabsContent value="emails" className="space-y-6">
-            <section className="rounded-lg border bg-card">
+          <TabsContent value="emails" className="min-w-0 space-y-6">
+            <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
               {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : accountEmailItems.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : (
-                <div className="divide-y">
+                <div className="min-w-0 divide-y">
                   {accountEmailItems.map((item: any) => {
                     const threadId = item.thread_id ?? item.id;
                     const folder = item.folder || (item.direction === "outbound" ? "sent" : "inbox");
                     const when = item.received_at || item.sent_at || item.last_message_at || item.updated_at;
                     const sender = item.direction === "outbound" ? (item.to_emails || []).join(", ") : [item.from_name, item.from_email].filter(Boolean).join(" <").replace(/ <$/, "");
                     return (
-                      <button key={item.id} type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => window.open(`${paths.emails()}?thread=${encodeURIComponent(threadId)}&folder=${encodeURIComponent(folder)}`, "_blank", "noopener,noreferrer") }>
-                        <div className="flex items-center justify-between gap-3">
+                      <button key={item.id} type="button" className="block w-full min-w-0 overflow-hidden px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => window.open(`${paths.emails()}?thread=${encodeURIComponent(threadId)}&folder=${encodeURIComponent(folder)}`, "_blank", "noopener,noreferrer") }>
+                        <div className="flex min-w-0 items-center justify-between gap-3">
                           <div className="min-w-0 truncate font-medium">{item.subject || t(($) => $.notes.untitled)}</div>
-                          <Badge variant={item.direction === "outbound" ? "secondary" : "default"}>{item.direction === "outbound" ? "发件箱" : "收件箱"}</Badge>
+                          <Badge variant={item.direction === "outbound" ? "secondary" : "default"} className="shrink-0">{item.direction === "outbound" ? "发件箱" : "收件箱"}</Badge>
                         </div>
                         <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{emailSummaryText(item) || "—"}</div>
-                        <div className="mt-2 break-words text-xs text-muted-foreground">{[item.mailbox, sender, when ? new Date(when).toLocaleString() : "", item.thread_message_count ? t(($) => $.common.count_messages, { count: item.thread_message_count }) : null].filter(Boolean).join(" · ")}</div>
+                        <div className="mt-2 min-w-0 break-all text-xs text-muted-foreground">{[item.mailbox, sender, when ? new Date(when).toLocaleString() : "", item.thread_message_count ? t(($) => $.common.count_messages, { count: item.thread_message_count }) : null].filter(Boolean).join(" · ")}</div>
                       </button>
                     );
                   })}
@@ -978,23 +978,23 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="notes" className="space-y-6">
-            <section className="rounded-lg border bg-card">
+          <TabsContent value="notes" className="min-w-0 space-y-6">
+            <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
               <div className="border-b p-4">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <label className="space-y-1 text-sm">
+                <div className="grid min-w-0 gap-3 md:grid-cols-3">
+                  <label className="min-w-0 space-y-1 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">{t(($) => $.notes.channel)}</span>
-                    <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={noteForm.channel} onChange={(event) => setNoteForm((current) => ({ ...current, channel: event.target.value as CRMCommunicationChannel }))}>
+                    <select className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm" value={noteForm.channel} onChange={(event) => setNoteForm((current) => ({ ...current, channel: event.target.value as CRMCommunicationChannel }))}>
                       {(["manual", "email", "whatsapp", "phone", "meeting", "other"] as CRMCommunicationChannel[]).map((channel) => <option key={channel} value={channel}>{t(($) => $.channels[channel])}</option>)}
                     </select>
                   </label>
-                  <label className="space-y-1 text-sm">
+                  <label className="min-w-0 space-y-1 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">{t(($) => $.notes.direction)}</span>
-                    <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={noteForm.direction} onChange={(event) => setNoteForm((current) => ({ ...current, direction: event.target.value as CRMCommunicationDirection }))}>
+                    <select className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm" value={noteForm.direction} onChange={(event) => setNoteForm((current) => ({ ...current, direction: event.target.value as CRMCommunicationDirection }))}>
                       {(["note", "inbound", "outbound"] as CRMCommunicationDirection[]).map((direction) => <option key={direction} value={direction}>{t(($) => $.directions[direction])}</option>)}
                     </select>
                   </label>
-                  <label className="space-y-1 text-sm">
+                  <label className="min-w-0 space-y-1 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">{t(($) => $.notes.subject)}</span>
                     <Input value={noteForm.subject} onChange={(event) => setNoteForm((current) => ({ ...current, subject: event.target.value }))} placeholder={t(($) => $.notes.subject_placeholder)} />
                   </label>
