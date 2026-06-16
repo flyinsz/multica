@@ -900,12 +900,12 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="projects" className="grid min-w-0 gap-6 xl:grid-cols-2">
-            <section className="rounded-lg border bg-card p-4">
-              <h3 className="text-sm font-medium">{t(($) => $.projects.link_title)}</h3>
-              <p className="mt-1 text-xs text-muted-foreground">{t(($) => $.projects.selector_help)}</p>
+          <TabsContent value="projects" className="grid w-full min-w-0 max-w-full grid-cols-1 gap-6 2xl:grid-cols-2">
+            <section className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-card p-4">
+              <h3 className="min-w-0 break-words text-sm font-medium">{t(($) => $.projects.link_title)}</h3>
+              <p className="mt-1 min-w-0 break-words text-xs text-muted-foreground">{t(($) => $.projects.selector_help)}</p>
               <div className="mt-4 space-y-3">
-                <div className="max-h-56 overflow-y-auto rounded-md border bg-background">
+                <div className="max-h-56 min-w-0 max-w-full overflow-x-hidden overflow-y-auto rounded-md border bg-background">
                   {projects.length === 0 ? (
                     <div className="p-4 text-sm text-muted-foreground">{t(($) => $.projects.empty)}</div>
                   ) : projects.map((project) => {
@@ -914,36 +914,36 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
                       <button
                         key={project.id}
                         type="button"
-                        className="flex w-full items-center gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-muted/60"
+                        className="flex w-full min-w-0 items-center gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-muted/60"
                         onClick={() => handleProjectToggle(project)}
                       >
-                        <Checkbox checked={checked} className="pointer-events-none" aria-label={project.title} />
-                        <span className="min-w-0 flex-1 truncate">{project.title}</span>
-                        {projectLinkedToAccount(project.id, projectResourcesById, accountId) && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t(($) => $.projects.linked)}</span>}
+                        <Checkbox checked={checked} className="pointer-events-none shrink-0" aria-label={project.title} />
+                        <span className="min-w-0 flex-1 break-words">{project.title}</span>
+                        {projectLinkedToAccount(project.id, projectResourcesById, accountId) && <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t(($) => $.projects.linked)}</span>}
                       </button>
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted-foreground">{t(($) => $.projects.selected_count, { count: selectedProjectIds.length })}</p>
+                <p className="min-w-0 break-words text-xs text-muted-foreground">{t(($) => $.projects.selected_count, { count: selectedProjectIds.length })}</p>
                 <Button className="h-auto w-full min-w-0 whitespace-normal text-wrap" disabled={linkProject.isPending} onClick={openCreateLinkedProject}><Plus className="mr-1 size-4 shrink-0" /> {t(($) => $.projects.create_linked_project)}</Button>
                 {linkProject.isError && <p className="text-xs text-destructive">{t(($) => $.projects.link_error)}</p>}
               </div>
             </section>
-            <section className="rounded-lg border bg-card p-4">
-              <h3 className="text-sm font-medium">{t(($) => $.projects.follow_up_title)}</h3>
+            <section className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-card p-4">
+              <h3 className="min-w-0 break-words text-sm font-medium">{t(($) => $.projects.follow_up_title)}</h3>
               <div className="mt-4 space-y-3">
-                <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" aria-label={t(($) => $.projects.select)} value={selectedFollowUpProjectId} onChange={(e) => setSelectedFollowUpProjectId(e.target.value)}>
+                <select className="h-9 w-full min-w-0 max-w-full rounded-md border bg-background px-3 text-sm" aria-label={t(($) => $.projects.select)} value={selectedFollowUpProjectId} onChange={(e) => setSelectedFollowUpProjectId(e.target.value)}>
                   <option value="">{t(($) => $.projects.select)}</option>
                   {linkedProjects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
                 </select>
                 {selectedFollowUpProjectId && (
-                  <div className="rounded-md border bg-background/50 p-3">
-                    <div className="text-xs font-medium text-muted-foreground">{t(($) => $.projects.existing_issues)}</div>
-                    <div className="mt-2 space-y-1">
+                  <div className="min-w-0 max-w-full overflow-hidden rounded-md border bg-background/50 p-3">
+                    <div className="min-w-0 break-words text-xs font-medium text-muted-foreground">{t(($) => $.projects.existing_issues)}</div>
+                    <div className="mt-2 min-w-0 space-y-1">
                       {followUpIssues.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">{t(($) => $.projects.no_issues)}</p>
+                        <p className="min-w-0 break-words text-sm text-muted-foreground">{t(($) => $.projects.no_issues)}</p>
                       ) : followUpIssues.map((issue) => (
-                        <p key={issue.id} className="truncate text-sm">{formatIssueOption(issue)}</p>
+                        <p key={issue.id} className="min-w-0 break-words text-sm">{formatIssueOption(issue)}</p>
                       ))}
                     </div>
                   </div>
