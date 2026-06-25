@@ -617,7 +617,7 @@ func (h *Handler) runCRMPendingReplyAutomationForThreads(ctx context.Context, wo
 				actorType, actorID, actorErr := h.crmIssueCommentAuthor(ctx, workspaceID)
 				if actorErr != nil {
 					slog.Warn("CRM pending reply parent enqueue actor lookup failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "error", actorErr)
-				} else if issue, err := h.Queries.GetIssue(ctx, parentIssueID); err == nil && h.shouldEnqueueOnComment(ctx, issue, actorType, uuidToString(actorID)) {
+				} else if issue, err := h.Queries.GetIssue(ctx, parentIssueID); err == nil && h.shouldEnqueueOnComment(ctx, issue, actorType, uuidToString(actorID), commentTriggerComputeOptions{}) {
 					if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
 						slog.Warn("CRM pending reply parent enqueue failed", "workspace_id", uuidToString(workspaceID), "issue_id", uuidToString(parentIssueID), "error", err)
 					}
@@ -1166,10 +1166,8 @@ func (h *Handler) crmEnqueueCreatedIssue(ctx context.Context, issue db.Issue, cr
 		}
 		return
 	}
-	if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
-		if err := h.crmEnqueueIssueTaskDirect(ctx, issue, creatorType, creatorID); err != nil {
-			slog.Warn("CRM AI created issue squad leader enqueue failed", "issue_id", uuidToString(issue.ID), "squad_id", uuidToString(issue.AssigneeID), "error", err)
-		}
+	if h.TaskService != nil && h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, creatorID, "crm_ai_created_issue") {
+		return
 	}
 }
 

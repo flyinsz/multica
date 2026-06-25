@@ -213,8 +213,7 @@ function ReadonlyCodeBlock({ children }: { children: ReactNode }) {
   const { t } = useT("editor");
   const [copied, setCopied] = useState(false);
   const code = useMemo(
-    () => getTextContent(children).replace(/
-$/, ""),
+    () => getTextContent(children).replace(/\n$/, ""),
     [children],
   );
   const copyLabel = t(($) => $.code_block.copy_code) || "Copy code";
