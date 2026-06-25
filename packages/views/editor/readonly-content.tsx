@@ -247,8 +247,6 @@ function ReadonlyCodeBlock({ children }: { children: ReactNode }) {
     </div>
   );
 }
-  );
-}
 
 // Named component so it can call useWorkspaceSlug() — arrow function inlined
 // inside `components` below would still work, but extracting it keeps the
