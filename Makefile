@@ -292,17 +292,11 @@ build: ## Build the server, CLI, and migrate binaries into server/bin
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" -o bin/multica ./cmd/multica
 	cd server && go build -o bin/migrate ./cmd/migrate
 
-test: ## Run resource-safe Go tests after ensuring the target DB exists and migrations are applied
+test: ## Run Go tests after ensuring the target DB exists and migrations are applied
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate up
-	@bash scripts/go-test-safe.sh ./...
-
-test-go-safe: ## Run resource-safe Go tests; pass GO_TEST_ARGS='./pkg -run TestName -v'
-	$(REQUIRE_ENV)
-	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate up
-	@bash scripts/go-test-safe.sh $${GO_TEST_ARGS:-./...}
+	cd server && go test -race ./...
 
 # Database
 ##@ Database
@@ -323,5 +317,10 @@ sqlc: ## Regenerate sqlc code
 # Cleanup
 ##@ Cleanup
 
-clean: ## Remove generated server binaries and temp files
+clean: ## Remove build caches, generated binaries, and temp files
 	rm -rf server/bin server/tmp
+	rm -rf apps/*/.next apps/*/.source apps/*/.expo
+	rm -rf apps/*/out apps/*/dist apps/*/dist-electron packages/*/dist
+	rm -rf .turbo apps/*/.turbo packages/*/.turbo
+	rm -rf apps/*/*.tsbuildinfo packages/*/*.tsbuildinfo
+	@echo "✓ Clean complete."

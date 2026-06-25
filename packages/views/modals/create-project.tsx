@@ -406,6 +406,9 @@ export function CreateProjectModal({ onClose, navigateOnCreate = true, onCreated
             onUpdate={(md) => setDraft({ description: md })}
             debounceMs={500}
           />
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t(($) => $.create_project.description_hint)}
+          </p>
         </div>
 
         {/* Footer: properties (left, wrap) + Create button (right). Single row

@@ -16,13 +16,14 @@
  * - Rendering mentions with the same IssueMentionCard component and .mention class
  */
 
-import { isValidElement, memo, useMemo, useRef } from "react";
+import { isValidElement, memo, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Mail } from "lucide-react";
+import { Check, Copy, Mail } from "lucide-react";
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
 } from "react-markdown";
+import type { ReactNode } from "react";
 import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -32,9 +33,11 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { createLowlight, common } from "lowlight";
 import { toHtml } from "hast-util-to-html";
 import { cn } from "@multica/ui/lib/utils";
+import { copyText } from "@multica/ui/lib/clipboard";
 import { useWorkspacePaths, useWorkspaceSlug } from "@multica/core/paths";
 import { crmApi } from "@multica/core/crm/api";
 import type { Attachment } from "@multica/core/types";
+import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
 import { ProjectChip } from "../projects/components/project-chip";
@@ -195,6 +198,59 @@ function CRMDraftMentionLink({ draftId, label }: { draftId: string; label?: stri
   );
 }
 
+function getTextContent(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(getTextContent).join("");
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode };
+    return getTextContent(props.children);
+  }
+  return "";
+}
+
+function ReadonlyCodeBlock({ children }: { children: ReactNode }) {
+  const { t } = useT("editor");
+  const [copied, setCopied] = useState(false);
+  const code = useMemo(
+    () => getTextContent(children).replace(/
+$/, ""),
+    [children],
+  );
+  const copyLabel = t(($) => $.code_block.copy_code) || "Copy code";
+
+  const handleCopy = async () => {
+    if (!code) return;
+    if (await copyText(code)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="code-block-wrapper group/code relative my-3">
+      <div className="absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          title={copyLabel}
+          aria-label={copyLabel}
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
+      <pre className="!m-0 pr-12">{children}</pre>
+    </div>
+  );
+}
+  );
+}
+
 // Named component so it can call useWorkspaceSlug() — arrow function inlined
 // inside `components` below would still work, but extracting it keeps the
 // hook usage explicit and avoids hook-in-object-literal surprises.
@@ -352,7 +408,7 @@ function buildComponents(): Partial<Components> {
       );
     },
 
-    // Pre — pass through (CSS handles styling via .rich-text-editor pre).
+    // Pre — wrap regular code fences with copy chrome.
     // Special-case Mermaid / HtmlBlockPreview returned from the `code`
     // renderer above so the outer `<pre>` does not wrap them — this is the
     // standard two-layer pattern used to escape react-markdown's default
@@ -373,7 +429,7 @@ function buildComponents(): Partial<Components> {
           return <>{children}</>;
         }
       }
-      return <pre>{children}</pre>;
+      return <ReadonlyCodeBlock>{children}</ReadonlyCodeBlock>;
     },
   };
 }
@@ -423,7 +479,11 @@ export const ReadonlyContent = memo(function ReadonlyContent({
     <AttachmentDownloadProvider attachments={attachments}>
       <div ref={wrapperRef} className={cn("rich-text-editor readonly text-sm", className)}>
         <ReactMarkdown
-          remarkPlugins={[remarkMath, remarkBreaks, [remarkGfm, { singleTilde: false }]]}
+          remarkPlugins={[
+            [remarkMath, { singleDollarTextMath: false }],
+            remarkBreaks,
+            [remarkGfm, { singleTilde: false }],
+          ]}
           rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex]}
           urlTransform={urlTransform}
           components={components}

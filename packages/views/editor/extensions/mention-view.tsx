@@ -148,7 +148,11 @@ function ProjectMention({ projectId, fallbackLabel }: { projectId: string; fallb
 
   return (
     <a href={projectPath} onClick={handleClick} className="project-mention inline-flex">
-      <ProjectChip projectId={projectId} fallbackLabel={fallbackLabel} className="cursor-pointer hover:bg-accent transition-colors" />
+      <ProjectChip
+        projectId={projectId}
+        fallbackLabel={fallbackLabel}
+        className="cursor-pointer hover:bg-accent transition-colors"
+      />
     </a>
   );
 }
@@ -170,7 +174,11 @@ function IssueMention({ issueId, fallbackLabel }: { issueId: string; fallbackLab
 
   return (
     <a href={issuePath} onClick={handleClick} className="issue-mention inline-flex">
-      <IssueChip issueId={issueId} fallbackLabel={fallbackLabel} className="cursor-pointer hover:bg-accent transition-colors" />
+      <IssueChip
+        issueId={issueId}
+        fallbackLabel={fallbackLabel}
+        className="cursor-pointer hover:bg-accent transition-colors"
+      />
     </a>
   );
 }
