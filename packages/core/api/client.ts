@@ -2282,12 +2282,18 @@ export class ApiClient {
     return this.fetch(`/api/documents/${id}`);
   }
 
+  private encodeDocumentPath(path: string): string {
+    // Keep folder separators while escaping characters that would otherwise
+    // become query strings/fragments or invalid URL bytes (e.g. #, ?, spaces, CJK).
+    return path.split("/").map(encodeURIComponent).join("/");
+  }
+
   async getDocumentByPath(path: string): Promise<WorkspaceDocument> {
-    return this.fetch(`/api/documents/by-path/${path}`);
+    return this.fetch(`/api/documents/by-path/${this.encodeDocumentPath(path)}`);
   }
 
   async upsertDocumentByPath(path: string, data: UpsertDocumentRequest): Promise<WorkspaceDocument> {
-    return this.fetch(`/api/documents/by-path/${path}`, {
+    return this.fetch(`/api/documents/by-path/${this.encodeDocumentPath(path)}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
