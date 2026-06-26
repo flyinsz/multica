@@ -5682,13 +5682,14 @@ func (h *Handler) SetCRMIMAPSyncCron(w http.ResponseWriter, r *http.Request) {
 }
 
 type CRMEmailDraftAISuggestRequest struct {
-	ThreadID  *string  `json:"thread_id"`
-	AccountID *string  `json:"account_id"`
-	ContactID *string  `json:"contact_id"`
-	ToEmails  []string `json:"to_emails"`
-	Subject   string   `json:"subject"`
-	Prompt    string   `json:"prompt"`
-	Mode      string   `json:"mode"`
+	ThreadID      *string  `json:"thread_id"`
+	AccountID     *string  `json:"account_id"`
+	ContactID     *string  `json:"contact_id"`
+	ToEmails      []string `json:"to_emails"`
+	Subject       string   `json:"subject"`
+	Prompt        string   `json:"prompt"`
+	Mode          string   `json:"mode"`
+	DocumentPaths []string `json:"document_paths,omitempty"`
 }
 
 type CRMEmailDraftAISuggestResponse struct {
@@ -5699,6 +5700,7 @@ type CRMEmailDraftAISuggestResponse struct {
 	CcEmails         []string `json:"cc_emails,omitempty"`
 	Subject          string   `json:"subject,omitempty"`
 	Source           string   `json:"source"`
+	ReferencedDocs   []string `json:"referenced_docs,omitempty"`
 }
 
 func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Request) {
@@ -5780,9 +5782,10 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 	}
 	contextBudget := 8
 	aiContext := h.buildCRMEmailAIContext(ctx, workspaceID, accountID, contactID, threadID, mode, contextBudget)
+	docContext, referencedDocs := h.buildCRMEmailDocumentContext(ctx, workspaceID, req, accountName, accountNotes, contactName, contactEmail, strings.Join(messages, "\n"))
 
 	if mode == "context" {
-		prompt := "你是外贸CRM邮件背景分析助手。根据客户资料和邮件往来，输出严格JSON：{\"chinese\":\"给业务员看的中文背景信息和风险提示\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"\"}。要求：1) 不写可发送邮件正文；2) 优先使用结构化 Customer Wiki/Profile，再使用当前线程；3) 提炼会影响回复内容的信息：客户背景、历史诉求、未解决问题、承诺/报价/交期/认证/附件风险、下一封邮件应避免虚构的点；4) 没有依据就写“暂无依据”；5) 结构化、简洁、中文。\n\n" + aiContext.String() + "\n当前主题：" + req.Subject + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
+		prompt := "你是外贸CRM邮件背景分析助手。根据客户资料、CRM知识库文档和邮件往来，输出严格JSON：{\"chinese\":\"给业务员看的中文背景信息和风险提示\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"\",\"to_emails\":[],\"cc_emails\":[],\"subject\":\"\"}。要求：1) 不写可发送邮件正文；2) 优先使用结构化 Customer Wiki/Profile 和 CRM知识库文档，再使用当前线程；3) 提炼会影响回复内容的信息：客户背景、历史诉求、未解决问题、公司规则、产品资料、报价/交期/认证/附件风险、下一封邮件应避免虚构的点；4) 没有依据就写“暂无依据”；5) 结构化、简洁、中文。\n\n" + aiContext.String() + docContext + "\n当前主题：" + req.Subject + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
 		payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.1, "response_format": map[string]string{"type": "json_object"}}
 		body, _ := json.Marshal(payload)
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
@@ -5820,10 +5823,11 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 		}
 		parsed.CustomerLanguage = language
 		parsed.Source = source
+		parsed.ReferencedDocs = referencedDocs
 		writeJSON(w, http.StatusOK, parsed)
 		return
 	}
-	prompt := "你是外贸CRM邮件写作助手。根据客户资料、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 优先使用结构化 Customer Wiki/Profile，当前线程只作为当前语境；3) 无客户资料/历史时只基于当前邮件和用户要求；4) 中文参考用于内部查看；5) customer_reply 必须是客户语言，可直接发送；6) 正式、简洁、商务；7) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；8) mode=new 时只使用明确提供的候选收件人或@mention引用客户/联系人，不要从自由文本猜收件人；主题可按要求生成，无法确定则留空；9) mode=reply/reply-all 时结合共享AI上下文与当前邮件回复；10) 不要在 customer_reply 中添加邮箱签名、签名占位符、Best regards、Regards、姓名/公司署名，因为正文编辑框已经预先插入默认签名。\n\n模式：" + mode + "\n" + aiContext.String() + "\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
+	prompt := "你是外贸CRM邮件写作助手。根据客户资料、CRM知识库文档、邮件往来、用户要求，输出严格JSON：{\"chinese\":\"中文内部参考\",\"customer_language\":\"客户语言名称\",\"customer_reply\":\"可直接发送的客户语言邮件正文\",\"to_emails\":[\"收件人邮箱\"],\"cc_emails\":[\"抄送邮箱\"],\"subject\":\"邮件主题\"}。要求：1) 不虚构报价、交期、库存、认证、附件；2) 优先使用结构化 Customer Wiki/Profile 和 CRM知识库文档，当前线程只作为当前语境；3) 无客户资料/历史/知识库依据时只基于当前邮件和用户要求；4) 中文参考用于内部查看，并简短列出使用了哪些知识库文档；5) customer_reply 必须是客户语言，可直接发送；6) 正式、简洁、商务；7) 如果用户提供写作要求，必须按要求调整，但不得违背事实边界；8) mode=new 时只使用明确提供的候选收件人或@mention引用客户/联系人，不要从自由文本猜收件人；主题可按要求生成，无法确定则留空；9) mode=reply/reply-all 时结合共享AI上下文与当前邮件回复；10) 不要在 customer_reply 中添加邮箱签名、签名占位符、Best regards、Regards、姓名/公司署名，因为正文编辑框已经预先插入默认签名；11) 知识库文档只作为事实来源，不要向客户暴露内部文档路径，除非用户明确要求。\n\n模式：" + mode + "\n" + aiContext.String() + docContext + "\n候选收件人：" + strings.Join(req.ToEmails, ", ") + "\n当前主题：" + req.Subject + "\n用户写作要求：" + strings.TrimSpace(req.Prompt) + "\n当前选中邮件往来：\n" + strings.Join(messages, "\n---\n")
 	payload := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2, "response_format": map[string]string{"type": "json_object"}}
 	body, _ := json.Marshal(payload)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
@@ -5869,7 +5873,97 @@ func (h *Handler) SuggestCRMEmailDraftReply(w http.ResponseWriter, r *http.Reque
 		parsed.ToEmails = []string{contactEmail}
 	}
 	parsed.Source = source
+	parsed.ReferencedDocs = referencedDocs
 	writeJSON(w, http.StatusOK, parsed)
+}
+
+func (h *Handler) buildCRMEmailDocumentContext(ctx context.Context, workspaceID pgtype.UUID, req CRMEmailDraftAISuggestRequest, accountName, accountNotes, contactName, contactEmail, messageText string) (string, []string) {
+	type docRow struct {
+		Path        string
+		Title       string
+		Description string
+		Content     string
+		Pinned      bool
+	}
+	docs := make([]docRow, 0, 8)
+	seen := map[string]bool{}
+	addDoc := func(path, title, description, content string, pinned bool) {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		docs = append(docs, docRow{Path: path, Title: strings.TrimSpace(title), Description: strings.TrimSpace(description), Content: strings.TrimSpace(content), Pinned: pinned})
+	}
+
+	if len(req.DocumentPaths) > 0 {
+		for _, path := range req.DocumentPaths {
+			path = strings.TrimSpace(path)
+			if path == "" || seen[path] {
+				continue
+			}
+			var title, description, content string
+			var pinned bool
+			if err := h.DB.QueryRow(ctx, `SELECT COALESCE(title,''), COALESCE(description,''), COALESCE(content,''), pinned FROM workspace_document WHERE workspace_id=$1 AND path=$2 AND archived_at IS NULL`, workspaceID, path).Scan(&title, &description, &content, &pinned); err == nil {
+				addDoc(path, title, description, content, pinned)
+			}
+		}
+	}
+
+	if rows, err := h.DB.Query(ctx, `SELECT path, COALESCE(title,''), COALESCE(description,''), COALESCE(content,''), pinned FROM workspace_document WHERE workspace_id=$1 AND pinned=true AND archived_at IS NULL ORDER BY path LIMIT 4`, workspaceID); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var path, title, description, content string
+			var pinned bool
+			if rows.Scan(&path, &title, &description, &content, &pinned) == nil {
+				addDoc(path, title, description, content, pinned)
+			}
+		}
+	}
+
+	query := strings.Join([]string{req.Subject, req.Prompt, accountName, accountNotes, contactName, contactEmail, stringsTrimForCRM(messageText, 1600)}, " ")
+	query = strings.TrimSpace(stringsTrimForCRM(query, 1200))
+	if query != "" {
+		if rows, err := h.DB.Query(ctx, `SELECT path, COALESCE(title,''), COALESCE(description,''), COALESCE(content,''), pinned FROM workspace_document WHERE workspace_id=$1 AND archived_at IS NULL AND to_tsvector('simple', COALESCE(path,'') || ' ' || COALESCE(title,'') || ' ' || COALESCE(description,'') || ' ' || COALESCE(content,'')) @@ plainto_tsquery('simple', $2) ORDER BY pinned DESC, ts_rank(to_tsvector('simple', COALESCE(path,'') || ' ' || COALESCE(title,'') || ' ' || COALESCE(description,'') || ' ' || COALESCE(content,'')), plainto_tsquery('simple', $2)) DESC, path LIMIT 4`, workspaceID, query); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var path, title, description, content string
+				var pinned bool
+				if rows.Scan(&path, &title, &description, &content, &pinned) == nil {
+					addDoc(path, title, description, content, pinned)
+				}
+			}
+		}
+	}
+
+	if len(docs) == 0 {
+		return "\nCRM知识库文档：暂无自动匹配文档。\n", nil
+	}
+	var b strings.Builder
+	b.WriteString("\nCRM知识库文档（自动注入；优先使用置顶文档，其次使用与客户/邮件/写作要求匹配的文档；只引用有依据内容）：\n")
+	referenced := make([]string, 0, len(docs))
+	remaining := 9000
+	for _, doc := range docs {
+		if remaining <= 0 {
+			break
+		}
+		label := doc.Path
+		if doc.Title != "" {
+			label += " — " + doc.Title
+		}
+		if doc.Pinned {
+			label += " [pinned]"
+		}
+		referenced = append(referenced, doc.Path)
+		content := stringsTrimForCRM(doc.Content, 1800)
+		section := fmt.Sprintf("\n---\n文档：%s\n描述：%s\n内容：\n%s\n", label, stringsTrimForCRM(doc.Description, 300), content)
+		if len(section) > remaining {
+			section = section[:remaining]
+		}
+		b.WriteString(section)
+		remaining -= len(section)
+	}
+	return b.String(), referenced
 }
 
 type crmEmailAIContext struct {

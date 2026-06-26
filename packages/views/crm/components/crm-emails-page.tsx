@@ -51,7 +51,7 @@ type ComposeAttachment = { file_name: string; content_type: string; content: str
 type ComposeMode = "new" | "reply" | "reply-all" | "forward";
 type ComposeDraft = { draftId?: string; threadId?: string | null; mailboxId: string; accountId: string; contactId: string; to: string; cc: string; bcc: string; subject: string; body: string; scheduledSendAt: string; attachments: ComposeAttachment[]; localCacheKey?: string; source?: "local" | "server" };
 type AIDraftDialogState = { mode: Exclude<ComposeMode, "forward">; prompt: string } | null;
-type AIAssistantTurn = { id: string; role: "user" | "assistant" | "system"; content: string; chinese?: string; language?: string };
+type AIAssistantTurn = { id: string; role: "user" | "assistant" | "system"; content: string; chinese?: string; language?: string; referencedDocs?: string[] };
 type CRMEntityMention = { type: "crm-account" | "crm-contact"; id: string; label: string };
 
 type MailboxDraft = { id?: string | null; label: string; email: string; host: string; port: string; tls_mode: "ssl" | "starttls" | "none"; username: string; secret_ref: string; secret: string; sync_enabled: boolean; owner_type: string; owner_id: string; smtp_host: string; smtp_port: string; smtp_tls_mode: string; smtp_username: string; smtp_secret_ref: string; smtp_secret: string; signature: string };
@@ -1475,7 +1475,9 @@ export function CRMEmailsPage() {
   const aiContextBrief = useMutation({
     mutationFn: (payload: ReturnType<typeof aiReplyPayload>) => crmApi.suggestCRMEmailDraftReply({ ...payload, mode: "context" }),
     onSuccess: (data: any) => {
-      setAIAssistantTurns((items) => [{ id: `context-${Date.now()}`, role: "system", content: data.chinese || data.customer_reply || "已加载邮件背景。" }, ...items.filter((turn) => turn.role !== "system")]);
+      const docs = Array.isArray(data.referenced_docs) ? data.referenced_docs.filter(Boolean) : [];
+      const content = [data.chinese || data.customer_reply || "已加载邮件背景。", docs.length ? `\n引用知识库：${docs.join(", ")}` : ""].filter(Boolean).join("\n");
+      setAIAssistantTurns((items) => [{ id: `context-${Date.now()}`, role: "system", content, referencedDocs: docs }, ...items.filter((turn) => turn.role !== "system")]);
     },
   });
 
@@ -1487,7 +1489,9 @@ export function CRMEmailsPage() {
       setAIAssistantTurns((items) => [...items, { id: `user-${Date.now()}`, role: "user", content: text }]);
     },
     onSuccess: (data: any) => {
-      setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese: data.chinese || "", language: data.customer_language || "" }]);
+      const docs = Array.isArray(data.referenced_docs) ? data.referenced_docs.filter(Boolean) : [];
+      const chinese = [data.chinese || "", docs.length ? `引用知识库：${docs.join(", ")}` : ""].filter(Boolean).join("\n");
+      setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese, language: data.customer_language || "", referencedDocs: docs }]);
     },
   });
 
@@ -1536,7 +1540,9 @@ export function CRMEmailsPage() {
         subject: draft.threadId ? draft.subject : (data.subject || draft.subject),
         body: data.customer_reply ? appendMailboxSignature(data.customer_reply, mailboxes.find((mailbox) => mailbox.id === draft.mailboxId)?.signature) : draft.body,
       } : draft);
-      setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese: data.chinese || "", language: data.customer_language || "" }]);
+      const docs = Array.isArray(data.referenced_docs) ? data.referenced_docs.filter(Boolean) : [];
+      const chinese = [data.chinese || "", docs.length ? `引用知识库：${docs.join(", ")}` : ""].filter(Boolean).join("\n");
+      setAIAssistantTurns((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: data.customer_reply || "—", chinese, language: data.customer_language || "", referencedDocs: docs }]);
       setAIDraftDialog(null);
     },
   });
