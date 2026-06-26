@@ -266,10 +266,13 @@ type AgentTaskResponse struct {
 	Repos              []RepoData            `json:"repos,omitempty"`
 	ProjectID          string                `json:"project_id,omitempty"`          // issue's project, when present
 	ProjectTitle       string                `json:"project_title,omitempty"`       // for surfacing in agent context
-	ProjectDescription string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
-	ProjectResources   []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
-	CRMDraftReferences []CRMDraftReference   `json:"crm_draft_references,omitempty"`
-	CreatedAt          string                `json:"created_at"`
+	ProjectDescription   string                `json:"project_description,omitempty"` // durable project-level context injected into the brief
+	ProjectResources     []ProjectResourceData `json:"project_resources,omitempty"`   // resources attached to the project
+	PinnedDocuments      []DocumentData        `json:"pinned_documents,omitempty"`
+	DocumentIndex        []DocumentIndexData   `json:"document_index,omitempty"`
+	IssueLinkedDocuments []DocumentData        `json:"issue_linked_documents,omitempty"`
+	CRMDraftReferences   []CRMDraftReference   `json:"crm_draft_references,omitempty"`
+	CreatedAt            string                `json:"created_at"`
 	PriorSessionID     string                `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
 	PriorWorkDir       string                `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
 	WorkDir            string                `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
