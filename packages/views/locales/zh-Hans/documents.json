@@ -1,123 +1,123 @@
 {
   "page": {
-    "title": "Documents",
-    "tagline": "Shared knowledge base for your workspace.",
-    "new_document": "New document",
-    "search_placeholder": "Search documents…",
-    "select_prompt": "Select a document to view or edit",
+    "title": "文档",
+    "tagline": "工作区共享知识库。",
+    "new_document": "新建文档",
+    "search_placeholder": "搜索文档…",
+    "select_prompt": "选择一个文档查看或编辑",
     "empty": {
-      "title": "No documents yet",
-      "description": "Create your first document to start building a shared knowledge base for your workspace."
+      "title": "还没有文档",
+      "description": "创建第一篇文档，开始为工作区搭建共享知识库。"
     },
     "no_matches": {
-      "title": "No matches",
-      "with_query": "No documents match \"{{query}}\".",
-      "try_different": " Try a different query."
+      "title": "没有匹配结果",
+      "with_query": "没有文档匹配“{{query}}”。",
+      "try_different": " 请换个关键词试试。"
     },
     "list_error": {
-      "title": "Couldn't load documents",
-      "fallback": "Something went wrong fetching the document list.",
-      "retry": "Try again"
+      "title": "无法加载文档",
+      "fallback": "获取文档列表时出错。",
+      "retry": "重试"
     }
   },
   "tree": {
-    "all_documents": "All documents",
-    "filter_by_tag": "Filter by tag…",
-    "pinned": "Pinned"
+    "all_documents": "全部文档",
+    "filter_by_tag": "按标签筛选…",
+    "pinned": "已置顶"
   },
   "editor": {
-    "placeholder": "Write markdown content…",
-    "saving": "Saving…",
-    "saved": "Saved",
-    "unsaved": "Unsaved changes",
-    "save_now": "Save now",
+    "placeholder": "编写 Markdown 内容…",
+    "saving": "正在保存…",
+    "saved": "已保存",
+    "unsaved": "有未保存更改",
+    "save_now": "立即保存",
     "save_shortcut": "(Ctrl+S)",
-    "tab": "Editor"
+    "tab": "编辑器"
   },
   "header": {
-    "pin": "Pin",
-    "unpin": "Unpin",
-    "archive": "Archive",
-    "archive_confirm_title": "Archive document?",
-    "archive_confirm_description": "This will hide \"{{path}}\" from the document list. You can restore it later.",
-    "archive_confirm_action": "Archive",
-    "archive_cancel": "Cancel"
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "archive": "归档",
+    "archive_confirm_title": "归档文档？",
+    "archive_confirm_description": "这会从文档列表中隐藏“{{path}}”。之后可恢复。",
+    "archive_confirm_action": "归档",
+    "archive_cancel": "取消"
   },
   "tags": {
-    "label": "Tags",
-    "add_placeholder": "Add tag…",
-    "empty": "No tags"
+    "label": "标签",
+    "add_placeholder": "添加标签…",
+    "empty": "无标签"
   },
   "history": {
-    "title": "History",
-    "revision": "Revision {{number}}",
-    "no_revisions": "No revisions yet",
-    "restore": "Restore",
-    "restore_confirm_title": "Restore revision?",
-    "restore_confirm_description": "This will create a new revision with the content from revision {{number}}. No data is lost.",
-    "restore_confirm_action": "Restore",
-    "restore_cancel": "Cancel",
-    "view_diff": "View diff",
-    "latest": "latest",
-    "author_human": "Human",
+    "title": "历史记录",
+    "revision": "修订 {{number}}",
+    "no_revisions": "还没有修订记录",
+    "restore": "恢复",
+    "restore_confirm_title": "恢复此修订？",
+    "restore_confirm_description": "这会用修订 {{number}} 的内容创建新修订。数据不会丢失。",
+    "restore_confirm_action": "恢复",
+    "restore_cancel": "取消",
+    "view_diff": "查看差异",
+    "latest": "最新",
+    "author_human": "人工",
     "author_agent": "Agent",
     "operation": {
-      "create": "Created",
-      "edit": "Edited",
-      "rename": "Renamed",
-      "restore": "Restored",
-      "tag": "Tagged",
-      "pin": "Pinned",
-      "archive": "Archived"
+      "create": "已创建",
+      "edit": "已编辑",
+      "rename": "已重命名",
+      "restore": "已恢复",
+      "tag": "已打标签",
+      "pin": "已置顶",
+      "archive": "已归档"
     }
   },
   "diff": {
-    "title": "Diff",
-    "old_revision": "Revision {{number}}",
-    "new_revision": "Current",
-    "close": "Close"
+    "title": "差异",
+    "old_revision": "修订 {{number}}",
+    "new_revision": "当前版本",
+    "close": "关闭"
   },
   "linked_issues": {
-    "title": "Linked issues",
-    "empty": "No linked issues",
+    "title": "关联 issue",
+    "empty": "无关联 issue",
     "type": {
-      "referenced": "Referenced",
-      "produced": "Produced",
-      "consumed": "Consumed"
+      "referenced": "已引用",
+      "produced": "已产出",
+      "consumed": "已使用"
     }
   },
   "create_dialog": {
-    "title": "New document",
-    "path_label": "Path",
-    "path_placeholder": "e.g. clients/acme/brief.md",
-    "path_hint": "Use forward slashes for folder structure. Must end with .md",
-    "title_label": "Title",
-    "title_placeholder": "Optional title",
-    "description_label": "Description",
-    "description_placeholder": "One-line summary shown in the index",
-    "cancel": "Cancel",
-    "create": "Create document",
-    "creating": "Creating…",
-    "toast_created": "Document created",
-    "toast_create_failed": "Failed to create document",
+    "title": "新建文档",
+    "path_label": "路径",
+    "path_placeholder": "例如：clients/acme/brief.md",
+    "path_hint": "使用正斜杠表示文件夹结构。必须以 .md 结尾",
+    "title_label": "标题",
+    "title_placeholder": "可选标题",
+    "description_label": "描述",
+    "description_placeholder": "索引中显示的一行摘要",
+    "cancel": "取消",
+    "create": "创建文档",
+    "creating": "正在创建…",
+    "toast_created": "文档已创建",
+    "toast_create_failed": "创建文档失败",
     "errors": {
-      "empty_path": "Path cannot be empty.",
-      "invalid_path": "Path must match: lowercase letters, numbers, dashes, underscores, forward slashes, ending with .md",
-      "absolute_path": "Absolute paths are not allowed.",
-      "double_dot": "Paths cannot contain \"..\"."
+      "empty_path": "路径不能为空。",
+      "invalid_path": "路径必须匹配：小写字母、数字、短横线、下划线、正斜杠，并以 .md 结尾",
+      "absolute_path": "不允许使用绝对路径。",
+      "double_dot": "路径不能包含“..”。"
     }
   },
   "detail": {
     "not_found": {
-      "title": "Document not found",
-      "fallback": "This document may have been deleted or archived.",
-      "back": "Back to Documents"
+      "title": "文档不存在",
+      "fallback": "此文档可能已删除或归档。",
+      "back": "返回文档"
     },
-    "toast_saved": "Document saved",
-    "toast_save_failed": "Failed to save document",
-    "toast_archived": "Document archived",
-    "toast_restored": "Revision restored",
-    "toast_pinned": "Document pinned",
-    "toast_unpinned": "Document unpinned"
+    "toast_saved": "文档已保存",
+    "toast_save_failed": "保存文档失败",
+    "toast_archived": "文档已归档",
+    "toast_restored": "修订已恢复",
+    "toast_pinned": "文档已置顶",
+    "toast_unpinned": "已取消置顶"
   }
 }
