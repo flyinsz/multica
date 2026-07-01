@@ -11,6 +11,7 @@ function workspaceScoped(slug: string) {
     customers: () => `${ws}/crm/customers`,
     customerDetail: (id: string) => `${ws}/crm/customers/${encode(id)}`,
     emails: () => `${ws}/crm/emails`,
+    whatsapp: () => `${ws}/crm/whatsapp`,
     aiSettings: () => `${ws}/crm/ai-settings`,
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
   };

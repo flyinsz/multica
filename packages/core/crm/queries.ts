@@ -23,6 +23,8 @@ export const crmKeys = {
     [...crmKeys.emailThread(wsId, threadId), "messages"] as const,
   emailEngineStatus: (wsId: string, mailboxId = "") =>
     [...crmKeys.all(wsId), "emailengine", "status", mailboxId] as const,
+  whatsappThreads: (wsId: string) => [...crmKeys.all(wsId), "whatsapp", "threads"] as const,
+  whatsappMessages: (wsId: string, threadId: string) => [...crmKeys.whatsappThreads(wsId), threadId, "messages"] as const,
   aiSettings: (wsId: string) => [...crmKeys.all(wsId), "ai-settings"] as const,
 };
 
@@ -92,5 +94,23 @@ export function crmEmailEngineStatusOptions(wsId: string, mailboxId = "") {
     queryKey: crmKeys.emailEngineStatus(wsId, mailboxId),
     queryFn: () => crmApi.getCRMEmailEngineStatus(mailboxId || undefined),
     enabled: Boolean(wsId),
+  });
+}
+
+export function crmWhatsAppThreadListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: crmKeys.whatsappThreads(wsId),
+    queryFn: () => crmApi.listCRMWhatsAppThreads(),
+    select: (data) => data.threads,
+    enabled: Boolean(wsId),
+  });
+}
+
+export function crmWhatsAppMessageListOptions(wsId: string, threadId: string) {
+  return queryOptions({
+    queryKey: crmKeys.whatsappMessages(wsId, threadId),
+    queryFn: () => crmApi.listCRMWhatsAppMessages(threadId),
+    select: (data) => data.messages,
+    enabled: Boolean(wsId && threadId),
   });
 }

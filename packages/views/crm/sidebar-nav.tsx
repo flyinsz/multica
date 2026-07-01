@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, SlidersHorizontal, Users } from "lucide-react";
+import { Mail, MessageCircle, SlidersHorizontal, Users } from "lucide-react";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -24,6 +24,7 @@ export function CRMSidebarNavGroup({ pathname }: { pathname: string }) {
     { key: "dashboard", href: paths.dashboard(), label: t(($) => $.dashboard.title), icon: Users },
     { key: "customers", href: paths.customers(), label: t(($) => $.customers.title), icon: Users },
     { key: "emails", href: paths.emails(), label: t(($) => $.tabs.emails), icon: Mail },
+    { key: "whatsapp", href: paths.whatsapp(), label: "WhatsApp", icon: MessageCircle },
     { key: "ai-settings", href: paths.aiSettings(), label: t(($) => $.dashboard.ai_settings), icon: SlidersHorizontal },
   ];
 

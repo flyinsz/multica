@@ -8,7 +8,7 @@ import {
   EMPTY_CRM_IMAP_IMPORT_RESPONSE,
   EMPTY_CRM_IMAP_PREVIEW_RESPONSE,
 } from "./schemas";
-import type { CreateCRMAccountRequest, CreateCRMCommunicationNoteRequest, CreateCRMContactRequest, CreateCRMEmailMessageRequest, CreateCRMEmailThreadRequest, CreateCRMFollowUpIssueRequest, CRMAccount, CRMAccountProfile, CRMCommunicationNote, CRMContact, CRMEmailEngineStatus, CRMEmailMessage, CRMEmailThread, CRMIMAPImportResponse, CRMIMAPPreviewResponse, CRMIMAPSetting, CRMIMAPTestResponse, LinkCRMAccountProjectRequest, LinkCRMAccountProjectsResponse, ListCRMAccountsResponse, ListCRMCommunicationNotesResponse, ListCRMContactsResponse, ListCRMEmailMessagesResponse, ListCRMEmailThreadAssociationSuggestionsResponse, ListCRMEmailThreadsResponse, ListCRMIMAPSettingsResponse, UpsertCRMAccountProfileRequest, UpsertCRMIMAPSettingRequest, UpdateCRMEmailThreadAssociationRequest } from "./types";
+import type { CreateCRMAccountRequest, CreateCRMCommunicationNoteRequest, CreateCRMContactRequest, CreateCRMEmailMessageRequest, CreateCRMEmailThreadRequest, CreateCRMFollowUpIssueRequest, CRMAccount, CRMAccountProfile, CRMCommunicationNote, CRMContact, CRMEmailEngineStatus, CRMEmailMessage, CRMEmailThread, CRMIMAPImportResponse, CRMIMAPPreviewResponse, CRMIMAPSetting, CRMIMAPTestResponse, LinkCRMAccountProjectRequest, LinkCRMAccountProjectsResponse, ListCRMAccountsResponse, ListCRMCommunicationNotesResponse, ListCRMContactsResponse, ListCRMEmailMessagesResponse, ListCRMEmailThreadAssociationSuggestionsResponse, ListCRMEmailThreadsResponse, ListCRMIMAPSettingsResponse, ListCRMWhatsAppMessagesResponse, ListCRMWhatsAppThreadsResponse, UpsertCRMAccountProfileRequest, UpsertCRMIMAPSettingRequest, UpdateCRMEmailThreadAssociationRequest } from "./types";
 import type { Issue, ProjectResource } from "../types";
 
 export const crmApi = {
@@ -382,7 +382,19 @@ export const crmApi = {
       method: "POST",
       body: JSON.stringify(data),
     });
-  }
+  },
+
+  async listCRMWhatsAppThreads(): Promise<ListCRMWhatsAppThreadsResponse> {
+    return api.request("/api/crm/whatsapp/threads");
+  },
+
+  async listCRMWhatsAppMessages(threadId: string): Promise<ListCRMWhatsAppMessagesResponse> {
+    return api.request(`/api/crm/whatsapp/threads/${threadId}/messages`);
+  },
+
+  async syncCRMWhatsAppFromHermes(): Promise<{ imported: number }> {
+    return api.request("/api/crm/whatsapp/sync", { method: "POST" });
+  },
 
   // Labels
 };

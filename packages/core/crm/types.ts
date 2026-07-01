@@ -523,3 +523,37 @@ export interface CRMProfileSuggestion {
   created_at: string;
   applied_at?: string | null;
 }
+
+export interface CRMWhatsAppThread {
+  id: string;
+  workspace_id: string;
+  external_chat_id: string;
+  title: string;
+  phone_number: string;
+  account_id?: string | null;
+  contact_id?: string | null;
+  last_message_at?: string | null;
+  unread_count: number;
+  last_message_text?: string;
+}
+
+export interface CRMWhatsAppMessage {
+  id: string;
+  thread_id: string;
+  external_message_id: string;
+  direction: "inbound" | "outbound";
+  from_number: string;
+  to_number: string;
+  body_text: string;
+  media: unknown[];
+  sent_at?: string | null;
+  received_at?: string | null;
+}
+
+export interface ListCRMWhatsAppThreadsResponse {
+  threads: CRMWhatsAppThread[];
+}
+
+export interface ListCRMWhatsAppMessagesResponse {
+  messages: CRMWhatsAppMessage[];
+}

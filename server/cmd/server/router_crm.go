@@ -83,6 +83,12 @@ func registerCRMRoutes(r chi.Router, h *handler.Handler) {
 			})
 		})
 		r.Get("/email-messages/{messageId}/attachment/{attachmentIndex}", h.ServeCRMEmailAttachment)
+		r.Route("/whatsapp", func(r chi.Router) {
+			r.Get("/threads", h.ListCRMWhatsAppThreads)
+			r.Post("/sync", h.SyncCRMWhatsAppFromHermes)
+			r.Post("/hermes/webhook", h.ReceiveCRMWhatsAppHermesWebhook)
+			r.Get("/threads/{threadId}/messages", h.ListCRMWhatsAppMessages)
+		})
 
 		r.Get("/imap/diagnostics", h.GetCRMIMAPDiagnostics)
 		r.Post("/imap/test-connection", h.TestCRMIMAPConnection)
