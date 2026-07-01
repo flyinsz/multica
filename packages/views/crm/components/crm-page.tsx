@@ -297,52 +297,52 @@ export function CRMPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader className="justify-between px-5">
-        <div className="flex items-center gap-2">
-          <Building2 className="size-4 text-muted-foreground" />
-          <h1 className="text-sm font-medium">{t(($) => $.customers.title)}</h1>
-          {!isLoading && <span className="text-xs text-muted-foreground tabular-nums">{accounts.length}</span>}
+      <PageHeader className="flex-wrap justify-between gap-3 px-4 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Building2 className="size-4 shrink-0 text-muted-foreground" />
+          <h1 className="truncate text-sm font-medium">{t(($) => $.customers.title)}</h1>
+          {!isLoading && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{accounts.length}</span>}
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
+        <Button size="sm" className="shrink-0" onClick={() => setCreateOpen(true)}>
           <Plus className="mr-1 size-4" /> {t(($) => $.customers.add_customer)}
         </Button>
       </PageHeader>
 
-      <div className="min-w-0 space-y-4 overflow-x-hidden p-5">
-        <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_repeat(8,minmax(130px,160px))]">
+      <div className="min-w-0 space-y-4 overflow-x-hidden bg-muted/10 p-3 sm:p-5">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(120px,1fr))] 2xl:grid-cols-[minmax(240px,1.4fr)_repeat(8,minmax(120px,1fr))]">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
             <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t(($) => $.customers.search_placeholder)} />
           </div>
-          <select aria-label={t(($) => $.filters.status)} className="h-9 rounded-md border bg-background px-3 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as CRMAccountStatus | "")}>
+          <select aria-label={t(($) => $.filters.status)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as CRMAccountStatus | "")}>
             <option value="">{t(($) => $.filters.all_statuses)}</option>
             <option value="active">{t(($) => $.statuses.active)}</option>
             <option value="prospect">{t(($) => $.statuses.prospect)}</option>
             <option value="inactive">{t(($) => $.statuses.inactive)}</option>
             <option value="archived">{t(($) => $.statuses.archived)}</option>
           </select>
-          <select aria-label={t(($) => $.filters.rating)} className="h-9 rounded-md border bg-background px-3 text-sm" value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value as CRMAccountRating | "")}>
+          <select aria-label={t(($) => $.filters.rating)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value as CRMAccountRating | "")}>
             <option value="">{t(($) => $.filters.all_ratings)}</option>
             <option value="hot">{t(($) => $.ratings.hot)}</option>
             <option value="warm">{t(($) => $.ratings.warm)}</option>
             <option value="cold">{t(($) => $.ratings.cold)}</option>
             <option value="unknown">{t(($) => $.ratings.unknown)}</option>
           </select>
-          <select aria-label={t(($) => $.filters.priority)} className="h-9 rounded-md border bg-background px-3 text-sm" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as CRMAccountPriority | "")}>
+          <select aria-label={t(($) => $.filters.priority)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as CRMAccountPriority | "")}>
             <option value="">{t(($) => $.filters.all_priorities)}</option>
             <option value="high">{t(($) => $.priorities.high)}</option>
             <option value="medium">{t(($) => $.priorities.medium)}</option>
             <option value="low">{t(($) => $.priorities.low)}</option>
           </select>
-          <select aria-label={t(($) => $.filters.country)} className="h-9 rounded-md border bg-background px-3 text-sm" value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}>
+          <select aria-label={t(($) => $.filters.country)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}>
             <option value="">{t(($) => $.filters.all_countries)}</option>
             {COUNTRY_OPTIONS.map((country) => <option key={country.code} value={country.code}>{localizedName(country.name, locale)}</option>)}
           </select>
-          <select aria-label={t(($) => $.filters.industry)} className="h-9 rounded-md border bg-background px-3 text-sm" value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)}>
+          <select aria-label={t(($) => $.filters.industry)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)}>
             <option value="">{t(($) => $.filters.all_industries)}</option>
             {CRM_INDUSTRY_OPTIONS.map((industry) => <option key={industry.value} value={industry.value}>{industryLabel(industry.value, locale)}</option>)}
           </select>
-          <select aria-label={t(($) => $.filters.source)} className="h-9 rounded-md border bg-background px-3 text-sm" value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as CRMAccountSource | "")}>
+          <select aria-label={t(($) => $.filters.source)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as CRMAccountSource | "")}>
             <option value="">{t(($) => $.filters.all_sources)}</option>
             <option value="manual">{t(($) => $.sources.manual)}</option>
             <option value="email">{t(($) => $.sources.email)}</option>
@@ -353,14 +353,14 @@ export function CRMPage() {
             <option value="linkedin">{t(($) => $.sources.linkedin)}</option>
             <option value="other">{t(($) => $.sources.other)}</option>
           </select>
-          <select aria-label={t(($) => $.filters.follow_up)} className="h-9 rounded-md border bg-background px-3 text-sm" value={followUpBucket} onChange={(e) => setFollowUpBucket(e.target.value as CRMAccountFollowUpBucket | "")}>
+          <select aria-label={t(($) => $.filters.follow_up)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={followUpBucket} onChange={(e) => setFollowUpBucket(e.target.value as CRMAccountFollowUpBucket | "")}>
             <option value="">{t(($) => $.filters.any_follow_up)}</option>
             <option value="today">{t(($) => $.filters.follow_up_today)}</option>
             <option value="next_7_days">{t(($) => $.filters.follow_up_next_7_days)}</option>
             <option value="overdue">{t(($) => $.filters.follow_up_overdue)}</option>
             <option value="none">{t(($) => $.filters.follow_up_none)}</option>
           </select>
-          <select aria-label={t(($) => $.filters.sort)} className="h-9 rounded-md border bg-background px-3 text-sm" value={sort} onChange={(e) => setSort(e.target.value as CRMAccountSort)}>
+          <select aria-label={t(($) => $.filters.sort)} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={sort} onChange={(e) => setSort(e.target.value as CRMAccountSort)}>
             <option value="name">{t(($) => $.filters.sort_name)}</option>
             <option value="updated">{t(($) => $.filters.sort_updated)}</option>
             <option value="next_follow_up">{t(($) => $.filters.sort_next_follow_up)}</option>
@@ -368,7 +368,11 @@ export function CRMPage() {
           </select>
         </div>
 
-        <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
+        <section className="min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-3">
+            <div className="text-sm font-medium">{t(($) => $.customers.title)}</div>
+            <div className="text-xs text-muted-foreground">{sortedAccounts.length} / {accounts.length}</div>
+          </div>
           {isLoading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
@@ -377,16 +381,16 @@ export function CRMPage() {
             <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.customers.empty)}</div>
           ) : (
             <div className="min-w-0 overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t(($) => $.customers.title)}</TableHead>
-                  <TableHead>{t(($) => $.customers.account_type)}</TableHead>
+            <Table className="min-w-[760px] lg:min-w-full">
+              <TableHeader className="bg-muted/20">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="min-w-[220px]">{t(($) => $.customers.title)}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t(($) => $.customers.account_type)}</TableHead>
                   <TableHead>{t(($) => $.customers.status)}</TableHead>
-                  <TableHead>{t(($) => $.customers.country)}</TableHead>
-                  <TableHead>{t(($) => $.customers.industry)}</TableHead>
-                  <TableHead>{t(($) => $.tabs.contacts)}</TableHead>
-                  <TableHead>{t(($) => $.customers.next_follow_up_at)}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t(($) => $.customers.country)}</TableHead>
+                  <TableHead className="hidden xl:table-cell">{t(($) => $.customers.industry)}</TableHead>
+                  <TableHead className="hidden sm:table-cell">{t(($) => $.tabs.contacts)}</TableHead>
+                  <TableHead className="min-w-[150px]">{t(($) => $.customers.next_follow_up_at)}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -395,21 +399,26 @@ export function CRMPage() {
                   return (
                     <Fragment key={account.id}>
                       <TableRow
-                        className={`cursor-pointer ${expanded ? "bg-muted/60" : ""}`}
+                        className={`cursor-pointer border-b transition-colors hover:bg-accent/50 ${expanded ? "border-l-4 border-l-primary bg-primary/5 hover:bg-primary/5" : "border-l-4 border-l-transparent"}`}
                         onClick={() => setSelectedAccountId((current) => current === account.id ? null : account.id)}
                       >
-                        <TableCell className="font-medium">{account.name}</TableCell>
-                        <TableCell><AccountTypeLabel type={account.account_type} t={t} /></TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <span className="truncate">{account.name}</span>
+                            <span className="text-xs font-normal text-muted-foreground md:hidden"><AccountTypeLabel type={account.account_type} t={t} /> · {account.contact_count} {t(($) => $.tabs.contacts)}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell"><AccountTypeLabel type={account.account_type} t={t} /></TableCell>
                         <TableCell><AccountStatusLabel status={account.status} t={t} /></TableCell>
-                        <TableCell>{account.country_code ? localizedName(countryByCode(account.country_code)?.name ?? { en: account.country_name || account.country_code, zh: account.country_name || account.country_code }, locale) : account.country_name || account.country || "—"}</TableCell>
-                        <TableCell>{[account.industry, account.sub_industry].filter(Boolean).join(" · ") || "—"}</TableCell>
-                        <TableCell>{account.contact_count}</TableCell>
+                        <TableCell className="hidden lg:table-cell">{account.country_code ? localizedName(countryByCode(account.country_code)?.name ?? { en: account.country_name || account.country_code, zh: account.country_name || account.country_code }, locale) : account.country_name || account.country || "—"}</TableCell>
+                        <TableCell className="hidden xl:table-cell">{[account.industry, account.sub_industry].filter(Boolean).join(" · ") || "—"}</TableCell>
+                        <TableCell className="hidden sm:table-cell">{account.contact_count}</TableCell>
                         <TableCell>{account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : "—"}</TableCell>
                       </TableRow>
                       {expanded && (
-                        <TableRow className="bg-muted/30 hover:bg-muted/30">
+                        <TableRow className="border-b-4 border-b-muted bg-muted/40 hover:bg-muted/40">
                           <TableCell colSpan={7} className="p-0">
-                            <div className="max-h-[72vh] min-w-0 overflow-x-hidden overflow-y-auto border-y bg-background shadow-inner animate-in slide-in-from-top-2 duration-200">
+                            <div className="mx-2 mb-4 mt-2 max-h-[72vh] min-w-0 overflow-x-hidden overflow-y-auto rounded-xl border border-primary/15 bg-background shadow-lg ring-1 ring-primary/5 animate-in slide-in-from-top-2 duration-200 sm:mx-4">
                               <CRMAccountDetailPage accountId={account.id} inline />
                             </div>
                           </TableCell>

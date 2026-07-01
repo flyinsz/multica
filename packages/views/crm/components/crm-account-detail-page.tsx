@@ -727,7 +727,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-x-hidden">
+    <div className={inline ? "flex h-full min-w-0 flex-col overflow-x-hidden rounded-xl bg-background" : "flex h-full min-w-0 flex-col overflow-x-hidden"}>
       {!inline && (
         <div className="shrink-0 border-b px-5 py-4">
           <nav className="mb-3 flex items-center gap-1 text-xs" aria-label="Breadcrumb">
@@ -772,8 +772,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
       )}
 
       <Tabs defaultValue="overview" className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
-        <div className="z-10 shrink-0 border-b bg-background px-6 py-3">
-          <TabsList variant="line" className="w-full min-w-0 justify-start overflow-x-auto">
+        <div className="z-10 shrink-0 border-b bg-muted/20 px-3 py-2 sm:px-6 sm:py-3">
+          <TabsList variant="line" className="w-full min-w-0 justify-start overflow-x-auto whitespace-nowrap">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
             <TabsTrigger value="profile">{t(($) => $.tabs.profile)}</TabsTrigger>
@@ -784,7 +784,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
           </TabsList>
         </div>
 
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-6">
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-muted/10 p-3 sm:p-6">
           <TabsContent value="overview" className="min-w-0 space-y-6">
             <section className="rounded-lg border bg-card p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
