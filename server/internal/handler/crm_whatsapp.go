@@ -39,6 +39,16 @@ type crmWhatsAppWebhookPayload struct {
 	Message   crmWhatsAppMessagePayload `json:"message"`
 }
 
+type crmWhatsAppSendRequest struct {
+	BodyText       string `json:"body_text"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type crmWhatsAppAssociationRequest struct {
+	AccountID *string `json:"account_id"`
+	ContactID *string `json:"contact_id"`
+}
+
 type crmWhatsAppThreadResponse struct {
 	ID              string     `json:"id"`
 	WorkspaceID     string     `json:"workspace_id"`
@@ -155,6 +165,106 @@ func (h *Handler) ListCRMWhatsAppMessages(w http.ResponseWriter, r *http.Request
 		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+func (h *Handler) SendCRMWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	threadID := chi.URLParam(r, "threadId")
+	var threadUUID pgtype.UUID
+	if err := threadUUID.Scan(threadID); err != nil || !threadUUID.Valid {
+		writeError(w, http.StatusBadRequest, "invalid thread id")
+		return
+	}
+	var req crmWhatsAppSendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	text := strings.TrimSpace(req.BodyText)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "body_text required")
+		return
+	}
+	idem := strings.TrimSpace(req.IdempotencyKey)
+	if idem == "" {
+		idem = fmt.Sprintf("multica-%s-%d", threadID, time.Now().UnixNano())
+	}
+	var chatID, phone string
+	if err := h.DB.QueryRow(r.Context(), `SELECT external_chat_id, phone_number FROM crm_whatsapp_thread WHERE workspace_id=$1 AND id=$2`, workspaceID, threadUUID).Scan(&chatID, &phone); err != nil {
+		writeError(w, http.StatusNotFound, "whatsapp thread not found")
+		return
+	}
+	queued := false
+	if outbox := strings.TrimSpace(os.Getenv("CRM_WHATSAPP_HERMES_OUTBOX_FILE")); outbox != "" {
+		f, err := os.OpenFile(outbox, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to queue whatsapp message")
+			return
+		}
+		_ = json.NewEncoder(f).Encode(map[string]any{"idempotency_key": idem, "chat_id": chatID, "body_text": text, "created_at": time.Now().UTC().Format(time.RFC3339)})
+		_ = f.Close()
+		queued = true
+	} else {
+		base := strings.TrimRight(os.Getenv("CRM_WHATSAPP_HERMES_BASE_URL"), "/")
+		if base == "" {
+			base = "http://127.0.0.1:3000"
+		}
+		body, _ := json.Marshal(map[string]string{"chat_id": chatID, "body_text": text, "idempotency_key": idem})
+		resp, err := (&http.Client{Timeout: 15 * time.Second}).Post(base+"/crm/send", "application/json", bytes.NewReader(body))
+		if err != nil || resp.StatusCode >= 300 {
+			writeError(w, http.StatusBadGateway, "failed to send whatsapp message")
+			return
+		}
+		_ = resp.Body.Close()
+	}
+	msgID := idem
+	_, _ = h.upsertCRMWhatsAppMessage(r.Context(), workspaceID, "hermes", "default", crmWhatsAppMessagePayload{MessageID: msgID, ChatID: chatID, ChatName: chatID, Direction: "outbound", To: phone, BodyText: text, Timestamp: time.Now().UTC().Format(time.RFC3339), Raw: json.RawMessage(`{"source":"multica_send_queue"}`)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": map[bool]string{true: "queued", false: "sent"}[queued], "idempotency_key": idem})
+}
+
+func (h *Handler) UpdateCRMWhatsAppThreadAssociation(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.crmWorkspaceUUID(w, r)
+	if !ok {
+		return
+	}
+	threadID := chi.URLParam(r, "threadId")
+	var threadUUID pgtype.UUID
+	if err := threadUUID.Scan(threadID); err != nil || !threadUUID.Valid {
+		writeError(w, http.StatusBadRequest, "invalid thread id")
+		return
+	}
+	var req crmWhatsAppAssociationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var accountID, contactID any
+	accountID = nil
+	contactID = nil
+	if req.AccountID != nil && strings.TrimSpace(*req.AccountID) != "" {
+		var u pgtype.UUID
+		if err := u.Scan(strings.TrimSpace(*req.AccountID)); err != nil || !u.Valid {
+			writeError(w, http.StatusBadRequest, "invalid account id")
+			return
+		}
+		accountID = u
+	}
+	if req.ContactID != nil && strings.TrimSpace(*req.ContactID) != "" {
+		var u pgtype.UUID
+		if err := u.Scan(strings.TrimSpace(*req.ContactID)); err != nil || !u.Valid {
+			writeError(w, http.StatusBadRequest, "invalid contact id")
+			return
+		}
+		contactID = u
+	}
+	if _, err := h.DB.Exec(r.Context(), `UPDATE crm_whatsapp_thread SET account_id=$3, contact_id=$4, updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, threadUUID, accountID, contactID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update whatsapp association")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) SyncCRMWhatsAppFromHermes(w http.ResponseWriter, r *http.Request) {

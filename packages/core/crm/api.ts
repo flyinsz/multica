@@ -392,8 +392,16 @@ export const crmApi = {
     return api.request(`/api/crm/whatsapp/threads/${threadId}/messages`);
   },
 
-  async syncCRMWhatsAppFromHermes(): Promise<{ imported: number }> {
+  async syncCRMWhatsAppFromHermes(): Promise<{ imported: number; source?: string }> {
     return api.request("/api/crm/whatsapp/sync", { method: "POST" });
+  },
+
+  async sendCRMWhatsAppMessage(threadId: string, data: { body_text: string; idempotency_key?: string }): Promise<{ ok: boolean; status: string; idempotency_key: string }> {
+    return api.request(`/api/crm/whatsapp/threads/${threadId}/send`, { method: "POST", body: JSON.stringify(data) });
+  },
+
+  async updateCRMWhatsAppThreadAssociation(threadId: string, data: { account_id?: string | null; contact_id?: string | null }): Promise<{ ok: boolean }> {
+    return api.request(`/api/crm/whatsapp/threads/${threadId}/association`, { method: "PATCH", body: JSON.stringify(data) });
   },
 
   // Labels

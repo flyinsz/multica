@@ -48,6 +48,7 @@ services:
     volumes:
       - backend_uploads:/app/data/uploads
       - /root/.hermes/whatsapp/crm-bridge-messages.jsonl:/app/data/hermes-whatsapp-crm-messages.jsonl:ro
+      - /root/.hermes/whatsapp/crm-bridge-outbox.jsonl:/app/data/hermes-whatsapp-crm-outbox.jsonl
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
       PORT: "8080"
@@ -82,6 +83,7 @@ services:
       MULTICA_DEV_VERIFICATION_CODE: ${MULTICA_DEV_VERIFICATION_CODE:-}
       MULTICA_APP_URL: ${MULTICA_APP_URL:-http://localhost:3000}
       CRM_WHATSAPP_HERMES_MESSAGES_FILE: /app/data/hermes-whatsapp-crm-messages.jsonl
+      CRM_WHATSAPP_HERMES_OUTBOX_FILE: /app/data/hermes-whatsapp-crm-outbox.jsonl
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}

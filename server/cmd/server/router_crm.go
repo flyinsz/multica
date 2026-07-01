@@ -88,6 +88,8 @@ func registerCRMRoutes(r chi.Router, h *handler.Handler) {
 			r.Post("/sync", h.SyncCRMWhatsAppFromHermes)
 			r.Post("/hermes/webhook", h.ReceiveCRMWhatsAppHermesWebhook)
 			r.Get("/threads/{threadId}/messages", h.ListCRMWhatsAppMessages)
+			r.Post("/threads/{threadId}/send", h.SendCRMWhatsAppMessage)
+			r.Patch("/threads/{threadId}/association", h.UpdateCRMWhatsAppThreadAssociation)
 		})
 
 		r.Get("/imap/diagnostics", h.GetCRMIMAPDiagnostics)

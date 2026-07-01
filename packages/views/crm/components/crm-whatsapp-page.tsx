@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable i18next/no-literal-string */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageCircle, RefreshCw, PlusCircle } from "lucide-react";
 import { crmApi } from "@multica/core/crm/api";
@@ -24,6 +24,31 @@ export function CRMWhatsAppPage() {
   const [selectedThreadId, setSelectedThreadId] = useState<string>("");
   const selectedThread = useMemo(() => threads.find((thread) => thread.id === (selectedThreadId || threads[0]?.id)), [threads, selectedThreadId]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery(crmWhatsAppMessageListOptions(wsId, selectedThread?.id ?? ""));
+  const [replyText, setReplyText] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [contactId, setContactId] = useState("");
+
+  const sendMutation = useMutation({
+    mutationFn: () => crmApi.sendCRMWhatsAppMessage(selectedThread?.id ?? "", { body_text: replyText }),
+    onSuccess: async () => {
+      setReplyText("");
+      await queryClient.invalidateQueries({ queryKey: crmKeys.whatsappMessages(wsId, selectedThread?.id ?? "") });
+      await queryClient.invalidateQueries({ queryKey: crmKeys.whatsappThreads(wsId) });
+    },
+  });
+
+  const associationMutation = useMutation({
+    mutationFn: () => crmApi.updateCRMWhatsAppThreadAssociation(selectedThread?.id ?? "", { account_id: accountId || null, contact_id: contactId || null }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: crmKeys.whatsappThreads(wsId) });
+    },
+  });
+
+  useEffect(() => {
+    setAccountId(selectedThread?.account_id ?? "");
+    setContactId(selectedThread?.contact_id ?? "");
+    setReplyText("");
+  }, [selectedThread?.id, selectedThread?.account_id, selectedThread?.contact_id]);
 
   const syncMutation = useMutation({
     mutationFn: () => crmApi.syncCRMWhatsAppFromHermes(),
@@ -87,7 +112,18 @@ export function CRMWhatsAppPage() {
             );
           })}
         </aside>
-        <main className="min-h-0 overflow-y-auto p-4">
+        <main className="flex min-h-0 flex-col overflow-hidden p-4">
+          {selectedThread ? (
+            <div className="mb-3 space-y-2 rounded-lg border p-3 text-xs">
+              <div className="font-medium">{selectedThread.title || selectedThread.external_chat_id}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <input className="rounded border bg-background px-2 py-1" placeholder="Account ID" value={accountId} onChange={(e) => setAccountId(e.target.value)} />
+                <input className="rounded border bg-background px-2 py-1" placeholder="Contact ID" value={contactId} onChange={(e) => setContactId(e.target.value)} />
+              </div>
+              <Button size="sm" variant="outline" onClick={() => associationMutation.mutate()} disabled={associationMutation.isPending}>Save association</Button>
+            </div>
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-y-auto">
           {!selectedThread ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground"><MessageCircle className="mr-2 size-4" />Select WhatsApp thread</div>
           ) : messagesLoading ? (
@@ -104,6 +140,13 @@ export function CRMWhatsAppPage() {
               ))}
             </div>
           )}
+          </div>
+          {selectedThread ? (
+            <div className="mt-3 flex gap-2 border-t pt-3">
+              <textarea className="min-h-20 flex-1 rounded border bg-background p-2 text-sm" placeholder="Reply on WhatsApp" value={replyText} onChange={(e) => setReplyText(e.target.value)} />
+              <Button onClick={() => sendMutation.mutate()} disabled={!replyText.trim() || sendMutation.isPending}>Send</Button>
+            </div>
+          ) : null}
         </main>
       </div>
     </div>
