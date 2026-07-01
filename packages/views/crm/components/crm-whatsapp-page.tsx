@@ -36,6 +36,7 @@ export function CRMWhatsAppPage() {
   const [contactId, setContactId] = useState("");
   const [createAccountOpen, setCreateAccountOpen] = useState(false);
   const [createContactOpen, setCreateContactOpen] = useState(false);
+  const [linkPanelOpen, setLinkPanelOpen] = useState(false);
   const [accountForm, setAccountForm] = useState({ name: "", website: "", notes: "" });
   const [contactForm, setContactForm] = useState({ name: "", email: "", phone: "", whatsapp: "", jobTitle: "", notes: "" });
   const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accounts, accountId]);
@@ -191,23 +192,26 @@ export function CRMWhatsAppPage() {
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground"><MessageCircle className="mr-2 size-4" />Select WhatsApp thread</div>
           ) : (
             <>
-              <section className="max-h-[38vh] overflow-y-auto border-b bg-card px-3 py-3 sm:px-5 sm:py-4 lg:max-h-none lg:overflow-visible">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <section className="shrink-0 border-b bg-card px-3 py-2 sm:px-5 sm:py-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold">{selectedThread.title || selectedThread.external_chat_id}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{selectedThread.phone_number || selectedThread.external_chat_id}</div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">{selectedThread.phone_number || selectedThread.external_chat_id}</div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex shrink-0 gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setLinkPanelOpen((value) => !value)}>
+                      <Building2 className="size-4 sm:mr-1" /><span className="hidden sm:inline">Link</span>
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => { setAccountForm({ name: selectedThread.title || selectedThread.phone_number || "", website: "", notes: selectedThread.phone_number ? `WhatsApp: ${selectedThread.phone_number}` : "" }); setCreateAccountOpen(true); }}>
-                      <Plus className="mr-1 size-4" />New customer
+                      <Plus className="size-4 sm:mr-1" /><span className="hidden sm:inline">New customer</span>
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => { setContactForm({ name: selectedThread.title || "", email: "", phone: selectedThread.phone_number || "", whatsapp: selectedThread.phone_number || "", jobTitle: "", notes: "" }); setCreateContactOpen(true); }} disabled={!accountId}>
-                      <Plus className="mr-1 size-4" />New contact
+                      <Plus className="size-4 sm:mr-1" /><span className="hidden sm:inline">New contact</span>
                     </Button>
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto]">
+                <div className={`${linkPanelOpen ? "grid" : "hidden"} mt-3 gap-3 lg:grid lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto]`}>
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><Building2 className="size-3.5" />Customer</div>
                     <Select value={accountId || NONE} onValueChange={(value) => { const nextValue = value ?? NONE; setAccountId(nextValue === NONE ? "" : nextValue); setContactId(""); }}>

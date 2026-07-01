@@ -303,7 +303,7 @@ export function CRMPage() {
           <h1 className="truncate text-sm font-medium">{t(($) => $.customers.title)}</h1>
           {!isLoading && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{accounts.length}</span>}
         </div>
-        <Button size="sm" className="hidden shrink-0 sm:inline-flex" onClick={() => setCreateOpen(true)}>
+        <Button size="sm" className="hidden shrink-0 md:inline-flex" onClick={() => setCreateOpen(true)}>
           <Plus className="mr-1 size-4" /> {t(($) => $.customers.add_customer)}
         </Button>
       </PageHeader>

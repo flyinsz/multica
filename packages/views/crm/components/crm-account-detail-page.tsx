@@ -773,7 +773,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
 
       <Tabs defaultValue="overview" className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
         <div className="z-10 shrink-0 border-b bg-muted/20 px-3 py-2 sm:px-6 sm:py-3">
-          <TabsList variant="line" className="grid h-auto w-full min-w-0 grid-cols-1 items-stretch justify-start gap-1 overflow-visible whitespace-normal rounded-md bg-background/60 p-1 sm:flex sm:items-center sm:overflow-x-auto sm:whitespace-nowrap sm:bg-transparent sm:p-0">
+          <TabsList variant="line" className="hidden w-full min-w-0 items-center justify-start overflow-x-auto whitespace-nowrap sm:flex">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
             <TabsTrigger value="profile">{t(($) => $.tabs.profile)}</TabsTrigger>
@@ -781,6 +781,15 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             <TabsTrigger value="emails">{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</TabsTrigger>
             <TabsTrigger value="whatsapp">WhatsApp{accountWhatsAppThreads.length > 0 ? <Badge variant="secondary" className="ml-2 tabular-nums">{accountWhatsAppThreads.length}</Badge> : null}</TabsTrigger>
             <TabsTrigger value="notes">{t(($) => $.tabs.notes)}</TabsTrigger>
+          </TabsList>
+          <TabsList variant="line" className="grid h-auto w-full min-w-0 grid-cols-1 gap-1 rounded-md bg-background/70 p-1 sm:hidden">
+            <TabsTrigger value="overview" className="justify-between text-left">{t(($) => $.tabs.overview)}<ChevronRight className="size-3" /></TabsTrigger>
+            <TabsTrigger value="contacts" className="justify-between text-left">{t(($) => $.tabs.contacts)}<ChevronRight className="size-3" /></TabsTrigger>
+            <TabsTrigger value="profile" className="justify-between text-left">{t(($) => $.tabs.profile)}<ChevronRight className="size-3" /></TabsTrigger>
+            <TabsTrigger value="projects" className="justify-between text-left">{t(($) => $.tabs.projects)}<ChevronRight className="size-3" /></TabsTrigger>
+            <TabsTrigger value="emails" className="justify-between text-left">{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : <ChevronRight className="size-3" />}</TabsTrigger>
+            <TabsTrigger value="whatsapp" className="justify-between text-left">WhatsApp{accountWhatsAppThreads.length > 0 ? <Badge variant="secondary" className="ml-2 tabular-nums">{accountWhatsAppThreads.length}</Badge> : <ChevronRight className="size-3" />}</TabsTrigger>
+            <TabsTrigger value="notes" className="justify-between text-left">{t(($) => $.tabs.notes)}<ChevronRight className="size-3" /></TabsTrigger>
           </TabsList>
         </div>
 
@@ -936,10 +945,13 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             <section className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-card p-4">
               <h3 className="min-w-0 break-words text-sm font-medium">{t(($) => $.projects.follow_up_title)}</h3>
               <div className="mt-4 space-y-3">
-                <select className="h-9 w-full min-w-0 max-w-full rounded-md border bg-background px-3 text-sm" aria-label={t(($) => $.projects.select)} value={selectedFollowUpProjectId} onChange={(e) => setSelectedFollowUpProjectId(e.target.value)}>
-                  <option value="">{t(($) => $.projects.select)}</option>
-                  {linkedProjects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
-                </select>
+                <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
+                  <select className="h-9 w-full min-w-0 max-w-full rounded-md border bg-background px-3 text-sm" aria-label={t(($) => $.projects.select)} value={selectedFollowUpProjectId} onChange={(e) => setSelectedFollowUpProjectId(e.target.value)}>
+                    <option value="">{t(($) => $.projects.select)}</option>
+                    {linkedProjects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
+                  </select>
+                  <Button className="h-auto w-full min-w-0 justify-start whitespace-normal break-words text-left leading-5 xl:w-auto" onClick={openCreateFollowUpIssue}>{t(($) => $.projects.create_follow_up)}</Button>
+                </div>
                 {selectedFollowUpProjectId && (
                   <div className="min-w-0 max-w-full overflow-hidden rounded-md border bg-background/50 p-3">
                     <div className="min-w-0 break-words text-xs font-medium text-muted-foreground">{t(($) => $.projects.existing_issues)}</div>
@@ -952,7 +964,6 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
                     </div>
                   </div>
                 )}
-                <Button className="h-auto w-full min-w-0 justify-start whitespace-normal break-words text-left leading-5" onClick={openCreateFollowUpIssue}>{t(($) => $.projects.create_follow_up)}</Button>
               </div>
             </section>
           </TabsContent>
