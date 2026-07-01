@@ -210,7 +210,7 @@ export function CRMWhatsAppPage() {
                 <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto]">
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><Building2 className="size-3.5" />Customer</div>
-                    <Select value={accountId || NONE} onValueChange={(value) => { setAccountId(value === NONE ? "" : value); setContactId(""); }}>
+                    <Select value={accountId || NONE} onValueChange={(value) => { const nextValue = value ?? NONE; setAccountId(nextValue === NONE ? "" : nextValue); setContactId(""); }}>
                       <SelectTrigger className="w-full bg-background"><SelectValue placeholder="Select customer" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NONE}>Unlinked customer</SelectItem>
@@ -220,7 +220,7 @@ export function CRMWhatsAppPage() {
                   </div>
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><UserRound className="size-3.5" />Contact</div>
-                    <Select value={contactId || NONE} onValueChange={(value) => setContactId(value === NONE ? "" : value)} disabled={!accountId || contactsLoading}>
+                    <Select value={contactId || NONE} onValueChange={(value) => { const nextValue = value ?? NONE; setContactId(nextValue === NONE ? "" : nextValue); }} disabled={!accountId || contactsLoading}>
                       <SelectTrigger className="w-full bg-background"><SelectValue placeholder={accountId ? "Select contact" : "Select customer first"} /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NONE}>{contactsLoading ? "Loading contacts..." : "Unlinked contact"}</SelectItem>
