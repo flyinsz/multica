@@ -142,19 +142,19 @@ export function CRMWhatsAppPage() {
   const formatThreadTime = (value?: string | null) => value ? new Date(value).toLocaleString() : "No messages";
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-muted/10">
-      <PageHeader className="justify-between px-5">
-        <div className="flex items-center gap-2">
-          <MessageCircle className="size-4 text-muted-foreground" />
-          <h1 className="text-sm font-medium">CRM WhatsApp</h1>
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-muted/10">
+      <PageHeader className="flex-wrap justify-between gap-2 px-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          <MessageCircle className="size-4 shrink-0 text-muted-foreground" />
+          <h1 className="truncate text-sm font-medium">WhatsApp</h1>
           {!threadsLoading && <span className="text-xs text-muted-foreground tabular-nums">{threads.length}</span>}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
-            <RefreshCw className="mr-2 size-4" />Sync Hermes
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="sm" title="Sync Hermes" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
+            <RefreshCw className="size-4 sm:mr-2" /><span className="hidden sm:inline">Sync Hermes</span>
           </Button>
-          <Button size="sm" onClick={openCreateIssue} disabled={!selectedThread}>
-            <PlusCircle className="mr-2 size-4" />Create issue
+          <Button size="sm" title="Create issue" onClick={openCreateIssue} disabled={!selectedThread}>
+            <PlusCircle className="size-4 sm:mr-2" /><span className="hidden sm:inline">Create issue</span>
           </Button>
         </div>
       </PageHeader>

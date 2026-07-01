@@ -380,17 +380,17 @@ export function CRMPage() {
           ) : sortedAccounts.length === 0 ? (
             <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.customers.empty)}</div>
           ) : (
-            <div className="min-w-0 overflow-x-auto">
-            <Table className="min-w-[760px] lg:min-w-full">
+            <div className="min-w-0 overflow-hidden">
+            <Table className="w-full table-fixed">
               <TableHeader className="bg-muted/20">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="min-w-[220px]">{t(($) => $.customers.title)}</TableHead>
+                  <TableHead className="w-[52%] sm:w-[36%]">{t(($) => $.customers.title)}</TableHead>
                   <TableHead className="hidden md:table-cell">{t(($) => $.customers.account_type)}</TableHead>
-                  <TableHead>{t(($) => $.customers.status)}</TableHead>
+                  <TableHead className="w-[24%] sm:w-auto">{t(($) => $.customers.status)}</TableHead>
                   <TableHead className="hidden lg:table-cell">{t(($) => $.customers.country)}</TableHead>
                   <TableHead className="hidden xl:table-cell">{t(($) => $.customers.industry)}</TableHead>
                   <TableHead className="hidden sm:table-cell">{t(($) => $.tabs.contacts)}</TableHead>
-                  <TableHead className="min-w-[150px]">{t(($) => $.customers.next_follow_up_at)}</TableHead>
+                  <TableHead className="w-[24%] sm:w-auto">{t(($) => $.customers.next_follow_up_at)}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -413,7 +413,7 @@ export function CRMPage() {
                         <TableCell className="hidden lg:table-cell">{account.country_code ? localizedName(countryByCode(account.country_code)?.name ?? { en: account.country_name || account.country_code, zh: account.country_name || account.country_code }, locale) : account.country_name || account.country || "—"}</TableCell>
                         <TableCell className="hidden xl:table-cell">{[account.industry, account.sub_industry].filter(Boolean).join(" · ") || "—"}</TableCell>
                         <TableCell className="hidden sm:table-cell">{account.contact_count}</TableCell>
-                        <TableCell>{account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleString() : "—"}</TableCell>
+                        <TableCell className="truncate text-xs sm:text-sm">{account.next_follow_up_at ? new Date(account.next_follow_up_at).toLocaleDateString() : "—"}</TableCell>
                       </TableRow>
                       {expanded && (
                         <TableRow className="border-b-4 border-b-muted bg-muted/40 hover:bg-muted/40">

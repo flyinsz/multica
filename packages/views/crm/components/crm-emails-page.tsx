@@ -1761,8 +1761,8 @@ export function CRMEmailsPage() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-muted/20">
-      <PageHeader className="justify-between border-b bg-background px-5">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-muted/20">
+      <PageHeader className="flex-wrap justify-between gap-2 border-b bg-background px-3 sm:px-5">
         <div className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.emails.workspace_title)}</h1>
@@ -1774,18 +1774,18 @@ export function CRMEmailsPage() {
             <Send className="mr-1 size-3" />
             {emailCopy.compose}
           </Button>
-          <Button variant="outline" size="sm" title="Diagnostics" onClick={() => setDiagnosticsOpen(true)}>
+          <Button className="hidden sm:inline-flex" variant="outline" size="sm" title="Diagnostics" onClick={() => setDiagnosticsOpen(true)}>
             <Wrench className="size-3" />
           </Button>
-          <Button variant="outline" size="sm" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>
+          <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>
             <Settings className="mr-1 size-3" />
             {t(($) => $.emails.mailbox_settings)}
           </Button>
         </div>
       </PageHeader>
 
-      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-0 ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_360px_minmax(0,1fr)]" : "lg:grid-cols-[64px_360px_minmax(0,1fr)]")}`}>
-        <aside className={`flex min-h-0 flex-col border-r bg-card/80 p-2 ${folderSidebarExpanded ? "" : "items-center"}`}>
+      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(0,45%)_minmax(0,55%)] gap-0 overflow-hidden lg:grid-rows-none ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
+        <aside className={`absolute inset-y-0 left-0 z-30 flex min-h-0 flex-col border-r bg-card/95 p-2 shadow-lg lg:relative lg:z-auto lg:bg-card/80 lg:shadow-none ${folderSidebarExpanded ? "w-56" : "w-14 items-center"}`}>
           <Button className="mb-2" size="icon" variant="ghost" title={folderSidebarExpanded ? "收起" : "展开"} onClick={() => setFolderSidebarExpanded((value) => !value)}>
             {folderSidebarExpanded ? <ChevronsLeft className="size-4" /> : <ChevronsRight className="size-4" />}
           </Button>
@@ -1844,7 +1844,7 @@ export function CRMEmailsPage() {
           <Button className="mt-auto" size={folderSidebarExpanded ? "default" : "icon"} variant="outline" title={t(($) => $.emails.add_mailbox)} onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{folderSidebarExpanded ? t(($) => $.emails.add_mailbox) : <Settings className="size-4" />}</Button>
         </aside>
 
-        <aside className={`min-h-0 flex-col border-r bg-background ${composeHidesList ? "hidden" : "flex"}`}>
+        <aside className={`min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background pl-14 lg:pl-0 ${composeHidesList ? "hidden" : "flex"}`}>
           <div className="border-b p-3">
             <div className="relative flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
@@ -1936,7 +1936,7 @@ export function CRMEmailsPage() {
           )}
         </aside>
 
-        <section className="min-h-0 overflow-hidden bg-background">
+        <section className={`min-h-0 min-w-0 overflow-hidden border-t bg-background lg:border-t-0 ${composeHidesList ? "row-span-2" : ""}`}>
           {composeDraft ? (
             <div className="flex h-full min-h-0 flex-col bg-background">
               <div className="border-b p-5">

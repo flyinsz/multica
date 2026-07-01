@@ -773,7 +773,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
 
       <Tabs defaultValue="overview" className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
         <div className="z-10 shrink-0 border-b bg-muted/20 px-3 py-2 sm:px-6 sm:py-3">
-          <TabsList variant="line" className="w-full min-w-0 justify-start overflow-x-auto whitespace-nowrap">
+          <TabsList variant="line" className="grid h-auto w-full min-w-0 grid-cols-1 items-stretch justify-start gap-1 overflow-visible whitespace-normal rounded-md bg-background/60 p-1 sm:flex sm:items-center sm:overflow-x-auto sm:whitespace-nowrap sm:bg-transparent sm:p-0">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
             <TabsTrigger value="profile">{t(($) => $.tabs.profile)}</TabsTrigger>
