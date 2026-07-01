@@ -12,6 +12,7 @@ import {
   crmContactListOptions,
   crmEmailThreadListOptions,
   crmKeys,
+  crmWhatsAppThreadListOptions,
 } from "@multica/core/crm/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueKeys, useIssueDraftStore } from "@multica/core/issues";
@@ -480,6 +481,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
   const emailMessages = emailThreadData?.messages ?? [];
   const accountEmailItems = emailMessages.length ? emailMessages : emailThreads;
   const unreadEmailCount = (emailThreadData?.counts as any)?.inbox_unread ?? emailThreads.filter((thread: any) => thread.is_read !== true && thread.direction !== "outbound" && !thread.is_trashed).length;
+  const { data: whatsappThreads = [], isLoading: whatsappThreadsLoading } = useQuery(crmWhatsAppThreadListOptions(wsId));
+  const accountWhatsAppThreads = useMemo(() => whatsappThreads.filter((thread: any) => thread.account_id === accountId), [whatsappThreads, accountId]);
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const projectResourceQueries = useQueries({
     queries: projects.map((project) => projectResourcesOptions(wsId, project.id)),
@@ -776,6 +779,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             <TabsTrigger value="profile">{t(($) => $.tabs.profile)}</TabsTrigger>
             <TabsTrigger value="projects">{t(($) => $.tabs.projects)}</TabsTrigger>
             <TabsTrigger value="emails">{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</TabsTrigger>
+            <TabsTrigger value="whatsapp">WhatsApp{accountWhatsAppThreads.length > 0 ? <Badge variant="secondary" className="ml-2 tabular-nums">{accountWhatsAppThreads.length}</Badge> : null}</TabsTrigger>
             <TabsTrigger value="notes">{t(($) => $.tabs.notes)}</TabsTrigger>
           </TabsList>
         </div>
@@ -970,6 +974,28 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
                         </div>
                         <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{emailSummaryText(item) || "—"}</div>
                         <div className="mt-2 min-w-0 break-all text-xs text-muted-foreground">{[item.mailbox, sender, when ? new Date(when).toLocaleString() : "", item.thread_message_count ? t(($) => $.common.count_messages, { count: item.thread_message_count }) : null].filter(Boolean).join(" · ")}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </TabsContent>
+
+          <TabsContent value="whatsapp" className="min-w-0 space-y-6">
+            <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
+              {whatsappThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : accountWhatsAppThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">No linked WhatsApp conversations</div> : (
+                <div className="min-w-0 divide-y">
+                  {accountWhatsAppThreads.map((thread: any) => {
+                    const when = thread.last_message_at || thread.updated_at;
+                    return (
+                      <button key={thread.id} type="button" className="block w-full min-w-0 overflow-hidden px-4 py-3 text-left text-sm hover:bg-muted/50" onClick={() => window.open(paths.whatsapp(), "_blank", "noopener,noreferrer") }>
+                        <div className="flex min-w-0 items-center justify-between gap-3">
+                          <div className="min-w-0 truncate font-medium">{thread.title || thread.external_chat_id}</div>
+                          <Badge variant={thread.unread_count > 0 ? "default" : "secondary"} className="shrink-0">{thread.unread_count > 0 ? `${thread.unread_count} unread` : "linked"}</Badge>
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{thread.last_message_preview || "—"}</div>
+                        <div className="mt-2 min-w-0 break-all text-xs text-muted-foreground">{[thread.phone_number, when ? new Date(when).toLocaleString() : "", thread.thread_message_count ? `${thread.thread_message_count} messages` : null].filter(Boolean).join(" · ")}</div>
                       </button>
                     );
                   })}
