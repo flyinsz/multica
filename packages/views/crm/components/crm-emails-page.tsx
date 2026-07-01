@@ -605,6 +605,7 @@ export function CRMEmailsPage() {
   const [mailboxStatus, setMailboxStatus] = useState<string | null>(null);
   const [selectedThreadIds, setSelectedThreadIds] = useState<string[]>(initialThreadId ? [initialThreadId] : []);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(initialMessageId);
+  const [mobileEmailDetailOpen, setMobileEmailDetailOpen] = useState(Boolean(initialMessageId || initialThreadId));
   const [detailDialog, setDetailDialog] = useState<{ type: "account"; account: CRMAccount } | { type: "contact"; contact: CRMContact } | null>(null);
   const [issueDialogId, setIssueDialogId] = useState<string | null>(null);
   const [issuePickerOpen, setIssuePickerOpen] = useState(false);
@@ -1758,6 +1759,7 @@ export function CRMEmailsPage() {
     setSelectedDraftId(null);
     setSelectedMessageId(message.id);
     setSelectedThreadIds([message.thread_id]);
+    setMobileEmailDetailOpen(true);
   };
 
   return (
@@ -1784,7 +1786,7 @@ export function CRMEmailsPage() {
         </div>
       </PageHeader>
 
-      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(0,45%)_minmax(0,55%)] gap-0 overflow-hidden lg:grid-rows-none ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
+      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-0 overflow-hidden ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
         <aside className={`absolute inset-y-0 left-0 z-30 flex min-h-0 flex-col border-r bg-card/95 p-2 shadow-lg lg:relative lg:z-auto lg:bg-card/80 lg:shadow-none ${folderSidebarExpanded ? "w-56" : "w-14 items-center"}`}>
           <Button className="mb-2" size="icon" variant="ghost" title={folderSidebarExpanded ? "收起" : "展开"} onClick={() => setFolderSidebarExpanded((value) => !value)}>
             {folderSidebarExpanded ? <ChevronsLeft className="size-4" /> : <ChevronsRight className="size-4" />}
@@ -1844,7 +1846,7 @@ export function CRMEmailsPage() {
           <Button className="mt-auto" size={folderSidebarExpanded ? "default" : "icon"} variant="outline" title={t(($) => $.emails.add_mailbox)} onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{folderSidebarExpanded ? t(($) => $.emails.add_mailbox) : <Settings className="size-4" />}</Button>
         </aside>
 
-        <aside className={`min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background pl-14 lg:pl-0 ${composeHidesList ? "hidden" : "flex"}`}>
+        <aside className={`min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background pl-14 lg:pl-0 ${composeHidesList ? "hidden" : mobileEmailDetailOpen ? "hidden lg:flex" : "flex"}`}>
           <div className="border-b p-3">
             <div className="relative flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
@@ -1936,7 +1938,7 @@ export function CRMEmailsPage() {
           )}
         </aside>
 
-        <section className={`min-h-0 min-w-0 overflow-hidden border-t bg-background lg:border-t-0 ${composeHidesList ? "row-span-2" : ""}`}>
+        <section className={`min-h-0 min-w-0 overflow-hidden bg-background lg:border-t-0 ${composeHidesList || mobileEmailDetailOpen ? "flex" : "hidden lg:block"}`}>
           {composeDraft ? (
             <div className="flex h-full min-h-0 flex-col bg-background">
               <div className="border-b p-5">
@@ -2055,6 +2057,7 @@ export function CRMEmailsPage() {
           ) : (
             <div className="flex h-full min-h-0 flex-col">
               <div className="border-b bg-background p-3">
+                <Button className="mb-2 lg:hidden" variant="outline" size="sm" onClick={() => setMobileEmailDetailOpen(false)}>返回邮件列表</Button>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <h2 className={`truncate text-base ${selectedThread.is_read === true ? "font-semibold text-foreground/80" : "font-bold text-foreground"}`}>{selectedThread.subject}</h2>

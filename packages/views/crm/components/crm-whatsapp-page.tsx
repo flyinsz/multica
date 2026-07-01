@@ -159,8 +159,8 @@ export function CRMWhatsAppPage() {
         </div>
       </PageHeader>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] border-t bg-background">
-        <aside className="min-h-0 overflow-y-auto border-r bg-muted/20 p-3">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(0,34%)_minmax(0,66%)] border-t bg-background lg:grid-cols-[360px_minmax(0,1fr)] lg:grid-rows-none">
+        <aside className="min-h-0 min-w-0 overflow-y-auto border-b bg-muted/20 p-3 lg:border-b-0 lg:border-r">
           {threadsLoading ? <div className="space-y-2"><Skeleton className="h-20" /><Skeleton className="h-20" /></div> : threads.length === 0 ? (
             <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">No WhatsApp threads yet. Click Sync Hermes.</div>
           ) : (
@@ -191,7 +191,7 @@ export function CRMWhatsAppPage() {
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground"><MessageCircle className="mr-2 size-4" />Select WhatsApp thread</div>
           ) : (
             <>
-              <section className="border-b bg-card px-5 py-4">
+              <section className="max-h-[38vh] overflow-y-auto border-b bg-card px-3 py-3 sm:px-5 sm:py-4 lg:max-h-none lg:overflow-visible">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold">{selectedThread.title || selectedThread.external_chat_id}</div>
@@ -237,7 +237,7 @@ export function CRMWhatsAppPage() {
                 {associationMutation.isError ? <p className="mt-2 text-xs text-destructive">Failed to save association.</p> : null}
               </section>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
                 {messagesLoading ? (
                   <div className="space-y-3"><Skeleton className="h-20" /><Skeleton className="h-20" /></div>
                 ) : messages.length === 0 ? (
@@ -254,11 +254,11 @@ export function CRMWhatsAppPage() {
                 )}
               </div>
 
-              <div className="border-t bg-card p-4">
-                <div className="flex gap-2">
-                  <textarea className="min-h-20 flex-1 rounded-md border bg-background px-3 py-2 text-sm" placeholder="Reply on WhatsApp" value={replyText} onChange={(e) => setReplyText(e.target.value)} />
-                  <Button className="self-end" onClick={() => sendMutation.mutate()} disabled={!replyText.trim() || sendMutation.isPending}>
-                    <Send className="mr-2 size-4" />Send
+              <div className="shrink-0 border-t bg-card p-2 sm:p-4">
+                <div className="flex min-w-0 gap-2">
+                  <textarea className="min-h-14 min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-sm sm:min-h-20" placeholder="Reply on WhatsApp" value={replyText} onChange={(e) => setReplyText(e.target.value)} />
+                  <Button className="shrink-0 self-end" onClick={() => sendMutation.mutate()} disabled={!replyText.trim() || sendMutation.isPending}>
+                    <Send className="size-4 sm:mr-2" /><span className="hidden sm:inline">Send</span>
                   </Button>
                 </div>
               </div>

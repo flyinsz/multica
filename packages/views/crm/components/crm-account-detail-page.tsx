@@ -952,7 +952,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
                     </div>
                   </div>
                 )}
-                <Button className="h-auto w-full min-w-0 whitespace-normal text-wrap" onClick={openCreateFollowUpIssue}>{t(($) => $.projects.create_follow_up)}</Button>
+                <Button className="h-auto w-full min-w-0 justify-start whitespace-normal break-words text-left leading-5" onClick={openCreateFollowUpIssue}>{t(($) => $.projects.create_follow_up)}</Button>
               </div>
             </section>
           </TabsContent>
