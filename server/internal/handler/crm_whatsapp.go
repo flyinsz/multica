@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -161,6 +162,11 @@ func (h *Handler) SyncCRMWhatsAppFromHermes(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	if imported, handled := h.syncCRMWhatsAppFromHermesFile(r.Context(), workspaceID); handled {
+		writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "source": "file"})
+		return
+	}
+
 	base := strings.TrimRight(os.Getenv("CRM_WHATSAPP_HERMES_BASE_URL"), "/")
 	if base == "" {
 		base = "http://127.0.0.1:3000"
@@ -216,7 +222,47 @@ func (h *Handler) SyncCRMWhatsAppFromHermes(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"imported": imported})
+	writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "source": "http"})
+}
+
+func (h *Handler) syncCRMWhatsAppFromHermesFile(ctx context.Context, workspaceID pgtype.UUID) (int, bool) {
+	filePath := strings.TrimSpace(os.Getenv("CRM_WHATSAPP_HERMES_MESSAGES_FILE"))
+	if filePath == "" {
+		return 0, false
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		slog.Warn("failed to open hermes whatsapp crm message file", "path", filePath, "error", err)
+		return 0, true
+	}
+	defer f.Close()
+
+	imported := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var msg crmWhatsAppMessagePayload
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			slog.Warn("failed to parse hermes whatsapp crm message line", "error", err)
+			continue
+		}
+		if msg.MessageID == "" || msg.ChatID == "" {
+			continue
+		}
+		if _, err := h.upsertCRMWhatsAppMessage(ctx, workspaceID, "hermes", "default", msg); err == nil {
+			imported++
+		} else {
+			slog.Warn("failed to import whatsapp message from file", "error", err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("failed to scan hermes whatsapp crm message file", "path", filePath, "error", err)
+	}
+	return imported, true
 }
 
 func (h *Handler) ReceiveCRMWhatsAppHermesWebhook(w http.ResponseWriter, r *http.Request) {
