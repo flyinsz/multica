@@ -48,6 +48,7 @@ export function crmContactListOptions(wsId: string, accountId: string) {
     queryKey: crmKeys.contacts(wsId, accountId),
     queryFn: () => crmApi.listCRMContacts(accountId),
     select: (data) => data.contacts,
+    enabled: Boolean(wsId && accountId),
   });
 }
 
