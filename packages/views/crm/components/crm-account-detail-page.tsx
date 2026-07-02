@@ -720,7 +720,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
 
 
   if (accountError) {
-    return <div className="p-6 text-sm text-destructive">{t(($) => $.customers.load_error)}</div>;
+    return <div className="p-6 text-sm text-destructive">Failed to load customer.</div>;
   }
 
   if (accountLoading || !account) {
