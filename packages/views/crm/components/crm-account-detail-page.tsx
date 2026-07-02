@@ -472,7 +472,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
   const t = rawT as Translation;
   const locale = normalizeLocale(i18n.language);
 
-  const { data: account, isLoading: accountLoading } = useQuery(crmAccountDetailOptions(wsId, accountId));
+  const { data: account, isLoading: accountLoading, isError: accountError } = useQuery(crmAccountDetailOptions(wsId, accountId));
   const { data: profile, isLoading: profileLoading } = useQuery(crmAccountProfileOptions(wsId, accountId));
   const { data: contacts = [], isLoading: contactsLoading } = useQuery(crmContactListOptions(wsId, accountId));
   const { data: notes = [], isLoading: notesLoading } = useQuery(crmCommunicationNoteListOptions(wsId, accountId));
@@ -719,16 +719,16 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
   };
 
 
+  if (accountError) {
+    return <div className="p-6 text-sm text-destructive">{t(($) => $.customers.load_error)}</div>;
+  }
+
   if (accountLoading || !account) {
     return (
       <div className="flex h-full items-center justify-center">
         <Skeleton className="h-16 w-80" />
       </div>
     );
-  }
-
-  if (accountError) {
-    return <div className="p-6 text-sm text-destructive">{t(($) => $.customers.load_error)}</div>;
   }
 
   const mobileTabButton = (value: string, label: ReactNode, badge?: ReactNode) => (
