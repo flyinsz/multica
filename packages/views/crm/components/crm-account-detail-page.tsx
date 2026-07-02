@@ -517,6 +517,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
   const [noteForm, setNoteForm] = useState<NoteFormState>(() => blankNoteForm());
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [selectedFollowUpProjectId, setSelectedFollowUpProjectId] = useState("");
+  const [activeTab, setActiveTab] = useState("overview");
   const [createLinkedProjectOpen, setCreateLinkedProjectOpen] = useState(false);
   const setProjectDraft = useProjectDraftStore((s) => s.setDraft);
   const clearProjectDraft = useProjectDraftStore((s) => s.clearDraft);
@@ -726,6 +727,22 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
     );
   }
 
+  if (accountError) {
+    return <div className="p-6 text-sm text-destructive">{t(($) => $.customers.load_error)}</div>;
+  }
+
+  const mobileTabButton = (value: string, label: ReactNode, badge?: ReactNode) => (
+    <button
+      type="button"
+      className="flex w-full items-center justify-between rounded-lg border bg-card px-4 py-3 text-left text-sm font-medium sm:hidden"
+      onClick={() => setActiveTab(value)}
+      aria-expanded={activeTab === value}
+    >
+      <span className="min-w-0 truncate">{label}</span>
+      {badge ?? <ChevronRight className={`size-4 shrink-0 transition-transform ${activeTab === value ? "rotate-90" : ""}`} />}
+    </button>
+  );
+
   return (
     <div className={inline ? "flex h-full min-w-0 flex-col overflow-x-hidden rounded-xl bg-background" : "flex h-full min-w-0 flex-col overflow-x-hidden"}>
       {!inline && (
@@ -771,8 +788,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
         </div>
       )}
 
-      <Tabs defaultValue="overview" className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
-        <div className="z-10 shrink-0 border-b bg-muted/20 px-3 py-2 sm:px-6 sm:py-3">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
+        <div className="z-10 hidden shrink-0 border-b bg-muted/20 px-3 py-2 sm:block sm:px-6 sm:py-3">
           <TabsList variant="line" className="hidden w-full min-w-0 items-center justify-start overflow-x-auto whitespace-nowrap sm:flex">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
             <TabsTrigger value="contacts">{t(($) => $.tabs.contacts)}</TabsTrigger>
@@ -782,19 +799,11 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             <TabsTrigger value="whatsapp">WhatsApp{accountWhatsAppThreads.length > 0 ? <Badge variant="secondary" className="ml-2 tabular-nums">{accountWhatsAppThreads.length}</Badge> : null}</TabsTrigger>
             <TabsTrigger value="notes">{t(($) => $.tabs.notes)}</TabsTrigger>
           </TabsList>
-          <TabsList variant="line" className="grid h-auto w-full min-w-0 grid-cols-1 gap-1 rounded-md bg-background/70 p-1 sm:hidden">
-            <TabsTrigger value="overview" className="justify-between text-left">{t(($) => $.tabs.overview)}<ChevronRight className="size-3" /></TabsTrigger>
-            <TabsTrigger value="contacts" className="justify-between text-left">{t(($) => $.tabs.contacts)}<ChevronRight className="size-3" /></TabsTrigger>
-            <TabsTrigger value="profile" className="justify-between text-left">{t(($) => $.tabs.profile)}<ChevronRight className="size-3" /></TabsTrigger>
-            <TabsTrigger value="projects" className="justify-between text-left">{t(($) => $.tabs.projects)}<ChevronRight className="size-3" /></TabsTrigger>
-            <TabsTrigger value="emails" className="justify-between text-left">{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : <ChevronRight className="size-3" />}</TabsTrigger>
-            <TabsTrigger value="whatsapp" className="justify-between text-left">WhatsApp{accountWhatsAppThreads.length > 0 ? <Badge variant="secondary" className="ml-2 tabular-nums">{accountWhatsAppThreads.length}</Badge> : <ChevronRight className="size-3" />}</TabsTrigger>
-            <TabsTrigger value="notes" className="justify-between text-left">{t(($) => $.tabs.notes)}<ChevronRight className="size-3" /></TabsTrigger>
-          </TabsList>
         </div>
 
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-muted/10 p-3 sm:p-6">
-          <TabsContent value="overview" className="min-w-0 space-y-6">
+        <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto bg-muted/10 p-3 sm:space-y-0 sm:p-6">
+          {mobileTabButton("overview", t(($) => $.tabs.overview))}
+          <TabsContent value="overview" className="min-w-0 space-y-6 data-[state=inactive]:hidden">
             <section className="rounded-lg border bg-card p-4">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <FieldRow label={t(($) => $.customers.account_code)} value={account.account_code} />
@@ -822,7 +831,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="contacts" className="min-w-0 space-y-4">
+          {mobileTabButton("contacts", t(($) => $.tabs.contacts))}
+          <TabsContent value="contacts" className="min-w-0 space-y-4 data-[state=inactive]:hidden">
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setContactForm(blankContactForm())}>
                 <Plus className="mr-1 size-4" /> {t(($) => $.contacts.add)}
@@ -867,7 +877,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="profile" className="min-w-0 space-y-6">
+          {mobileTabButton("profile", t(($) => $.tabs.profile))}
+          <TabsContent value="profile" className="min-w-0 space-y-6 data-[state=inactive]:hidden">
             <section className="rounded-lg border bg-card p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -913,7 +924,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="projects" className="grid w-full min-w-0 max-w-full grid-cols-1 gap-6 2xl:grid-cols-2">
+          {mobileTabButton("projects", t(($) => $.tabs.projects))}
+          <TabsContent value="projects" className="grid w-full min-w-0 max-w-full grid-cols-1 gap-6 data-[state=inactive]:hidden 2xl:grid-cols-2">
             <section className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-card p-4">
               <h3 className="min-w-0 break-words text-sm font-medium">{t(($) => $.projects.link_title)}</h3>
               <p className="mt-1 min-w-0 break-words text-xs text-muted-foreground">{t(($) => $.projects.selector_help)}</p>
@@ -968,7 +980,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="emails" className="min-w-0 space-y-6">
+          {mobileTabButton("emails", t(($) => $.tabs.emails), unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : undefined)}
+          <TabsContent value="emails" className="min-w-0 space-y-6 data-[state=inactive]:hidden">
             <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
               {emailThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : accountEmailItems.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.account_empty)}</div> : (
                 <div className="min-w-0 divide-y">
@@ -993,7 +1006,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="whatsapp" className="min-w-0 space-y-6">
+          {mobileTabButton("whatsapp", "WhatsApp", accountWhatsAppThreads.length > 0 ? <Badge variant="secondary" className="ml-2 tabular-nums">{accountWhatsAppThreads.length}</Badge> : undefined)}
+          <TabsContent value="whatsapp" className="min-w-0 space-y-6 data-[state=inactive]:hidden">
             <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
               {whatsappThreadsLoading ? <div className="space-y-2 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : accountWhatsAppThreads.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">No linked WhatsApp conversations</div> : (
                 <div className="min-w-0 divide-y">
@@ -1015,7 +1029,8 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
             </section>
           </TabsContent>
 
-          <TabsContent value="notes" className="min-w-0 space-y-6">
+          {mobileTabButton("notes", t(($) => $.tabs.notes))}
+          <TabsContent value="notes" className="min-w-0 space-y-6 data-[state=inactive]:hidden">
             <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
               <div className="border-b p-4">
                 <div className="grid min-w-0 gap-3 md:grid-cols-3">

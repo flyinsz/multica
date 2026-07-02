@@ -166,7 +166,7 @@ export function CRMDashboardPage() {
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={openAIEmailComposer}><PenLine className="mr-1 size-4" />{t(($) => $.dashboard.ai_write_email)}</Button>
           <Button size="sm" variant="outline" onClick={() => navigation.push(paths.emails())}>{t(($) => $.tabs.emails)}{unreadEmailCount > 0 ? <Badge variant="default" className="ml-2 tabular-nums">{unreadEmailCount}</Badge> : null}</Button>
-          <Button size="sm" onClick={() => navigation.push(paths.customers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
+          <Button size="sm" className="hidden md:inline-flex" onClick={() => navigation.push(paths.customers())}><Plus className="mr-1 size-4" />{t(($) => $.customers.title)}</Button>
         </div>
       </PageHeader>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 pb-11">
