@@ -4,7 +4,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, MessageCircle, Plus, PlusCircle, RefreshCw, Send, UserRound } from "lucide-react";
+import { api } from "@multica/core/api";
 import { crmApi } from "@multica/core/crm/api";
+import { AccountForm, accountFormToCreatePayload, blankAccountForm, type AccountFormState, type Translation } from "./crm-page";
+import { ContactForm, blankContactForm, contactPayload, type ContactFormState } from "./crm-account-detail-page";
 import { crmAccountListOptions, crmContactListOptions, crmKeys, crmWhatsAppMessageListOptions, crmWhatsAppThreadListOptions } from "@multica/core/crm/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssueDraftStore } from "@multica/core/issues";
@@ -12,10 +15,11 @@ import { useModalStore } from "@multica/core/modals";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
-import { Input } from "@multica/ui/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
+import { useT } from "../../i18n";
+import { normalizeLocale } from "../geo";
 
 const NONE = "__none__";
 
@@ -25,9 +29,14 @@ export function CRMWhatsAppPage() {
   const openModal = useModalStore((state) => state.open);
   const setIssueDraft = useIssueDraftStore((state) => state.setDraft);
   const clearIssueDraft = useIssueDraftStore((state) => state.clearDraft);
+  const { t: rawT, i18n } = useT("crm" as any);
+  const t = rawT as Translation;
+  const locale = normalizeLocale(i18n.language);
 
   const { data: threads = [], isLoading: threadsLoading } = useQuery(crmWhatsAppThreadListOptions(wsId));
   const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
+  const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-whatsapp"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
+  const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-whatsapp"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
   const [selectedThreadId, setSelectedThreadId] = useState<string>("");
   const selectedThread = useMemo(() => threads.find((thread) => thread.id === (selectedThreadId || threads[0]?.id)), [threads, selectedThreadId]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery(crmWhatsAppMessageListOptions(wsId, selectedThread?.id ?? ""));
@@ -37,8 +46,8 @@ export function CRMWhatsAppPage() {
   const [createAccountOpen, setCreateAccountOpen] = useState(false);
   const [createContactOpen, setCreateContactOpen] = useState(false);
   const [linkPanelOpen, setLinkPanelOpen] = useState(false);
-  const [accountForm, setAccountForm] = useState({ name: "", website: "", notes: "" });
-  const [contactForm, setContactForm] = useState({ name: "", email: "", phone: "", whatsapp: "", jobTitle: "", notes: "" });
+  const [accountForm, setAccountForm] = useState<AccountFormState>(() => blankAccountForm());
+  const [contactForm, setContactForm] = useState<ContactFormState>(() => blankContactForm());
   const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accounts, accountId]);
   const { data: contacts = [], isLoading: contactsLoading } = useQuery(crmContactListOptions(wsId, accountId));
   const selectedContact = useMemo(() => contacts.find((contact) => contact.id === contactId), [contacts, contactId]);
@@ -60,41 +69,21 @@ export function CRMWhatsAppPage() {
   });
 
   const createAccountMutation = useMutation({
-    mutationFn: () => crmApi.createCRMAccount({
-      name: accountForm.name.trim(),
-      website: accountForm.website.trim() || null,
-      notes: accountForm.notes.trim() || null,
-      source: "whatsapp",
-      status: "active",
-      account_type: "prospect",
-      rating: "unknown",
-      priority: "medium",
-    }),
+    mutationFn: async () => crmApi.createCRMAccount(await accountFormToCreatePayload(accountForm, locale)),
     onSuccess: async (account) => {
       setAccountId(account.id);
       setContactId("");
-      setAccountForm({ name: "", website: "", notes: "" });
+      setAccountForm(blankAccountForm());
       setCreateAccountOpen(false);
       await queryClient.invalidateQueries({ queryKey: crmKeys.accounts(wsId) });
     },
   });
 
   const createContactMutation = useMutation({
-    mutationFn: () => crmApi.createCRMContact(accountId, {
-      name: contactForm.name.trim(),
-      email: contactForm.email.trim() || null,
-      phone: contactForm.phone.trim() || null,
-      mobile: contactForm.phone.trim() || null,
-      whatsapp_id: contactForm.whatsapp.trim() || selectedThread?.phone_number || null,
-      whatsapp: contactForm.whatsapp.trim() || selectedThread?.phone_number || null,
-      job_title: contactForm.jobTitle.trim() || null,
-      role_title: contactForm.jobTitle.trim() || null,
-      notes: contactForm.notes.trim() || null,
-      is_primary: contacts.length === 0,
-    }),
+    mutationFn: () => crmApi.createCRMContact(accountId, contactPayload({ ...contactForm, isPrimary: contacts.length === 0 })),
     onSuccess: async (contact) => {
       setContactId(contact.id);
-      setContactForm({ name: "", email: "", phone: "", whatsapp: "", jobTitle: "", notes: "" });
+      setContactForm(blankContactForm());
       setCreateContactOpen(false);
       await queryClient.invalidateQueries({ queryKey: crmKeys.contacts(wsId, accountId) });
     },
@@ -202,10 +191,10 @@ export function CRMWhatsAppPage() {
                     <Button variant="outline" size="sm" onClick={() => setLinkPanelOpen((value) => !value)}>
                       <Building2 className="size-4 sm:mr-1" /><span className="hidden sm:inline">Link</span>
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => { setAccountForm({ name: selectedThread.title || selectedThread.phone_number || "", website: "", notes: selectedThread.phone_number ? `WhatsApp: ${selectedThread.phone_number}` : "" }); setCreateAccountOpen(true); }}>
+                    <Button variant="outline" size="sm" onClick={() => { setAccountForm({ ...blankAccountForm(), name: selectedThread.title || selectedThread.phone_number || "", source: "whatsapp", notes: selectedThread.phone_number ? `WhatsApp: ${selectedThread.phone_number}` : "" }); setCreateAccountOpen(true); }}>
                       <Plus className="size-4 sm:mr-1" /><span className="hidden sm:inline">New customer</span>
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => { setContactForm({ name: selectedThread.title || "", email: "", phone: selectedThread.phone_number || "", whatsapp: selectedThread.phone_number || "", jobTitle: "", notes: "" }); setCreateContactOpen(true); }} disabled={!accountId}>
+                    <Button variant="outline" size="sm" onClick={() => { setContactForm({ ...blankContactForm(), name: selectedThread.title || "", phone: selectedThread.phone_number || "", mobile: selectedThread.phone_number || "", whatsapp: selectedThread.phone_number || "", isPrimary: contacts.length === 0 }); setCreateContactOpen(true); }} disabled={!accountId}>
                       <Plus className="size-4 sm:mr-1" /><span className="hidden sm:inline">New contact</span>
                     </Button>
                   </div>
@@ -277,11 +266,7 @@ export function CRMWhatsAppPage() {
             <DialogTitle>New customer</DialogTitle>
             <DialogDescription>Create customer from this WhatsApp conversation.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
-            <Input value={accountForm.name} onChange={(e) => setAccountForm({ ...accountForm, name: e.target.value })} placeholder="Customer name" />
-            <Input value={accountForm.website} onChange={(e) => setAccountForm({ ...accountForm, website: e.target.value })} placeholder="Website" />
-            <textarea className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm sm:col-span-2" value={accountForm.notes} onChange={(e) => setAccountForm({ ...accountForm, notes: e.target.value })} placeholder="Notes" />
-          </div>
+          <AccountForm form={accountForm} setForm={setAccountForm} t={t} locale={locale} suggestedTags={[]} members={members} agents={agents} />
           {createAccountMutation.isError ? <p className="text-xs text-destructive">Failed to create customer.</p> : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateAccountOpen(false)}>Cancel</Button>
@@ -296,14 +281,7 @@ export function CRMWhatsAppPage() {
             <DialogTitle>New contact</DialogTitle>
             <DialogDescription>{selectedAccount ? `Create contact under ${selectedAccount.name}.` : "Select customer first."}</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
-            <Input value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} placeholder="Contact name" />
-            <Input value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} placeholder="Email" />
-            <Input value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} placeholder="Phone" />
-            <Input value={contactForm.whatsapp} onChange={(e) => setContactForm({ ...contactForm, whatsapp: e.target.value })} placeholder="WhatsApp" />
-            <Input value={contactForm.jobTitle} onChange={(e) => setContactForm({ ...contactForm, jobTitle: e.target.value })} placeholder="Job title" />
-            <textarea className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm sm:col-span-2" value={contactForm.notes} onChange={(e) => setContactForm({ ...contactForm, notes: e.target.value })} placeholder="Notes" />
-          </div>
+          <ContactForm form={contactForm} setForm={setContactForm} t={t} />
           {createContactMutation.isError ? <p className="text-xs text-destructive">Failed to create contact.</p> : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateContactOpen(false)}>Cancel</Button>

@@ -38,14 +38,14 @@ import { appendTag, CRM_INDUSTRY_OPTIONS, formatDateTimeLocal, industryLabel, op
 import { crmApi } from "@multica/core/crm/api";
 
 type CRMResources = typeof crmResources;
-type Translation = (
+export type Translation = (
   selector: (resources: CRMResources) => string,
   options?: Record<string, unknown>,
 ) => string;
 
 type AccountOwnerType = "" | "member" | "agent";
 
-type AccountFormState = {
+export type AccountFormState = {
   name: string;
   accountType: CRMAccountType;
   status: CRMAccountStatus;
@@ -68,7 +68,7 @@ type AccountFormState = {
   notes: string;
 };
 
-const blankAccountForm = (): AccountFormState => ({
+export const blankAccountForm = (): AccountFormState => ({
   name: "",
   accountType: "prospect",
   status: "active",
@@ -138,6 +138,38 @@ const priorityLabel = (t: Translation, value: CRMAccountPriority) => t(($) => $.
 const localizedNameOrFallback = (name: Parameters<typeof localizedName>[0] | undefined, locale: "en" | "zh-Hans", fallback: string) => name ? localizedName(name, locale) : fallback;
 const optionLabelOrFallback = (option: Parameters<typeof optionLabel>[0] | undefined, locale: "en" | "zh-Hans", fallback: string) => option ? optionLabel(option, locale) : fallback;
 
+export async function accountFormToCreatePayload(form: AccountFormState, locale: "en" | "zh-Hans") {
+  const country = countryByCode(form.countryCode);
+  const regions = await loadRegionOptions(form.countryCode, locale);
+  const region = regions.find((option) => option.code === form.regionCode);
+  const cities = await loadCityOptions(form.countryCode, form.regionCode, locale);
+  const city = cities.find((option) => option.code === form.cityCode);
+  return {
+    name: form.name,
+    account_type: form.accountType,
+    website: form.website || null,
+    country: form.countryCode || null,
+    country_code: form.countryCode || null,
+    country_name: country ? localizedName(country.name, locale) : null,
+    region: region ? localizedName(region.name, locale) : null,
+    city: city ? localizedName(city.name, locale) : null,
+    industry: form.industry || null,
+    sub_industry: form.subIndustry || null,
+    status: form.status,
+    source: form.source,
+    rating: form.rating,
+    priority: form.priority,
+    owner_type: form.ownerType || null,
+    owner_member_id: form.ownerType === "member" ? form.ownerMemberID || null : null,
+    owner_agent_id: form.ownerType === "agent" ? form.ownerAgentID || null : null,
+    annual_revenue: form.annualRevenue || null,
+    employee_count: form.employeeCount || null,
+    tags: splitTags(form.tags),
+    next_follow_up_at: form.nextFollowUpAt ? new Date(form.nextFollowUpAt).toISOString() : null,
+    notes: form.notes || null,
+  };
+}
+
 const ownerLabel = (t: Translation, form: AccountFormState, members: Array<{ id: string; user_id: string; name: string; email: string; user?: { name?: string; email?: string } }>, agents: Array<{ id: string; name: string }>) => {
   if (form.ownerType === "member") {
     const member = members.find((item) => item.user_id === form.ownerMemberID || item.id === form.ownerMemberID);
@@ -159,7 +191,7 @@ function LabeledField({ label, className = "", children }: { label: string; clas
   );
 }
 
-function AccountForm({
+export function AccountForm({
   form,
   setForm,
   t,
@@ -256,37 +288,7 @@ export function CRMPage() {
   const suggestedTags = useMemo(() => tagSuggestions(accounts), [accounts]);
 
   const createAccount = useMutation({
-    mutationFn: async () => {
-      const country = countryByCode(form.countryCode);
-      const regions = await loadRegionOptions(form.countryCode, locale);
-      const region = regions.find((option) => option.code === form.regionCode);
-      const cities = await loadCityOptions(form.countryCode, form.regionCode, locale);
-      const city = cities.find((option) => option.code === form.cityCode);
-      return crmApi.createCRMAccount({
-        name: form.name,
-        account_type: form.accountType,
-        website: form.website || null,
-        country: form.countryCode || null,
-        country_code: form.countryCode || null,
-        country_name: country ? localizedName(country.name, locale) : null,
-        region: region ? localizedName(region.name, locale) : null,
-        city: city ? localizedName(city.name, locale) : null,
-        industry: form.industry || null,
-        sub_industry: form.subIndustry || null,
-        status: form.status,
-        source: form.source,
-        rating: form.rating,
-        priority: form.priority,
-        owner_type: form.ownerType || null,
-        owner_member_id: form.ownerType === "member" ? form.ownerMemberID || null : null,
-        owner_agent_id: form.ownerType === "agent" ? form.ownerAgentID || null : null,
-        annual_revenue: form.annualRevenue || null,
-        employee_count: form.employeeCount || null,
-        tags: splitTags(form.tags),
-        next_follow_up_at: form.nextFollowUpAt ? new Date(form.nextFollowUpAt).toISOString() : null,
-        notes: form.notes || null,
-      });
-    },
+    mutationFn: async () => crmApi.createCRMAccount(await accountFormToCreatePayload(form, locale)),
     onSuccess: async (account) => {
       setForm(blankAccountForm());
       setCreateOpen(false);

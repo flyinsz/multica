@@ -89,7 +89,7 @@ type AccountFormState = {
   notes: string;
 };
 
-type ContactFormState = {
+export type ContactFormState = {
   id?: string;
   name: string;
   email: string;
@@ -252,7 +252,7 @@ function accountToForm(account: CRMAccount): AccountFormState {
   };
 }
 
-const blankContactForm = (): ContactFormState => ({
+export const blankContactForm = (): ContactFormState => ({
   name: "",
   email: "",
   phone: "",
@@ -379,7 +379,7 @@ function AccountForm({ form, setForm, t, locale, suggestedTags = [], members = [
   );
 }
 
-function ContactForm({ form, setForm, t }: { form: ContactFormState; setForm: (next: ContactFormState) => void; t: Translation }) {
+export function ContactForm({ form, setForm, t }: { form: ContactFormState; setForm: (next: ContactFormState) => void; t: Translation }) {
   return (
     <div className="grid max-h-[70vh] gap-4 overflow-y-auto rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
       <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t(($) => $.contacts.name)} />
@@ -412,7 +412,7 @@ function ContactForm({ form, setForm, t }: { form: ContactFormState; setForm: (n
   );
 }
 
-function contactPayload(form: ContactFormState): CreateCRMContactRequest {
+export function contactPayload(form: ContactFormState): CreateCRMContactRequest {
   return {
     name: form.name,
     email: form.email || null,
