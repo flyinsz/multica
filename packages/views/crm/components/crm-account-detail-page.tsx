@@ -744,7 +744,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
   );
 
   return (
-    <div className={inline ? "flex h-full min-w-0 flex-col overflow-x-hidden rounded-xl bg-background" : "flex h-full min-w-0 flex-col overflow-x-hidden"}>
+    <div className={inline ? "flex h-full min-w-0 flex-col overflow-x-hidden overflow-y-auto rounded-xl bg-background" : "flex h-full min-w-0 flex-col overflow-x-hidden overflow-y-auto"}>
       {!inline && (
         <div className="shrink-0 border-b px-5 py-4">
           <nav className="mb-3 flex items-center gap-1 text-xs" aria-label="Breadcrumb">
@@ -788,7 +788,7 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
         </div>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-visible lg:overflow-hidden">
         <div className="z-10 hidden shrink-0 border-b bg-muted/20 px-3 py-2 sm:block sm:px-6 sm:py-3">
           <TabsList variant="line" className="hidden w-full min-w-0 items-center justify-start overflow-x-auto whitespace-nowrap sm:flex">
             <TabsTrigger value="overview">{t(($) => $.tabs.overview)}</TabsTrigger>
@@ -880,10 +880,10 @@ export function CRMAccountDetailPage({ accountId, inline = false }: { accountId:
           {mobileTabButton("profile", t(($) => $.tabs.profile))}
           <TabsContent value="profile" className="min-w-0 space-y-6 data-[state=inactive]:hidden">
             <section className="rounded-lg border bg-card p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-medium">{t(($) => $.profile.title)}</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">{t(($) => $.profile.help)}</p>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">{t(($) => $.profile.help)}</p>
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={refreshProfile.isPending} onClick={() => refreshProfile.mutate()}>

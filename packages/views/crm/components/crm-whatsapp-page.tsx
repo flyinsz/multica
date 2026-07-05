@@ -33,13 +33,23 @@ export function CRMWhatsAppPage() {
   const t = rawT as Translation;
   const locale = normalizeLocale(i18n.language);
 
-  const { data: threads = [], isLoading: threadsLoading } = useQuery(crmWhatsAppThreadListOptions(wsId));
+  const { data: threads = [], isLoading: threadsLoading } = useQuery({
+    ...crmWhatsAppThreadListOptions(wsId),
+    refetchInterval: 10000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
   const { data: accounts = [] } = useQuery(crmAccountListOptions(wsId, { sort: "name" }));
   const { data: members = [] } = useQuery({ queryKey: ["workspace", wsId, "members", "crm-whatsapp"], queryFn: () => api.listMembers(wsId), enabled: Boolean(wsId) });
   const { data: agents = [] } = useQuery({ queryKey: ["agents", wsId, "crm-whatsapp"], queryFn: () => api.listAgents({ workspace_id: wsId }), enabled: Boolean(wsId) });
   const [selectedThreadId, setSelectedThreadId] = useState<string>("");
   const selectedThread = useMemo(() => threads.find((thread) => thread.id === (selectedThreadId || threads[0]?.id)), [threads, selectedThreadId]);
-  const { data: messages = [], isLoading: messagesLoading } = useQuery(crmWhatsAppMessageListOptions(wsId, selectedThread?.id ?? ""));
+  const { data: messages = [], isLoading: messagesLoading } = useQuery({
+    ...crmWhatsAppMessageListOptions(wsId, selectedThread?.id ?? ""),
+    refetchInterval: selectedThread ? 10000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
   const [replyText, setReplyText] = useState("");
   const [accountId, setAccountId] = useState("");
   const [contactId, setContactId] = useState("");

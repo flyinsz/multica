@@ -202,9 +202,9 @@ function inferContactDraft(messages: Array<{ from_name?: string | null; from_ema
 
 function DetailRow({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="rounded-md border bg-muted/20 px-3 py-2">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm">{value || "—"}</div>
+    <div className="min-w-0 rounded-md border bg-muted/20 px-3 py-2">
+      <div className="break-words text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 break-all text-sm">{value || "—"}</div>
     </div>
   );
 }
@@ -1763,7 +1763,7 @@ export function CRMEmailsPage() {
   };
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-muted/20">
+    <div className="flex h-full min-w-0 flex-col overflow-x-hidden overflow-y-auto bg-muted/20">
       <PageHeader className="flex-wrap justify-between gap-2 border-b bg-background px-3 sm:px-5">
         <div className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
@@ -1786,8 +1786,8 @@ export function CRMEmailsPage() {
         </div>
       </PageHeader>
 
-      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-0 overflow-hidden ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
-        <aside className={`absolute inset-y-0 left-0 z-30 flex min-h-0 flex-col border-r bg-card/95 p-2 shadow-lg lg:relative lg:z-auto lg:bg-card/80 lg:shadow-none ${folderSidebarExpanded ? "w-56" : "w-14 items-center"}`}>
+      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-0 overflow-visible lg:overflow-hidden ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
+        <aside className={`relative z-0 flex min-h-0 flex-col border-r bg-card/95 p-2 shadow-lg lg:bg-card/80 lg:shadow-none ${folderSidebarExpanded ? "w-full lg:w-56" : "w-full flex-row items-center gap-1 overflow-x-auto lg:w-14 lg:flex-col lg:overflow-x-visible"}`}>
           <Button className="mb-2" size="icon" variant="ghost" title={folderSidebarExpanded ? "收起" : "展开"} onClick={() => setFolderSidebarExpanded((value) => !value)}>
             {folderSidebarExpanded ? <ChevronsLeft className="size-4" /> : <ChevronsRight className="size-4" />}
           </Button>
@@ -1846,7 +1846,7 @@ export function CRMEmailsPage() {
           <Button className="mt-auto" size={folderSidebarExpanded ? "default" : "icon"} variant="outline" title={t(($) => $.emails.add_mailbox)} onClick={() => { setMailboxDraft(emptyMailboxDraft); setMailboxStatus(null); setSettingsOpen(true); }}>{folderSidebarExpanded ? t(($) => $.emails.add_mailbox) : <Settings className="size-4" />}</Button>
         </aside>
 
-        <aside className={`min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background pl-14 lg:pl-0 ${composeHidesList ? "hidden" : mobileEmailDetailOpen ? "hidden lg:flex" : "flex"}`}>
+        <aside className={`min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background pl-0 ${composeHidesList ? "hidden" : mobileEmailDetailOpen ? "hidden lg:flex" : "flex"}`}>
           <div className="border-b p-3">
             <div className="relative flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
@@ -1938,7 +1938,7 @@ export function CRMEmailsPage() {
           )}
         </aside>
 
-        <section className={`min-h-0 min-w-0 overflow-hidden bg-background lg:border-t-0 ${composeHidesList || mobileEmailDetailOpen ? "flex" : "hidden lg:block"}`}>
+        <section className={`min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-background lg:border-t-0 ${composeHidesList || mobileEmailDetailOpen ? "flex flex-col" : "hidden lg:block"}`}>
           {composeDraft ? (
             <div className="flex h-full min-h-0 flex-col bg-background">
               <div className="border-b p-5">

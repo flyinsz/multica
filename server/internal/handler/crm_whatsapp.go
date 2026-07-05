@@ -80,6 +80,7 @@ func (h *Handler) ListCRMWhatsAppThreads(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	_, _ = h.syncCRMWhatsAppFromHermesFile(r.Context(), workspaceID)
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT t.id, t.workspace_id, t.external_chat_id, t.title, t.phone_number,
 		       t.account_id, t.contact_id, t.last_message_at, t.unread_count,
@@ -446,11 +447,17 @@ func (h *Handler) upsertCRMWhatsAppMessage(ctx context.Context, workspaceID pgty
 			ON CONFLICT (workspace_id, provider, provider_account_id)
 			DO UPDATE SET status = 'connected', updated_at = now()
 			RETURNING id
+		), cm AS (
+			SELECT id, account_id
+			FROM crm_contact
+			WHERE workspace_id = $1
+			  AND regexp_replace(COALESCE(NULLIF(whatsapp_id, ''), NULLIF(whatsapp, ''), NULLIF(mobile, ''), NULLIF(phone, ''), ''), '\\D', '', 'g') = regexp_replace($6, '\\D', '', 'g')
+			LIMIT 1
 		), th AS (
-			INSERT INTO crm_whatsapp_thread (workspace_id, whatsapp_account_id, external_chat_id, title, phone_number, last_message_at, unread_count)
-			SELECT $1, acct.id, $4, $5, $6, $7, CASE WHEN $8 = 'inbound' THEN 1 ELSE 0 END FROM acct
+			INSERT INTO crm_whatsapp_thread (workspace_id, whatsapp_account_id, external_chat_id, title, phone_number, account_id, contact_id, last_message_at, unread_count)
+			SELECT $1, acct.id, $4, $5, $6, cm.account_id, cm.id, $7, CASE WHEN $8 = 'inbound' THEN 1 ELSE 0 END FROM acct LEFT JOIN cm ON true
 			ON CONFLICT (workspace_id, whatsapp_account_id, external_chat_id)
-			DO UPDATE SET title = EXCLUDED.title, phone_number = COALESCE(NULLIF(EXCLUDED.phone_number, ''), crm_whatsapp_thread.phone_number), last_message_at = GREATEST(crm_whatsapp_thread.last_message_at, EXCLUDED.last_message_at), updated_at = now()
+			DO UPDATE SET title = EXCLUDED.title, phone_number = COALESCE(NULLIF(EXCLUDED.phone_number, ''), crm_whatsapp_thread.phone_number), account_id = COALESCE(crm_whatsapp_thread.account_id, EXCLUDED.account_id), contact_id = COALESCE(crm_whatsapp_thread.contact_id, EXCLUDED.contact_id), last_message_at = GREATEST(crm_whatsapp_thread.last_message_at, EXCLUDED.last_message_at), updated_at = now()
 			RETURNING id
 		), ins AS (
 			INSERT INTO crm_whatsapp_message (workspace_id, thread_id, external_message_id, direction, from_number, to_number, body_text, media, sent_at, received_at, raw)
