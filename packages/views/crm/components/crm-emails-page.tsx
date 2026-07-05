@@ -163,7 +163,7 @@ function EmailHTMLFrame({ html }: { html: string }) {
       title="Email HTML body"
       sandbox="allow-popups allow-popups-to-escape-sandbox"
       referrerPolicy="no-referrer"
-      className="h-[28rem] w-full rounded-md border bg-white"
+      className="h-[60vh] min-h-80 w-full rounded-md border bg-white sm:h-[28rem]"
       srcDoc={emailSandboxDocument(html)}
     />
   );
@@ -1763,7 +1763,7 @@ export function CRMEmailsPage() {
   };
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-x-hidden overflow-y-auto bg-muted/20">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-muted/20">
       <PageHeader className="flex-wrap justify-between gap-2 border-b bg-background px-3 sm:px-5">
         <div className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
@@ -1786,8 +1786,8 @@ export function CRMEmailsPage() {
         </div>
       </PageHeader>
 
-      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-0 overflow-visible lg:overflow-hidden ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
-        <aside className={`relative z-0 flex min-h-0 flex-col border-r bg-card/95 p-2 shadow-lg lg:bg-card/80 lg:shadow-none ${folderSidebarExpanded ? "w-full lg:w-56" : "w-full flex-row items-center gap-1 overflow-x-auto lg:w-14 lg:flex-col lg:overflow-x-visible"}`}>
+      <div className={`relative grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-0 overflow-hidden ${composeHidesList ? (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(0,1fr)]") : (folderSidebarExpanded ? "lg:grid-cols-[220px_minmax(280px,40%)_minmax(0,1fr)]" : "lg:grid-cols-[64px_minmax(280px,40%)_minmax(0,1fr)]")}`}>
+        <aside className={`hidden min-h-0 flex-col border-r bg-card/80 p-2 lg:flex ${folderSidebarExpanded ? "lg:w-56" : "lg:w-14"}`}>
           <Button className="mb-2" size="icon" variant="ghost" title={folderSidebarExpanded ? "收起" : "展开"} onClick={() => setFolderSidebarExpanded((value) => !value)}>
             {folderSidebarExpanded ? <ChevronsLeft className="size-4" /> : <ChevronsRight className="size-4" />}
           </Button>
@@ -1848,6 +1848,35 @@ export function CRMEmailsPage() {
 
         <aside className={`min-h-0 min-w-0 flex-col overflow-hidden border-r bg-background pl-0 ${composeHidesList ? "hidden" : mobileEmailDetailOpen ? "hidden lg:flex" : "flex"}`}>
           <div className="border-b p-3">
+            <select
+              aria-label={t(($) => $.emails.folder_nav)}
+              className="mb-3 h-9 w-full rounded-md border bg-background px-2 text-sm lg:hidden"
+              value={activeFolder}
+              onChange={(event) => {
+                const folder = event.target.value as EmailFolderKey;
+                void (async () => {
+                  if (!(await leaveComposeIfNeeded())) return;
+                  setActiveFolder(folder);
+                  setSearch("");
+                  setQuickFilter("all");
+                  setSelectedThreadIds([]);
+                  setSelectedMessageId(null);
+                  setSelectedDraftId(null);
+                  setComposeDraft(null);
+                })();
+              }}
+            >
+              {([
+                ["inbox", t(($) => $.emails.folder_inbox)],
+                ["sent", t(($) => $.emails.folder_sent)],
+                ["drafts", emailCopy.drafts],
+                ["spam", emailCopy.folderSpam],
+                ["archived", t(($) => $.emails.folder_archived)],
+                ["starred", t(($) => $.emails.folder_starred)],
+                ["unlinked", t(($) => $.emails.folder_unlinked)],
+                ["trash", emailCopy.folderTrash],
+              ] as const).map(([folder, label]) => <option key={folder} value={folder}>{label} ({folder === "inbox" ? (folderCounts.inbox_unread ?? 0) : (displayFolderCounts[folder] ?? 0)})</option>)}
+            </select>
             <div className="relative flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
                 <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
@@ -1938,7 +1967,7 @@ export function CRMEmailsPage() {
           )}
         </aside>
 
-        <section className={`min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-background lg:border-t-0 ${composeHidesList || mobileEmailDetailOpen ? "flex flex-col" : "hidden lg:block"}`}>
+        <section className={`min-h-0 min-w-0 overflow-hidden bg-background lg:border-t-0 ${composeHidesList || mobileEmailDetailOpen ? "flex flex-col" : "hidden lg:block"}`}>
           {composeDraft ? (
             <div className="flex h-full min-h-0 flex-col bg-background">
               <div className="border-b p-5">
@@ -2055,8 +2084,8 @@ export function CRMEmailsPage() {
           ) : !selectedThread ? (
             <div className="p-10 text-center text-sm text-muted-foreground">{t(($) => $.emails.select_thread)}</div>
           ) : (
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="border-b bg-background p-3">
+            <div className="flex h-full min-h-0 flex-col overflow-y-auto lg:overflow-hidden">
+              <div className="border-b bg-background p-3 lg:shrink-0">
                 <Button className="mb-2 lg:hidden" variant="outline" size="sm" onClick={() => setMobileEmailDetailOpen(false)}>返回邮件列表</Button>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -2132,7 +2161,7 @@ export function CRMEmailsPage() {
                 )}
                 {updateAssociation.isError && <p className="mt-2 text-xs text-destructive">{t(($) => $.emails.association_error)}</p>}
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20 p-3">
+              <div className="bg-muted/20 p-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
                 {messagesLoading ? (
                   <div className="space-y-2">
                     <Skeleton className="h-24 w-full" />
